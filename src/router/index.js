@@ -11,6 +11,11 @@ const router = createRouter({
       component: HomeView,
     },
     {
+      path: '/reports',
+      name: 'reports',
+      component: () => import('@/views/ReportsView.vue'),
+    },
+    {
       path: '/orders',
       name: 'orders',
       component: () => import('@/views/OrdersView.vue'),
@@ -29,6 +34,21 @@ const router = createRouter({
       path: '/products',
       name: 'products',
       component: () => import('@/views/ProductsView.vue'),
+    },
+    {
+      path: '/categories',
+      name: 'categories',
+      component: () => import('@/views/CategoriesView.vue'),
+    },
+    {
+      path: '/categories/new',
+      name: 'category-create',
+      component: () => import('@/views/CategoryFormView.vue'),
+    },
+    {
+      path: '/categories/:id',
+      name: 'category-detail',
+      component: () => import('@/views/CategoryDetailView.vue'),
     },
     {
       path: '/products/new',
