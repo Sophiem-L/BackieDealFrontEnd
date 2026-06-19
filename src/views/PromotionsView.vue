@@ -1,0 +1,414 @@
+<script setup>
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import AppHeader from '@/components/AppHeader.vue'
+import BaseButton from '@/components/BaseButton.vue'
+
+const router = useRouter()
+
+const promotions = ref([
+  {
+    id: 1,
+    name: 'Black Friday Sale',
+    code: 'BLACKFRIDAY2023',
+    period: 'Nov 20 - Nov 30',
+    status: 'active',
+    benefit: 'Up to 30% OFF',
+    benefitType: 'Percentage',
+    used: 245,
+    limit: 500,
+    banner: 'linear-gradient(135deg, #b3091a 0%, #2b0a0a 100%)',
+  },
+  {
+    id: 2,
+    name: 'Intel 14th Gen Launch',
+    code: 'INTEL14TH',
+    period: 'Oct 15 - Oct 31',
+    status: 'active',
+    benefit: 'Flat $50 OFF',
+    benefitType: 'Fixed Amount',
+    used: 112,
+    limit: 200,
+    banner: 'linear-gradient(135deg, #0a3a6b 0%, #061b33 100%)',
+  },
+  {
+    id: 3,
+    name: 'Student Special',
+    code: 'STUDENT10',
+    period: 'Permanent',
+    status: 'paused',
+    benefit: '10% OFF Storewide',
+    benefitType: 'Percentage',
+    used: 892,
+    limit: null,
+    banner: 'linear-gradient(135deg, #1f6f5c 0%, #0c2e27 100%)',
+  },
+  {
+    id: 4,
+    name: 'NVIDIA Bundle Promo',
+    code: 'RTXBUNDLE',
+    period: 'Sep 01 - Sep 30',
+    status: 'expired',
+    benefit: 'Free Game Key',
+    benefitType: 'Gift',
+    used: 150,
+    limit: 150,
+    banner: 'linear-gradient(135deg, #2f7d3a 0%, #0c2913 100%)',
+  },
+])
+
+const statusLabels = { active: 'Active', paused: 'Paused', expired: 'Expired' }
+
+function usageText(promo) {
+  return `${promo.used}/${promo.limit ?? '∞'}`
+}
+
+function editPromotion(promo) {
+  router.push({ name: 'promotion-edit', params: { id: promo.id } })
+}
+
+function deletePromotion(promo) {
+  promotions.value = promotions.value.filter((p) => p.id !== promo.id)
+}
+</script>
+
+<template>
+  <div class="page">
+    <AppHeader title="Promotions & Campaigns" />
+
+    <div class="page__body">
+      <!-- Toolbar -->
+      <section class="toolbar">
+        <label class="toolbar__search">
+          <span class="toolbar__search-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.2-3.2" stroke-linecap="round" />
+            </svg>
+          </span>
+          <input type="search" placeholder="Search promotion name or code..." />
+        </label>
+
+        <div class="select">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" stroke-linejoin="round" />
+          </svg>
+          Active Only
+          <svg class="select__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </div>
+
+        <div class="toolbar__spacer"></div>
+
+        <BaseButton variant="primary" :to="{ name: 'promotion-create' }">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
+          </template>
+          New Promotion
+        </BaseButton>
+      </section>
+
+      <!-- Cards grid -->
+      <section class="grid">
+        <article v-for="promo in promotions" :key="promo.id" class="promo">
+          <div class="promo__banner" :style="{ background: promo.banner }">
+            <span class="promo__status" :class="`promo__status--${promo.status}`">
+              {{ statusLabels[promo.status] }}
+            </span>
+            <div class="promo__overlay">
+              <h3 class="promo__name">{{ promo.name }}</h3>
+              <div class="promo__tags">
+                <span class="chip chip--dark">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.2-6.2A2 2 0 0 1 4 12V5a1 1 0 0 1 1-1h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6Z" stroke-linejoin="round" />
+                  </svg>
+                  {{ promo.code }}
+                </span>
+                <span class="chip chip--dark">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <rect x="3" y="5" width="18" height="16" rx="2" />
+                    <path d="M3 9h18M8 3v4M16 3v4" stroke-linecap="round" />
+                  </svg>
+                  {{ promo.period }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="promo__body">
+            <div class="promo__metrics">
+              <div>
+                <p class="promo__label">Benefit</p>
+                <p class="promo__benefit">{{ promo.benefit }}</p>
+              </div>
+              <div class="promo__usage">
+                <p class="promo__label">Usage</p>
+                <p class="promo__usage-value">{{ usageText(promo) }}</p>
+              </div>
+            </div>
+
+            <div class="promo__footer">
+              <span class="chip chip--type">{{ promo.benefitType }}</span>
+              <div class="promo__actions">
+                <BaseButton variant="ghost" size="sm" @click="editPromotion(promo)">
+                  <template #icon>
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
+                      <path d="M13.5 6.5l3 3" stroke-linecap="round" />
+                    </svg>
+                  </template>
+                  Edit
+                </BaseButton>
+                <button
+                  type="button"
+                  class="icon-btn icon-btn--danger"
+                  aria-label="Delete promotion"
+                  @click="deletePromotion(promo)"
+                >
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+    </div>
+  </div>
+</template>
+
+<style scoped lang="scss">
+$accent: #f4c10f;
+$muted: #8a909c;
+$divider: #eef0f3;
+
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+
+  &__body {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: #fff;
+  border: 1px solid $divider;
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  flex-wrap: wrap;
+
+  &__search {
+    flex: 1;
+    min-width: 220px;
+    display: flex;
+    align-items: center;
+    background: #f4f5f7;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 0 0.75rem;
+
+    &:focus-within { background: #fff; border-color: #e6e8ec; }
+  }
+
+  &__search-icon {
+    display: inline-flex;
+    color: $muted;
+    svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
+  }
+
+  &__spacer { flex: 1; }
+
+  input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    padding: 0.6rem;
+    font-size: 0.85rem;
+    font-family: inherit;
+    color: $color-text;
+    &:focus { outline: none; }
+  }
+}
+
+.select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #4a5160;
+  background: #fff;
+  border: 1px solid #e6e8ec;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+
+  svg { width: 14px; height: 14px; stroke: $muted; stroke-width: 1.8; }
+  &__caret { margin-left: 0.1rem; }
+}
+
+/* Cards */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+
+  @media (max-width: 860px) { grid-template-columns: 1fr; }
+}
+
+.promo {
+  background: #fff;
+  border: 1px solid $divider;
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+
+  &__banner {
+    position: relative;
+    height: 140px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+
+  &__status {
+    position: absolute;
+    top: 0.85rem;
+    right: 0.85rem;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    color: #fff;
+
+    &--active { background: #1f9d57; }
+    &--paused { background: #d99413; }
+    &--expired { background: #6b7280; }
+  }
+
+  &__name {
+    margin: 0 0 0.5rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  }
+
+  &__tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+  &__body {
+    padding: 1rem 1.1rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    flex: 1;
+  }
+
+  &__metrics {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  &__usage { text-align: right; }
+
+  &__label {
+    margin: 0 0 0.25rem;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: $muted;
+  }
+
+  &__benefit {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #a8850a;
+  }
+
+  &__usage-value {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: $color-text;
+  }
+
+  &__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid $divider;
+  }
+
+  &__actions { display: flex; align-items: center; gap: 0.4rem; }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 0.22rem 0.5rem;
+
+  svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.8; }
+
+  &--dark {
+    background: rgba(0, 0, 0, 0.45);
+    color: #fff;
+    backdrop-filter: blur(2px);
+  }
+
+  &--type {
+    background: #f1f3f5;
+    color: #5b6472;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.64rem;
+    font-weight: 700;
+  }
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: #fff;
+  border: 1px solid #e6e8ec;
+  border-radius: 8px;
+  color: #6b7280;
+  cursor: pointer;
+
+  svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
+
+  &--danger:hover {
+    background: #fdf2f2;
+    color: #d14343;
+    border-color: #f0c9c9;
+  }
+}
+</style>

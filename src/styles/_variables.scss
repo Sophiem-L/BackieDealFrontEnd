@@ -1,0 +1,16 @@
+// Global design tokens — auto-injected into every component via vite.config.js
+$color-primary: #42b883;
+$color-secondary: #35495e;
+$color-text: #2c3e50;
+$color-bg: #ffffff;
+
+$font-family-base: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+
+$radius: 8px;
+$spacing: 1rem;
+
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
