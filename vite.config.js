@@ -5,6 +5,16 @@ import vue from '@vitejs/plugin-vue'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  server: {
+    // Proxy API calls to the Laravel backend so the browser stays same-origin
+    // (no CORS config needed in dev). Override via VITE_API_BASE_URL in prod.
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

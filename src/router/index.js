@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '@/views/HomeView.vue'
+import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -63,7 +64,7 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       // Auth screens render without the admin sidebar (meta.layout = 'blank').
-      meta: { layout: 'blank' },
+      meta: { layout: 'blank', public: true },
       component: () => import('@/views/LoginView.vue'),
     },
     {
@@ -73,6 +74,19 @@ const router = createRouter({
       component: () => import('@/views/AboutView.vue'),
     },
   ],
+})
+
+// Guard every non-public route behind admin authentication.
+router.beforeEach((to) => {
+  const auth = useAuthStore()
+
+  if (!to.meta.public && !auth.isAuthenticated) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  if (to.name === 'login' && auth.isAuthenticated) {
+    return { name: 'home' }
+  }
 })
 
 export default router

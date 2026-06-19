@@ -1,17 +1,26 @@
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const route = useRoute()
+const auth = useAuthStore()
+const { loading, error } = storeToRefs(auth)
 
-const email = ref('admin@computershop.com')
+const email = ref('admin@example.com')
 const password = ref('')
 const showPassword = ref(false)
 const remember = ref(true)
 
-function handleSubmit() {
-  // TODO: wire up real authentication.
-  router.push('/')
+async function handleSubmit() {
+  const ok = await auth.login(email.value, password.value)
+  if (ok) {
+    // Honor a redirect set by the router guard, otherwise land on the dashboard.
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
+    router.push(redirect)
+  }
 }
 </script>
 
@@ -97,7 +106,11 @@ function handleSubmit() {
           <span>Remember this device for 30 days</span>
         </label>
 
-        <button type="submit" class="card__submit">Sign In to Dashboard</button>
+        <p v-if="error" class="card__error" role="alert">{{ error }}</p>
+
+        <button type="submit" class="card__submit" :disabled="loading">
+          {{ loading ? 'Signing in…' : 'Sign In to Dashboard' }}
+        </button>
       </form>
 
       <!-- Footer -->
@@ -240,6 +253,22 @@ $muted: #8a909c;
       filter: brightness(0.96);
       border-color: transparent;
     }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      filter: none;
+    }
+  }
+
+  &__error {
+    margin: 0;
+    padding: 0.7rem 0.85rem;
+    font-size: 0.82rem;
+    color: #b42318;
+    background: #fef3f2;
+    border: 1px solid #fecdca;
+    border-radius: 10px;
   }
 }
 

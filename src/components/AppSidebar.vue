@@ -1,8 +1,16 @@
 <script setup>
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
 
 const ui = useUiStore()
+const auth = useAuthStore()
+const router = useRouter()
+
+async function handleLogout() {
+  await auth.logout()
+  router.push({ name: 'login' })
+}
 
 // Nav model — grouped to match the Admin Portal layout.
 // `icon` keys map to the inline <svg> set in the template below.
@@ -150,7 +158,7 @@ const sections = [
 
     <!-- Footer -->
     <div class="sidebar__footer">
-      <button type="button" class="nav__link nav__link--logout">
+      <button type="button" class="nav__link nav__link--logout" @click="handleLogout">
         <span class="nav__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none">
             <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" stroke-linecap="round" stroke-linejoin="round" />
