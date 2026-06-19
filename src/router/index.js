@@ -61,6 +61,21 @@ const router = createRouter({
       component: () => import('@/views/ProductFormView.vue'),
     },
     {
+      path: '/customers',
+      name: 'customers',
+      component: () => import('@/views/CustomersView.vue'),
+    },
+    {
+      path: '/customers/new',
+      name: 'customer-create',
+      component: () => import('@/views/CustomerFormView.vue'),
+    },
+    {
+      path: '/customers/:id/edit',
+      name: 'customer-edit',
+      component: () => import('@/views/CustomerFormView.vue'),
+    },
+    {
       path: '/promotions',
       name: 'promotions',
       component: () => import('@/views/PromotionsView.vue'),
