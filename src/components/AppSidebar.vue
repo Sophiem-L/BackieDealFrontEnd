@@ -309,6 +309,7 @@ $sidebar-rail: 74px;
     border-radius: $radius;
     font-size: 0.9rem;
     font-weight: 500;
+    text-align: left;
     color: #4a5160;
     background: transparent;
     border: none;

@@ -91,6 +91,41 @@ const router = createRouter({
       component: () => import('@/views/PromotionFormView.vue'),
     },
     {
+      path: '/slides',
+      name: 'slides',
+      component: () => import('@/views/SlidesView.vue'),
+    },
+    {
+      path: '/news',
+      name: 'news',
+      component: () => import('@/views/NewsView.vue'),
+    },
+    {
+      path: '/news/new',
+      name: 'news-create',
+      component: () => import('@/views/NewsFormView.vue'),
+    },
+    {
+      path: '/news/:id/edit',
+      name: 'news-edit',
+      component: () => import('@/views/NewsFormView.vue'),
+    },
+    {
+      path: '/administrators',
+      name: 'administrators',
+      component: () => import('@/views/AdministratorsView.vue'),
+    },
+    {
+      path: '/roles',
+      name: 'roles',
+      component: () => import('@/views/RolesView.vue'),
+    },
+    {
+      path: '/logs',
+      name: 'logs',
+      component: () => import('@/views/LogsView.vue'),
+    },
+    {
       path: '/profile',
       name: 'profile',
       component: () => import('@/views/ProfileView.vue'),
