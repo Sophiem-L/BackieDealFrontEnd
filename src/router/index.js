@@ -91,9 +91,39 @@ const router = createRouter({
       component: () => import('@/views/PromotionFormView.vue'),
     },
     {
+      path: '/stock',
+      name: 'stock',
+      component: () => import('@/views/StockManagementView.vue'),
+    },
+    {
+      path: '/stock/new',
+      name: 'stock-adjustment-create',
+      component: () => import('@/views/StockAdjustmentFormView.vue'),
+    },
+    {
+      path: '/stock/:id',
+      name: 'stock-detail',
+      component: () => import('@/views/StockDetailView.vue'),
+    },
+    {
       path: '/slides',
       name: 'slides',
       component: () => import('@/views/SlidesView.vue'),
+    },
+    {
+      path: '/slides/new',
+      name: 'slide-create',
+      component: () => import('@/views/SlideFormView.vue'),
+    },
+    {
+      path: '/slides/:id',
+      name: 'slide-detail',
+      component: () => import('@/views/SlideDetailView.vue'),
+    },
+    {
+      path: '/slides/:id/edit',
+      name: 'slide-edit',
+      component: () => import('@/views/SlideFormView.vue'),
     },
     {
       path: '/news',

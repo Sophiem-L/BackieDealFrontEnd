@@ -51,3 +51,27 @@ export function findSlide(id) {
 export function nextSlideId() {
   return slides.reduce((max, s) => Math.max(max, s.id), 0) + 1
 }
+
+// Append a new slide and return it. `data` provides the editable fields.
+export function createSlide(data) {
+  const slide = {
+    id: nextSlideId(),
+    title: '',
+    subtitle: '',
+    status: 'draft',
+    cta: '',
+    image: '',
+    gradient: 'linear-gradient(135deg, #1b2a4a 0%, #6d28d9 100%)',
+    ...data,
+  }
+  slides.push(slide)
+  return slide
+}
+
+// Remove a slide by id. Returns true when a slide was removed.
+export function removeSlide(id) {
+  const index = slides.findIndex((s) => s.id === Number(id))
+  if (index === -1) return false
+  slides.splice(index, 1)
+  return true
+}

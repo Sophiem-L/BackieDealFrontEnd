@@ -1,7 +1,10 @@
 <script setup>
+import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { slides } from '@/data/slides'
+import { slides, removeSlide } from '@/data/slides'
+
+const router = useRouter()
 
 const statusLabels = {
   active: 'Active',
@@ -9,20 +12,21 @@ const statusLabels = {
   draft: 'Draft',
 }
 
-// Placeholder handlers — wire to a real create/edit/delete flow when the slides
-// endpoint exists. For now they keep the UI interactive.
 function addSlide() {
-  // TODO: open create-slide flow
+  router.push('/slides/new')
+}
+
+function viewSlide(slide) {
+  router.push(`/slides/${slide.id}`)
 }
 
 function editSlide(slide) {
-  // TODO: open edit flow for `slide`
-  void slide
+  router.push(`/slides/${slide.id}/edit`)
 }
 
 function deleteSlide(slide) {
-  // TODO: confirm + delete `slide`
-  void slide
+  if (!window.confirm(`Delete slide "${slide.title}"? This cannot be undone.`)) return
+  removeSlide(slide.id)
 }
 </script>
 
@@ -62,11 +66,17 @@ function deleteSlide(slide) {
             </svg>
           </span>
 
-          <span class="slide__thumb" :style="!slide.image ? { background: slide.gradient } : null">
+          <span
+            class="slide__thumb"
+            :style="!slide.image ? { background: slide.gradient } : null"
+            role="button"
+            :aria-label="`View ${slide.title}`"
+            @click="viewSlide(slide)"
+          >
             <img v-if="slide.image" :src="slide.image" :alt="slide.title" />
           </span>
 
-          <div class="slide__body">
+          <div class="slide__body" role="button" @click="viewSlide(slide)">
             <span class="badge" :class="`badge--${slide.status}`">
               {{ statusLabels[slide.status] }}
             </span>
@@ -200,6 +210,7 @@ $divider: #eef0f3;
     border-radius: 10px;
     overflow: hidden;
     background: #eef0f3;
+    cursor: pointer;
 
     img { width: 100%; height: 100%; object-fit: cover; }
   }
@@ -207,6 +218,7 @@ $divider: #eef0f3;
   &__body {
     flex: 1;
     min-width: 0;
+    cursor: pointer;
   }
 
   &__title {

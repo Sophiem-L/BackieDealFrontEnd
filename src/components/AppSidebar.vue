@@ -37,7 +37,6 @@ const sections = [
     items: [
       { label: 'Slides', icon: 'slides', to: '/slides' },
       { label: 'News', icon: 'news', to: '/news' },
-      { label: 'Pages', icon: 'pages', to: '/pages' },
     ],
   },
   {
