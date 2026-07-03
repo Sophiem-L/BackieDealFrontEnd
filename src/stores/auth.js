@@ -41,6 +41,12 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(STORAGE_KEY)
   }
 
+  // Replace the cached user (e.g. after loading or editing the profile).
+  function setUser(nextUser) {
+    user.value = nextUser
+    persist()
+  }
+
   // POST /admin/auth/login -> { data: { access_token, refresh_token, user, ... } }
   async function login(email, password) {
     loading.value = true
@@ -88,5 +94,6 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     login,
     logout,
+    setUser,
   }
 })

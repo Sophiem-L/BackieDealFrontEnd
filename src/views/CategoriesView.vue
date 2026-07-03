@@ -12,6 +12,19 @@ function openCategory(cat) {
   router.push({ name: 'category-detail', params: { id: cat.key }, query: { name: cat.name } })
 }
 
+function editCategory(cat) {
+  router.push({
+    name: 'category-detail',
+    params: { id: cat.key },
+    query: { name: cat.name, edit: '1' },
+  })
+}
+
+function deleteCategory(cat) {
+  if (!window.confirm(`Delete category "${cat.name}"? This action cannot be undone.`)) return
+  categories.value = categories.value.filter((c) => c.key !== cat.key)
+}
+
 // Catalogue categories. `tone` selects the cover gradient; drop an `image`
 // field (URL) on any entry to use a real photo as the cover instead.
 const categories = ref([
@@ -89,8 +102,35 @@ const filtered = computed(() => {
           </div>
 
           <div class="cat__body">
-            <p class="cat__count">{{ cat.products }} Products</p>
-            <p class="cat__updated">Updated {{ cat.updated }}</p>
+            <div class="cat__info">
+              <p class="cat__count">{{ cat.products }} Products</p>
+              <p class="cat__updated">Updated {{ cat.updated }}</p>
+            </div>
+            <div class="cat__actions">
+              <button
+                type="button"
+                class="icon-btn"
+                title="Edit category"
+                aria-label="Edit category"
+                @click.stop="editCategory(cat)"
+              >
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
+                  <path d="M13.5 6.5l3 3" stroke-linecap="round" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="icon-btn icon-btn--danger"
+                title="Delete category"
+                aria-label="Delete category"
+                @click.stop="deleteCategory(cat)"
+              >
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
           </div>
         </article>
 
@@ -166,9 +206,10 @@ $divider: #eef0f3;
 /* Grid */
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1.25rem;
 
+  @media (max-width: 1100px) { grid-template-columns: repeat(3, 1fr); }
   @media (max-width: 900px) { grid-template-columns: repeat(2, 1fr); }
   @media (max-width: 560px) { grid-template-columns: 1fr; }
 }
@@ -254,6 +295,18 @@ $divider: #eef0f3;
 
   &__body {
     padding: 1rem 1.1rem 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  &__info { min-width: 0; }
+
+  &__actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
   }
 
   &__count {
@@ -271,6 +324,26 @@ $divider: #eef0f3;
     text-transform: uppercase;
     color: $muted;
   }
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: #fff;
+  border: 1px solid #e6e8ec;
+  border-radius: 8px;
+  color: #6b7280;
+  cursor: pointer;
+
+  &:hover { background: #f6f7f9; color: $color-text; border-color: #dfe2e7; }
+
+  &--danger:hover { background: #fdf2f2; color: #d14343; border-color: #f0c9c9; }
+
+  svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
 }
 
 .empty {

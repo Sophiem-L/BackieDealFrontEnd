@@ -119,33 +119,57 @@ const filteredOrders = computed(() => {
   })
 })
 
-// Row selection
-const selected = ref(new Set())
-const allSelected = computed(
-  () =>
-    filteredOrders.value.length > 0 &&
-    filteredOrders.value.every((o) => selected.value.has(o.id)),
-)
-function toggleRow(id) {
-  const next = new Set(selected.value)
-  next.has(id) ? next.delete(id) : next.add(id)
-  selected.value = next
-}
-function toggleAll() {
-  if (allSelected.value) {
-    selected.value = new Set()
-  } else {
-    selected.value = new Set(filteredOrders.value.map((o) => o.id))
-  }
-}
-
 // Actions
 function viewOrder(order) {
   // Strip the leading '#' so the id reads cleanly in the URL.
   router.push({ name: 'order-detail', params: { id: order.id.replace(/^#/, '') } })
 }
+function editOrder(order) {
+  router.push({
+    name: 'order-detail',
+    params: { id: order.id.replace(/^#/, '') },
+    query: { edit: '1' },
+  })
+}
+function deleteOrder(order) {
+  if (!window.confirm(`Delete order ${order.id}? This action cannot be undone.`)) return
+  orders.value = orders.value.filter((o) => o.id !== order.id)
+}
 function printOrder() {
   window.print()
+}
+
+// Export the currently filtered orders to a CSV file.
+function exportOrders() {
+  const columns = [
+    { key: 'id', label: 'Order ID' },
+    { key: 'placedAt', label: 'Placed At' },
+    { key: 'customer', label: 'Customer' },
+    { key: 'item', label: 'Item' },
+    { key: 'spec', label: 'Specification' },
+    { key: 'payment', label: 'Payment' },
+    { key: 'amount', label: 'Amount' },
+    { key: 'status', label: 'Status' },
+  ]
+
+  const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`
+  const rows = [
+    columns.map((c) => escape(c.label)).join(','),
+    ...filteredOrders.value.map((order) =>
+      columns.map((c) => escape(order[c.key])).join(','),
+    ),
+  ]
+  const csv = rows.join('\r\n')
+
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `orders-${activeTab.value}.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 </script>
 
@@ -192,6 +216,16 @@ function printOrder() {
 
         <div class="toolbar__spacer"></div>
 
+        <BaseButton variant="ghost" :disabled="!filteredOrders.length" @click="exportOrders">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </template>
+          Export
+        </BaseButton>
+
         <BaseButton variant="primary" :to="{ name: 'order-create' }">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
@@ -231,9 +265,6 @@ function printOrder() {
         <table class="table">
           <thead>
             <tr>
-              <th class="table__check">
-                <input type="checkbox" :checked="allSelected" @change="toggleAll" />
-              </th>
               <th>Order Detail</th>
               <th>Items &amp; Specs</th>
               <th>Payment</th>
@@ -244,13 +275,6 @@ function printOrder() {
           </thead>
           <tbody>
             <tr v-for="order in filteredOrders" :key="order.id">
-              <td class="table__check">
-                <input
-                  type="checkbox"
-                  :checked="selected.has(order.id)"
-                  @change="toggleRow(order.id)"
-                />
-              </td>
               <td>
                 <p class="order__id">{{ order.id }}</p>
                 <p class="order__date">{{ order.placedAt }}</p>
@@ -300,6 +324,18 @@ function printOrder() {
                   <button
                     type="button"
                     class="icon-btn"
+                    title="Edit order"
+                    aria-label="Edit order"
+                    @click="editOrder(order)"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M12 20h9" stroke-linecap="round" />
+                      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-btn"
                     title="Print order"
                     aria-label="Print order"
                     @click="printOrder(order)"
@@ -310,11 +346,25 @@ function printOrder() {
                       <rect x="6" y="14" width="12" height="7" rx="1" />
                     </svg>
                   </button>
+                  <button
+                    type="button"
+                    class="icon-btn icon-btn--danger"
+                    title="Delete order"
+                    aria-label="Delete order"
+                    @click="deleteOrder(order)"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M3 6h18" stroke-linecap="round" />
+                      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" stroke-linecap="round" />
+                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke-linecap="round" stroke-linejoin="round" />
+                      <path d="M10 11v6M14 11v6" stroke-linecap="round" />
+                    </svg>
+                  </button>
                 </div>
               </td>
             </tr>
             <tr v-if="filteredOrders.length === 0">
-              <td colspan="7" class="table__empty">No orders match your filters.</td>
+              <td colspan="6" class="table__empty">No orders match your filters.</td>
             </tr>
           </tbody>
         </table>
@@ -617,6 +667,8 @@ $divider: #eef0f3;
   cursor: pointer;
 
   &:hover { background: #f6f7f9; color: $color-text; border-color: #dfe2e7; }
+
+  &--danger:hover { background: #fff5f5; color: #d14343; border-color: #f0c9c9; }
 
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
 }

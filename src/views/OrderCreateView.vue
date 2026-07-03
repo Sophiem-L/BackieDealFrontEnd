@@ -15,13 +15,10 @@ const items = ref([{ productId: '', sku: '', qty: 1, unitPrice: null }])
 const fees = ref({ assembly: null, delivery: null })
 
 const customer = ref({ id: '', name: '', email: '', phone: '', address: '' })
-const technician = ref({ name: '', role: '' })
 const payment = ref({ method: '', transactionId: '' })
-const shipping = ref({ courier: '', tracking: '', eta: '' })
 const note = ref('')
 
 const paymentMethods = ['Online (QR Code)', 'Cash on Delivery', 'Bank Transfer', 'Credit Card']
-const couriers = ['DHL Express', 'FedEx', 'UPS', 'Local Courier']
 
 // Live totals
 const subtotal = computed(() =>
@@ -70,9 +67,7 @@ function createOrder() {
     items: items.value,
     fees: fees.value,
     customer: customer.value,
-    technician: technician.value,
     payment: payment.value,
-    shipping: shipping.value,
     note: note.value,
     total: total.value,
   }
@@ -97,15 +92,6 @@ function createOrder() {
             <h2 class="subhead__id">New Order</h2>
             <p class="subhead__meta">Fill in the details below to create an order.</p>
           </div>
-        </div>
-        <div class="subhead__actions">
-          <BaseButton variant="ghost" type="button" @click="cancel">Cancel</BaseButton>
-          <BaseButton variant="primary" type="submit">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-            </template>
-            Create Order
-          </BaseButton>
         </div>
       </section>
 
@@ -145,13 +131,12 @@ function createOrder() {
                       <option value="" disabled>Select a product</option>
                       <option v-for="p in catalog" :key="p.id" :value="p.id">{{ p.name }}</option>
                     </select>
-                    <p v-if="item.sku" class="item-sku">SKU: {{ item.sku }}</p>
                   </td>
                   <td class="items__qty">
                     <input v-model.number="item.qty" class="field field--center" type="number" min="1" />
                   </td>
-                  <td class="items__price">
-                    <input v-model.number="item.unitPrice" class="field field--right" type="number" min="0" step="0.01" placeholder="0.00" />
+                  <td class="items__price items__num items__muted">
+                    {{ money(item.unitPrice) }}
                   </td>
                   <td class="items__num items__strong">
                     {{ money((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)) }}
@@ -184,36 +169,6 @@ function createOrder() {
             </dl>
           </section>
 
-          <!-- Delivery & courier -->
-          <section class="card">
-            <header class="card__head">
-              <h3 class="card__title">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z" stroke-linejoin="round" />
-                  <circle cx="7" cy="18" r="1.6" />
-                  <circle cx="17.5" cy="18" r="1.6" />
-                </svg>
-                Delivery &amp; Courier
-              </h3>
-            </header>
-            <div class="form-grid form-grid--3">
-              <label class="field-group">
-                <span class="field-group__label">Courier</span>
-                <select v-model="shipping.courier" class="field">
-                  <option value="" disabled>Select courier</option>
-                  <option v-for="c in couriers" :key="c" :value="c">{{ c }}</option>
-                </select>
-              </label>
-              <label class="field-group">
-                <span class="field-group__label">Tracking No.</span>
-                <input v-model="shipping.tracking" class="field" type="text" placeholder="e.g. 88241502" />
-              </label>
-              <label class="field-group">
-                <span class="field-group__label">Est. Delivery</span>
-                <input v-model="shipping.eta" class="field" type="date" />
-              </label>
-            </div>
-          </section>
         </div>
 
         <!-- Side column -->
@@ -256,28 +211,6 @@ function createOrder() {
             </div>
           </section>
 
-          <!-- Assigned technician -->
-          <section class="card">
-            <header class="card__head">
-              <h3 class="card__title">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6V21h3.3l6-6a4 4 0 0 0 5.4-5.4l-2.3 2.3-2.6-.7-.7-2.6 2.3-2.3Z" stroke-linejoin="round" />
-                </svg>
-                Assigned Technician
-              </h3>
-            </header>
-            <div class="form-stack">
-              <label class="field-group">
-                <span class="field-group__label">Name</span>
-                <input v-model="technician.name" class="field" type="text" placeholder="e.g. Mike R." />
-              </label>
-              <label class="field-group">
-                <span class="field-group__label">Role</span>
-                <input v-model="technician.role" class="field" type="text" placeholder="e.g. Senior Technician" />
-              </label>
-            </div>
-          </section>
-
           <!-- Payment -->
           <section class="card">
             <header class="card__head">
@@ -304,7 +237,7 @@ function createOrder() {
             </div>
           </section>
 
-          <!-- Internal notes -->
+          <!-- Notes -->
           <section class="card">
             <header class="card__head">
               <h3 class="card__title">
@@ -312,11 +245,21 @@ function createOrder() {
                   <path d="M6 3h9l4 4v14H6Z" stroke-linejoin="round" />
                   <path d="M9 12h7M9 16h4" stroke-linecap="round" />
                 </svg>
-                Internal Notes
+                Notes
               </h3>
             </header>
-            <textarea v-model="note" class="field" rows="3" placeholder="Add an internal note (optional)"></textarea>
+            <textarea v-model="note" class="field" rows="3" placeholder="Add a note (optional)"></textarea>
           </section>
+
+          <div class="form-actions">
+            <BaseButton variant="ghost" type="button" block @click="cancel">Cancel</BaseButton>
+            <BaseButton variant="primary" type="submit" block>
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </template>
+              Save Order
+            </BaseButton>
+          </div>
         </div>
       </div>
     </form>
@@ -356,7 +299,6 @@ $divider: #eef0f3;
   &__lead { display: flex; align-items: center; gap: 0.85rem; }
   &__id { margin: 0; font-size: 1.15rem; font-weight: 700; color: $color-text; }
   &__meta { margin: 0.2rem 0 0; font-size: 0.78rem; color: $muted; }
-  &__actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 }
 
 .back-btn {
@@ -442,12 +384,6 @@ $divider: #eef0f3;
   &--inline { width: 110px; }
 }
 
-.item-sku {
-  margin: 0.35rem 0 0;
-  font-size: 0.72rem;
-  color: $muted;
-}
-
 textarea.field { resize: vertical; }
 
 .field-group {
@@ -464,14 +400,10 @@ textarea.field { resize: vertical; }
 
 .form-stack { display: flex; flex-direction: column; gap: 0.8rem; }
 
-.form-grid {
+.form-actions {
   display: grid;
-  gap: 0.8rem;
-
-  &--3 {
-    grid-template-columns: repeat(3, 1fr);
-    @media (max-width: 640px) { grid-template-columns: 1fr; }
-  }
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
 }
 
 /* Order items */
@@ -495,6 +427,7 @@ textarea.field { resize: vertical; }
   &__qty { width: 70px; }
   &__price { width: 120px; }
   &__num { text-align: right; white-space: nowrap; }
+  &__muted { color: $muted; }
   &__strong { font-weight: 700; color: $color-text; }
   &__remove { width: 44px; text-align: right; }
 }

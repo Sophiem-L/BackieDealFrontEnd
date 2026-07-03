@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -10,7 +10,7 @@ const stats = [
   { key: 'total', label: 'Total Products', value: '1,284', icon: 'box', tone: 'neutral' },
   { key: 'low', label: 'Low Stock', value: '14', icon: 'warning', tone: 'warning' },
   { key: 'out', label: 'Out of Stock', value: '3', icon: 'forbidden', tone: 'danger' },
-  { key: 'categories', label: 'Categories', value: '24', icon: 'tag', tone: 'neutral' },
+  { key: 'in-stock', label: 'In Stock', value: '1,267', icon: 'check', tone: 'success' },
 ]
 
 const products = ref([
@@ -20,7 +20,6 @@ const products = ref([
     sku: 'NV-RTX4090-FE',
     category: 'Graphics Cards',
     stock: 8,
-    reorder: false,
     price: '$1,599.00',
     status: 'in-stock',
   },
@@ -30,7 +29,6 @@ const products = ref([
     sku: 'INT-I9-14900K',
     category: 'Processors',
     stock: 15,
-    reorder: false,
     price: '$589.00',
     status: 'in-stock',
   },
@@ -40,7 +38,6 @@ const products = ref([
     sku: 'AS-MAX-Z790',
     category: 'Motherboards',
     stock: 4,
-    reorder: true,
     price: '$699.00',
     status: 'low-stock',
   },
@@ -50,7 +47,6 @@ const products = ref([
     sku: 'COR-DP-64G5',
     category: 'Memory',
     stock: 0,
-    reorder: true,
     price: '$299.00',
     status: 'out-of-stock',
   },
@@ -60,7 +56,6 @@ const products = ref([
     sku: 'SAM-980P-2TB',
     category: 'Storage',
     stock: 42,
-    reorder: false,
     price: '$179.99',
     status: 'in-stock',
   },
@@ -88,20 +83,11 @@ function toggleAll() {
     : new Set(products.value.map((p) => p.id))
 }
 
-// 3-dot action menu
-const openMenu = ref(null)
-function toggleMenu(id) {
-  openMenu.value = openMenu.value === id ? null : id
-}
-function closeMenu() {
-  openMenu.value = null
-}
-onMounted(() => document.addEventListener('click', closeMenu))
-onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
-
 // Actions
+function viewProduct(product) {
+  router.push({ name: 'product-edit', params: { id: product.id }, query: { view: '1' } })
+}
 function editProduct(product) {
-  closeMenu()
   router.push({ name: 'product-edit', params: { id: product.id } })
 }
 function duplicateProduct(product) {
@@ -111,11 +97,39 @@ function duplicateProduct(product) {
     name: `${product.name} (Copy)`,
   }
   products.value.splice(products.value.indexOf(product) + 1, 0, copy)
-  closeMenu()
 }
 function deleteProduct(product) {
+  if (!window.confirm(`Delete "${product.name}"? This action cannot be undone.`)) return
   products.value = products.value.filter((p) => p.id !== product.id)
-  closeMenu()
+}
+
+// Export the current products to a CSV file.
+function exportProducts() {
+  const columns = [
+    { key: 'name', label: 'Product Name' },
+    { key: 'sku', label: 'SKU' },
+    { key: 'category', label: 'Category' },
+    { key: 'stock', label: 'Stock' },
+    { key: 'price', label: 'Price' },
+    { key: 'status', label: 'Status' },
+  ]
+
+  const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`
+  const rows = [
+    columns.map((c) => escape(c.label)).join(','),
+    ...products.value.map((p) => columns.map((c) => escape(p[c.key])).join(',')),
+  ]
+  const csv = rows.join('\r\n')
+
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'products.csv'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 
 function thumbInitials(name) {
@@ -128,34 +142,6 @@ function thumbInitials(name) {
     <AppHeader title="Products & Inventory" />
 
     <div class="page__body">
-      <!-- Stat cards -->
-      <section class="stats">
-        <article v-for="stat in stats" :key="stat.key" class="stat">
-          <span class="stat__icon" :class="`stat__icon--${stat.tone}`" aria-hidden="true">
-            <svg v-if="stat.icon === 'box'" viewBox="0 0 24 24" fill="none">
-              <path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z" stroke-linejoin="round" />
-              <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" stroke-linejoin="round" />
-            </svg>
-            <svg v-else-if="stat.icon === 'warning'" viewBox="0 0 24 24" fill="none">
-              <path d="M12 3 2 20h20L12 3Z" stroke-linejoin="round" />
-              <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
-            </svg>
-            <svg v-else-if="stat.icon === 'forbidden'" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="9" />
-              <path d="m6 6 12 12" stroke-linecap="round" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" fill="none">
-              <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.2-6.2a2 2 0 0 1-.6-1.4V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l6.4 6.4a2 2 0 0 1 0 2.4Z" stroke-linejoin="round" />
-              <circle cx="8" cy="8" r="1.3" />
-            </svg>
-          </span>
-          <div class="stat__meta">
-            <p class="stat__label">{{ stat.label }}</p>
-            <p class="stat__value">{{ stat.value }}</p>
-          </div>
-        </article>
-      </section>
-
       <!-- Toolbar -->
       <section class="toolbar">
         <label class="toolbar__search">
@@ -188,12 +174,53 @@ function thumbInitials(name) {
           </template>
           Import
         </BaseButton>
+        <BaseButton variant="ghost" :disabled="!products.length" @click="exportProducts">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </template>
+          Export
+        </BaseButton>
         <BaseButton variant="primary" :to="{ name: 'product-create' }">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
           </template>
           Add Product
         </BaseButton>
+      </section>
+
+      <!-- Stat cards -->
+      <section class="stats">
+        <article v-for="stat in stats" :key="stat.key" class="stat">
+          <span class="stat__icon" :class="`stat__icon--${stat.tone}`" aria-hidden="true">
+            <svg v-if="stat.icon === 'box'" viewBox="0 0 24 24" fill="none">
+              <path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z" stroke-linejoin="round" />
+              <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" stroke-linejoin="round" />
+            </svg>
+            <svg v-else-if="stat.icon === 'warning'" viewBox="0 0 24 24" fill="none">
+              <path d="M12 3 2 20h20L12 3Z" stroke-linejoin="round" />
+              <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
+            </svg>
+            <svg v-else-if="stat.icon === 'forbidden'" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" />
+              <path d="m6 6 12 12" stroke-linecap="round" />
+            </svg>
+            <svg v-else-if="stat.icon === 'check'" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" />
+              <path d="m8.5 12 2.4 2.4 4.6-5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none">
+              <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.2-6.2a2 2 0 0 1-.6-1.4V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l6.4 6.4a2 2 0 0 1 0 2.4Z" stroke-linejoin="round" />
+              <circle cx="8" cy="8" r="1.3" />
+            </svg>
+          </span>
+          <div class="stat__meta">
+            <p class="stat__label">{{ stat.label }}</p>
+            <p class="stat__value">{{ stat.value }}</p>
+          </div>
+        </article>
       </section>
 
       <!-- Table -->
@@ -233,7 +260,6 @@ function thumbInitials(name) {
               <td><span class="badge badge--category">{{ product.category }}</span></td>
               <td>
                 <p class="stock__count">{{ product.stock }} pcs</p>
-                <p v-if="product.reorder" class="stock__reorder">Reorder Soon</p>
               </td>
               <td class="price">{{ product.price }}</td>
               <td>
@@ -246,6 +272,18 @@ function thumbInitials(name) {
                   <button
                     type="button"
                     class="icon-btn"
+                    title="View product"
+                    aria-label="View product"
+                    @click="viewProduct(product)"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke-linejoin="round" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-btn"
                     title="Edit product"
                     aria-label="Edit product"
                     @click="editProduct(product)"
@@ -255,39 +293,29 @@ function thumbInitials(name) {
                       <path d="M13.5 6.5l3 3" stroke-linecap="round" />
                     </svg>
                   </button>
-
-                  <div class="menu">
-                    <button
-                      type="button"
-                      class="icon-btn"
-                      title="More actions"
-                      aria-label="More actions"
-                      :aria-expanded="openMenu === product.id"
-                      @click.stop="toggleMenu(product.id)"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none">
-                        <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none" />
-                        <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
-                        <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none" />
-                      </svg>
-                    </button>
-
-                    <div v-if="openMenu === product.id" class="menu__popup" @click.stop>
-                      <button type="button" class="menu__item" @click="duplicateProduct(product)">
-                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                          <rect x="9" y="9" width="11" height="11" rx="2" />
-                          <path d="M5 15V5a2 2 0 0 1 2-2h8" stroke-linecap="round" />
-                        </svg>
-                        Duplicate Product
-                      </button>
-                      <button type="button" class="menu__item menu__item--danger" @click="deleteProduct(product)">
-                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                          <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
-                        </svg>
-                        Delete Product
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    title="Duplicate product"
+                    aria-label="Duplicate product"
+                    @click="duplicateProduct(product)"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <rect x="9" y="9" width="11" height="11" rx="2" />
+                      <path d="M5 15V5a2 2 0 0 1 2-2h8" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-btn icon-btn--danger"
+                    title="Delete product"
+                    aria-label="Delete product"
+                    @click="deleteProduct(product)"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
                 </div>
               </td>
             </tr>
@@ -375,6 +403,11 @@ $divider: #eef0f3;
     &--danger {
       background: #fdecec;
       color: #d14343;
+      svg { stroke: currentColor; }
+    }
+    &--success {
+      background: #e6f7ee;
+      color: #1f9d57;
       svg { stroke: currentColor; }
     }
   }
@@ -585,14 +618,6 @@ $divider: #eef0f3;
 
 .stock {
   &__count { margin: 0; font-size: 0.88rem; font-weight: 600; color: $color-text; }
-  &__reorder {
-    margin: 0.15rem 0 0;
-    font-size: 0.66rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #b8890b;
-  }
 }
 
 .price { font-size: 0.9rem; font-weight: 600; color: $color-text; }
@@ -619,51 +644,9 @@ $divider: #eef0f3;
 
   &:hover { background: #f6f7f9; color: $color-text; border-color: #dfe2e7; }
 
+  &--danger:hover { background: #fdf2f2; color: #d14343; border-color: #f0c9c9; }
+
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
-}
-
-.menu {
-  position: relative;
-
-  &__popup {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 20;
-    min-width: 184px;
-    background: #fff;
-    border: 1px solid #e6e8ec;
-    border-radius: 10px;
-    box-shadow: 0 10px 28px rgba(20, 23, 28, 0.12);
-    padding: 0.35rem;
-    display: flex;
-    flex-direction: column;
-  }
-
-  &__item {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    width: 100%;
-    padding: 0.55rem 0.6rem;
-    font-size: 0.84rem;
-    font-weight: 500;
-    text-align: left;
-    color: #4a5160;
-    background: transparent;
-    border: none;
-    border-radius: 7px;
-    cursor: pointer;
-
-    &:hover { background: #f6f7f9; }
-
-    svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
-
-    &--danger {
-      color: #d14343;
-      &:hover { background: #fdf2f2; }
-    }
-  }
 }
 
 /* Pagination */

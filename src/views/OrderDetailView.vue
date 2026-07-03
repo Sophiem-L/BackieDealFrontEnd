@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -11,6 +11,9 @@ const router = useRouter()
 // for what an API would return. 'new' (Create New Order) shows the sample.
 const rawId = route.params.id
 const orderId = !rawId || rawId === 'new' ? '#ORD-1041' : `#${String(rawId).replace(/^#/, '')}`
+
+// The Orders list opens this page with ?edit=1 for editing; without it, it's read-only view.
+const isEditMode = computed(() => Boolean(route.query.edit))
 
 const order = ref({
   id: orderId,
@@ -33,41 +36,12 @@ const totals = {
   total: '$1,350.00',
 }
 
-const build = {
-  stageLabel: 'Assembly',
-  stagePercent: 80,
-  overallPercent: 60,
-  steps: [
-    { label: 'Parts Gathered', state: 'done' },
-    { label: 'Assembly', state: 'done' },
-    { label: 'OS Install', state: 'upcoming' },
-    { label: 'QA Testing', state: 'upcoming' },
-    { label: 'Ready to Ship', state: 'upcoming' },
-  ],
-}
-
-const delivery = {
-  status: 'Awaiting Dispatch',
-  courier: 'DHL Express',
-  tracking: '88241502',
-  eta: 'Oct 27, 2024',
-  timeline: [
-    { label: 'Label Created', state: 'done', at: 'Oct 25, 10:32 AM' },
-    { label: 'Picked Up by Courier', state: 'pending', at: 'Pending' },
-    { label: 'In Transit', state: 'pending', at: 'Pending' },
-    { label: 'Out for Delivery', state: 'pending', at: 'Pending' },
-    { label: 'Delivered', state: 'pending', at: 'Pending' },
-  ],
-}
-
 const customer = {
   name: 'Mike Robertson',
   email: 'mike.r@example.com',
   phone: '+1 (555) 204-8812',
   address: '14 Elmwood Drive, Austin, TX 78701',
 }
-
-const technician = { name: 'Mike R.', role: 'Senior Technician' }
 
 const payment = {
   method: 'QR Code (Paid)',
@@ -92,6 +66,10 @@ const statusLabels = {
   cancelled: 'Cancelled',
 }
 
+// Snapshot of the loaded status; the Edit button enables only when it changes.
+const savedStatus = ref(order.value.status)
+const isDirty = computed(() => order.value.status !== savedStatus.value)
+
 function money(value) {
   return `$${value.toFixed(2)}`
 }
@@ -105,18 +83,26 @@ function goBack() {
   else router.push({ name: 'orders' })
 }
 
-function markComplete() {
-  order.value.status = 'completed'
+function viewCustomer() {
+  // Open the customer in the Customers section for full detail.
+  router.push({ name: 'customers' })
 }
 
 function printInvoice() {
   window.print()
 }
+
+function editOrder() {
+  // No backend yet — persist the current edits (e.g. status) and return to the list.
+  savedStatus.value = order.value.status
+  window.alert(`Order ${order.value.id} updated.`)
+  router.push({ name: 'orders' })
+}
 </script>
 
 <template>
   <div class="page">
-    <AppHeader title="Order Detail" />
+    <AppHeader :title="isEditMode ? 'Edit Order' : 'Order Detail'" />
 
     <div class="page__body">
       <!-- Sub header -->
@@ -146,22 +132,29 @@ function printInvoice() {
             </template>
             Print Invoice
           </BaseButton>
-          <BaseButton
-            variant="primary"
-            :disabled="order.status === 'completed'"
-            @click="markComplete"
-          >
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            </template>
-            {{ order.status === 'completed' ? 'Completed' : 'Mark as Complete' }}
-          </BaseButton>
         </div>
       </section>
 
       <div class="grid">
         <!-- Main column -->
         <div class="col col--main">
+          <!-- Order status (read-only, view mode) -->
+          <section v-if="!isEditMode" class="card">
+            <header class="card__head">
+              <h3 class="card__title">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M9 11l3 3 8-8" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                Order Status
+              </h3>
+            </header>
+            <p class="status-text" :class="`status-text--${order.status}`">
+              <span class="status-text__dot" aria-hidden="true"></span>
+              {{ statusLabels[order.status] }}
+            </p>
+          </section>
+
           <!-- Order items -->
           <section class="card">
             <header class="card__head">
@@ -208,89 +201,44 @@ function printInvoice() {
             </dl>
           </section>
 
-          <!-- Build progress -->
-          <section class="card">
+          <!-- Order status (editable, edit mode) -->
+          <section v-if="isEditMode" class="card">
             <header class="card__head">
               <h3 class="card__title">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6V21h3.3l6-6a4 4 0 0 0 5.4-5.4l-2.3 2.3-2.6-.7-.7-2.6 2.3-2.3Z" stroke-linejoin="round" />
+                  <path d="M9 11l3 3 8-8" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
-                Build Progress
+                Order Status
               </h3>
-              <span class="card__aside">{{ build.stageLabel }} — {{ build.stagePercent }}%</span>
+              <span class="badge" :class="`badge--${order.status}`">{{ statusLabels[order.status] }}</span>
             </header>
 
-            <div class="progress">
-              <div class="progress__head">
-                <span>Overall Progress</span>
-                <span class="progress__pct">{{ build.overallPercent }}%</span>
-              </div>
-              <div class="progress__track">
-                <div class="progress__fill" :style="{ width: build.overallPercent + '%' }"></div>
-              </div>
-            </div>
-
-            <ol class="steps">
-              <li
-                v-for="(step, i) in build.steps"
-                :key="step.label"
-                class="step"
-                :class="`step--${step.state}`"
+            <div class="status-picker" role="group" aria-label="Update order status">
+              <button
+                v-for="(label, value) in statusLabels"
+                :key="value"
+                type="button"
+                class="status-opt"
+                :class="[`status-opt--${value}`, { 'is-active': order.status === value }]"
+                :aria-pressed="order.status === value"
+                @click="order.status = value"
               >
-                <span class="step__dot">
-                  <svg v-if="step.state === 'done'" viewBox="0 0 24 24" fill="none">
-                    <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  <span v-else>{{ i + 1 }}</span>
-                </span>
-                <span class="step__label">{{ step.label }}</span>
-              </li>
-            </ol>
-          </section>
-
-          <!-- Delivery & courier -->
-          <section class="card">
-            <header class="card__head">
-              <h3 class="card__title">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z" stroke-linejoin="round" />
-                  <circle cx="7" cy="18" r="1.6" />
-                  <circle cx="17.5" cy="18" r="1.6" />
+                <span class="status-opt__dot" aria-hidden="true"></span>
+                <span class="status-opt__label">{{ label }}</span>
+                <svg
+                  v-if="order.status === value"
+                  class="status-opt__check"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
-                Delivery &amp; Courier
-              </h3>
-              <span class="pill pill--warning">{{ delivery.status }}</span>
-            </header>
-
-            <div class="ship-meta">
-              <div>
-                <p class="ship-meta__label">Courier</p>
-                <p class="ship-meta__value">{{ delivery.courier }}</p>
-              </div>
-              <div>
-                <p class="ship-meta__label">Tracking No.</p>
-                <p class="ship-meta__value">{{ delivery.tracking }}</p>
-              </div>
-              <div>
-                <p class="ship-meta__label">Est. Delivery</p>
-                <p class="ship-meta__value">{{ delivery.eta }}</p>
-              </div>
+              </button>
             </div>
-
-            <p class="timeline__heading">Shipment Timeline</p>
-            <ul class="timeline">
-              <li
-                v-for="event in delivery.timeline"
-                :key="event.label"
-                class="timeline__item"
-                :class="{ 'is-done': event.state === 'done' }"
-              >
-                <span class="timeline__dot"></span>
-                <span class="timeline__label">{{ event.label }}</span>
-                <span class="timeline__at">{{ event.at }}</span>
-              </li>
-            </ul>
           </section>
+
         </div>
 
         <!-- Side column -->
@@ -306,13 +254,18 @@ function printInvoice() {
                 Customer
               </h3>
             </header>
-            <div class="customer">
+            <button
+              type="button"
+              class="customer customer--link"
+              title="View customer details"
+              @click="viewCustomer"
+            >
               <span class="customer__avatar">{{ thumbInitials(customer.name) }}</span>
               <div>
                 <p class="customer__name">{{ customer.name }}</p>
                 <p class="customer__email">{{ customer.email }}</p>
               </div>
-            </div>
+            </button>
             <ul class="info">
               <li>
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h4l2 5-2.5 1.5a11 11 0 0 0 5 5L14 19l5 2v-3a16 16 0 0 1-14-14H4Z" stroke-linejoin="round" /></svg>
@@ -323,29 +276,6 @@ function printInvoice() {
                 {{ customer.address }}
               </li>
             </ul>
-            <a href="#" class="link" @click.prevent>View Customer Profile →</a>
-          </section>
-
-          <!-- Assigned technician -->
-          <section class="card">
-            <header class="card__head">
-              <h3 class="card__title">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6V21h3.3l6-6a4 4 0 0 0 5.4-5.4l-2.3 2.3-2.6-.7-.7-2.6 2.3-2.3Z" stroke-linejoin="round" />
-                </svg>
-                Assigned Technician
-              </h3>
-            </header>
-            <div class="tech">
-              <span class="customer__avatar">{{ thumbInitials(technician.name) }}</span>
-              <div class="tech__meta">
-                <p class="customer__name">{{ technician.name }}</p>
-                <p class="customer__email">{{ technician.role }}</p>
-              </div>
-              <button type="button" class="icon-btn" title="Reassign technician" aria-label="Reassign technician">
-                <svg viewBox="0 0 24 24" fill="none"><path d="M4 7h11l-3-3M20 17H9l3 3" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              </button>
-            </div>
           </section>
 
           <!-- Payment -->
@@ -375,15 +305,26 @@ function printInvoice() {
                   <path d="M6 3h9l4 4v14H6Z" stroke-linejoin="round" />
                   <path d="M9 12h7M9 16h4" stroke-linecap="round" />
                 </svg>
-                Internal Notes
+                Notes
               </h3>
-              <a href="#" class="link" @click.prevent>+ Add Note</a>
             </header>
             <div v-for="note in notes" :key="note.id" class="note">
               <p class="note__body">{{ note.body }}</p>
               <p class="note__by">{{ note.author }} · {{ note.at }}</p>
             </div>
           </section>
+
+          <div v-if="isEditMode" class="detail-actions">
+            <BaseButton variant="primary" block :disabled="!isDirty" @click="editOrder">
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M12 20h9" stroke-linecap="round" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </template>
+              Edit Order
+            </BaseButton>
+          </div>
         </div>
       </div>
     </div>
@@ -495,8 +436,6 @@ $divider: #eef0f3;
 
     svg { width: 16px; height: 16px; stroke: $muted; stroke-width: 1.8; }
   }
-
-  &__aside { font-size: 0.78rem; font-weight: 600; color: #a8850a; }
 }
 
 /* Status badge */
@@ -514,17 +453,6 @@ $divider: #eef0f3;
   &--processing { background: rgba($accent, 0.22); color: #a8780a; }
   &--completed { background: #e6f7ee; color: #1f9d57; }
   &--cancelled { background: #fdecec; color: #d14343; }
-}
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.22rem 0.6rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  border-radius: 999px;
-
-  &--warning { background: #fff2d6; color: #b8890b; }
 }
 
 /* Order items */
@@ -598,146 +526,31 @@ $divider: #eef0f3;
   }
 }
 
-/* Build progress */
-.progress {
-  margin-bottom: 1.4rem;
-
-  &__head {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.8rem;
-    color: $muted;
-    margin-bottom: 0.45rem;
-  }
-
-  &__pct { font-weight: 700; color: $color-text; }
-
-  &__track {
-    height: 8px;
-    background: #f0f1f4;
-    border-radius: 999px;
-    overflow: hidden;
-  }
-
-  &__fill {
-    height: 100%;
-    background: $accent;
-    border-radius: 999px;
-    transition: width 0.3s ease;
-  }
-}
-
-.steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  justify-content: space-between;
-  gap: 0.4rem;
-}
-
-.step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.45rem;
-  flex: 1;
-  text-align: center;
-
-  &__dot {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    font-size: 0.8rem;
-    font-weight: 700;
-    background: #f0f1f4;
-    color: #9099a6;
-
-    svg { width: 16px; height: 16px; stroke: #1f242d; stroke-width: 2.2; }
-  }
-
-  &__label { font-size: 0.7rem; color: $muted; line-height: 1.2; }
-
-  &--done .step__dot { background: $accent; color: #1f242d; }
-  &--done .step__label { color: $color-text; font-weight: 600; }
-}
-
-/* Delivery */
-.ship-meta {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.75rem;
-  margin-bottom: 1.1rem;
-
-  &__label { margin: 0; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: $muted; }
-  &__value { margin: 0.25rem 0 0; font-size: 0.88rem; font-weight: 600; color: $color-text; }
-}
-
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-
-  &__heading {
-    margin: 0 0 0.6rem;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: $muted;
-  }
-
-  &__item {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    padding: 0.5rem 0 0.5rem 0.2rem;
-    font-size: 0.85rem;
-    color: $muted;
-
-    &:not(:last-child)::before {
-      content: '';
-      position: absolute;
-      left: 5px;
-      top: 1.4rem;
-      bottom: -0.4rem;
-      width: 2px;
-      background: $divider;
-    }
-
-    &.is-done { color: $color-text; font-weight: 600; }
-    &.is-done .timeline__dot { background: $accent; border-color: $accent; }
-  }
-
-  &__dot {
-    position: relative;
-    z-index: 1;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #fff;
-    border: 2px solid #d7dae0;
-    flex-shrink: 0;
-  }
-
-  &__label { flex: 1; }
-  &__at { font-size: 0.74rem; font-weight: 400; color: $muted; white-space: nowrap; }
-}
-
-/* Customer / technician */
-.customer,
-.tech {
+/* Customer */
+.customer {
   display: flex;
   align-items: center;
   gap: 0.7rem;
   margin-bottom: 0.9rem;
 }
 
-.tech { margin-bottom: 0; }
-.tech__meta { flex: 1; min-width: 0; }
+.customer--link {
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem;
+  margin: -0.4rem -0.4rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background: #f6f7f9;
+
+    .customer__name { color: #a8850a; text-decoration: underline; }
+  }
+}
 
 .customer__avatar {
   display: inline-flex;
@@ -773,28 +586,109 @@ $divider: #eef0f3;
   }
 }
 
-.link {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #a8850a;
-  &:hover { text-decoration: underline; }
+/* Order status */
+.status-picker {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+
+  @media (max-width: 520px) {
+    grid-template-columns: 1fr;
+  }
 }
 
-.icon-btn {
+.status-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem 0.85rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-align: left;
+  background: #fff;
+  border: 1.5px solid #e6e8ec;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+
+  &__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #c4c9d2;
+    flex-shrink: 0;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  &__label { flex: 1; }
+
+  &__check {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    flex-shrink: 0;
+  }
+
+  // Per-status accent colours, applied on hover + active.
+  $status-colors: (
+    'pending': (#b8890b, #fff2d6, #e0a815),
+    'processing': (#a8780a, rgba($accent, 0.22), $accent),
+    'completed': (#1f9d57, #e6f7ee, #1f9d57),
+    'cancelled': (#d14343, #fdecec, #d14343),
+  );
+
+  @each $name, $c in $status-colors {
+    $text: nth($c, 1);
+    $bg: nth($c, 2);
+    $dot: nth($c, 3);
+
+    &--#{$name}:hover {
+      border-color: $dot;
+      color: $text;
+    }
+
+    &--#{$name}.is-active {
+      background: $bg;
+      border-color: $dot;
+      color: $text;
+      box-shadow: 0 0 0 3px rgba($dot, 0.14);
+
+      .status-opt__dot { background: $dot; box-shadow: 0 0 0 3px rgba($dot, 0.2); }
+    }
+
+    &--#{$name}:hover .status-opt__dot { background: $dot; }
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba($accent, 0.35);
+  }
+}
+
+/* Read-only status (view mode) */
+.status-text {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
-  border-radius: 8px;
-  color: #6b7280;
-  cursor: pointer;
-  flex-shrink: 0;
-  &:hover { background: #f6f7f9; color: $color-text; }
-  svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+
+  &__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+
+  &--pending { color: #b8890b; }
+  &--processing { color: #a8780a; }
+  &--completed { color: #1f9d57; }
+  &--cancelled { color: #d14343; }
 }
 
 /* Payment key/value */
