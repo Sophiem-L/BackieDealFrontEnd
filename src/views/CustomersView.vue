@@ -18,8 +18,18 @@ const filtered = computed(() => {
   )
 })
 
+function viewCustomer(customer) {
+  router.push({ name: 'customer-detail', params: { id: customer.id } })
+}
+
 function editCustomer(customer) {
   router.push({ name: 'customer-edit', params: { id: customer.id } })
+}
+
+function deleteCustomer(customer) {
+  if (!window.confirm(`Delete ${customer.name}? This cannot be undone.`)) return
+  const index = customerAccounts.indexOf(customer)
+  if (index !== -1) customerAccounts.splice(index, 1)
 }
 
 function initials(name) {
@@ -76,7 +86,12 @@ function initials(name) {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="customer in filtered" :key="customer.id">
+            <tr
+              v-for="customer in filtered"
+              :key="customer.id"
+              class="table__row"
+              @click="viewCustomer(customer)"
+            >
               <td>
                 <div class="customer">
                   <span class="customer__avatar" :class="customer.avatar ? 'customer__avatar--photo' : `customer__avatar--${customer.tone}`">
@@ -96,16 +111,15 @@ function initials(name) {
               </td>
               <td>
                 <div class="row-actions">
-                  <button type="button" class="icon-btn" title="Email customer" aria-label="Email customer">
-                    <svg viewBox="0 0 24 24" fill="none">
-                      <rect x="3" y="5" width="18" height="14" rx="2" />
-                      <path d="m4 7 8 6 8-6" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                  </button>
-                  <button type="button" class="icon-btn" title="Edit customer" aria-label="Edit customer" @click="editCustomer(customer)">
+                  <button type="button" class="icon-btn" title="Edit customer" aria-label="Edit customer" @click.stop="editCustomer(customer)">
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
                       <path d="M13.5 6.5l3 3" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                  <button type="button" class="icon-btn icon-btn--danger" title="Delete customer" aria-label="Delete customer" @click.stop="deleteCustomer(customer)">
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                   </button>
                 </div>
@@ -209,6 +223,8 @@ $divider: #eef0f3;
   tbody tr + tr td { border-top: 1px solid $divider; }
   tbody tr:hover { background: #fafbfc; }
 
+  &__row { cursor: pointer; }
+
   &__actions-head { text-align: right; }
 
   &__empty { text-align: center; color: $muted; font-size: 0.88rem; padding: 2.5rem 1rem; }
@@ -288,5 +304,7 @@ $divider: #eef0f3;
   &:hover { background: #f6f7f9; color: $color-text; border-color: #dfe2e7; }
 
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
+
+  &--danger:hover { background: #fdf2f2; color: #d14343; border-color: #f0c9c9; }
 }
 </style>

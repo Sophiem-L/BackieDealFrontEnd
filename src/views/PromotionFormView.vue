@@ -76,10 +76,6 @@ function save() {
   // TODO: POST/PUT to the promotions API.
   router.push('/promotions')
 }
-function remove() {
-  // TODO: DELETE via the promotions API.
-  router.push('/promotions')
-}
 </script>
 
 <template>
@@ -94,31 +90,17 @@ function remove() {
             <path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
           <span>
-            <span class="subhead__crumb">Marketing &amp; Campaigns</span>
-            <span class="subhead__title">{{ form.name || 'New Campaign' }}</span>
+            <span class="subhead__title">{{ isEdit ? 'Edit Promotion' : 'New Promotion' }}</span>
           </span>
         </RouterLink>
 
-        <div class="subhead__actions">
-          <BaseButton v-if="isEdit" variant="danger" @click="remove">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </template>
-            Delete Campaign
-          </BaseButton>
-          <BaseButton variant="primary" @click="save">
-            {{ isEdit ? 'Update Campaign' : 'Create Campaign' }}
-          </BaseButton>
-        </div>
       </div>
 
       <div class="grid">
         <!-- Main column -->
         <div class="col">
           <section class="card">
-            <h3 class="card__title">Campaign Details</h3>
+            <h3 class="card__title">Promotion Details</h3>
             <div class="field">
               <label for="name">Promotion Name</label>
               <input id="name" v-model="form.name" type="text" placeholder="e.g. Black Friday Sale 2023" />
@@ -139,7 +121,7 @@ function remove() {
               </div>
             </div>
             <div class="field">
-              <label for="description">Internal Description</label>
+              <label for="description">Description</label>
               <textarea id="description" v-model="form.description" rows="3" placeholder="Notes for your team..."></textarea>
             </div>
           </section>
@@ -251,6 +233,14 @@ function remove() {
           </section>
         </div>
       </div>
+
+      <!-- Form actions -->
+      <div class="actions">
+        <BaseButton variant="ghost" to="/promotions">Cancel</BaseButton>
+        <BaseButton variant="primary" @click="save">
+          {{ isEdit ? 'Update Promotion' : 'Create Promotion' }}
+        </BaseButton>
+      </div>
     </div>
   </div>
 </template>
@@ -311,6 +301,13 @@ $divider: #eef0f3;
   align-items: start;
 
   @media (max-width: 920px) { grid-template-columns: 1fr; }
+}
+
+/* Bottom action bar */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
 }
 
 .col {

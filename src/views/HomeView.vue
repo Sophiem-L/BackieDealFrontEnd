@@ -122,23 +122,7 @@ function openOrder(order) {
           <h2 class="intro__title">Welcome back, Admin</h2>
           <p class="intro__sub">Here's how Beckie Deal is performing.</p>
         </div>
-        <div class="intro__actions">
-          <span class="status" :class="usingSample ? 'status--sample' : 'status--live'">
-            <i></i>{{ dashboard.loading ? 'Loading…' : usingSample ? 'Sample data' : 'Live data' }}
-          </span>
-          <BaseButton variant="primary" :to="{ name: 'order-create' }">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-            </template>
-            New Order
-          </BaseButton>
-        </div>
       </section>
-
-      <!-- Sample-data notice when the dashboard service can't be reached -->
-      <p v-if="usingSample && dashboard.error" class="notice" role="status">
-        Showing sample figures — couldn't load live data ({{ dashboard.error }}).
-      </p>
 
       <!-- KPI cards -->
       <section class="stats">
@@ -163,23 +147,6 @@ function openOrder(order) {
           </span>
           <p class="stat__value">{{ kpi.value }}</p>
           <p class="stat__label">{{ kpi.label }}</p>
-        </article>
-      </section>
-
-      <!-- Today / month / year breakdown -->
-      <section class="periods">
-        <article v-for="p in periods" :key="p.key" class="period-card">
-          <p class="period-card__label">{{ p.label }}</p>
-          <div class="period-card__rows">
-            <div class="period-card__row">
-              <span class="period-card__num">{{ p.revenue }}</span>
-              <span class="period-card__cap">Revenue</span>
-            </div>
-            <div class="period-card__row">
-              <span class="period-card__num">{{ p.orders }}</span>
-              <span class="period-card__cap">Orders</span>
-            </div>
-          </div>
         </article>
       </section>
 

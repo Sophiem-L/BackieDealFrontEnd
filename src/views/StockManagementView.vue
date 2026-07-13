@@ -6,8 +6,16 @@ import BaseButton from '@/components/BaseButton.vue'
 
 const router = useRouter()
 
-// Summary cards — Total Value and Warehouse Capacity intentionally omitted.
+// Summary cards.
 const stats = [
+  {
+    key: 'total',
+    label: 'Total Items',
+    value: '1,284',
+    note: 'All tracked products',
+    icon: 'box',
+    tone: 'neutral',
+  },
   {
     key: 'low',
     label: 'Low Stock Items',
@@ -23,6 +31,14 @@ const stats = [
     note: 'Inactive listings',
     icon: 'forbidden',
     tone: 'danger',
+  },
+  {
+    key: 'in-stock',
+    label: 'In Stock',
+    value: '1,261',
+    note: 'Available to sell',
+    icon: 'check',
+    tone: 'success',
   },
 ]
 
@@ -86,7 +102,7 @@ const items = ref([
 ])
 
 const availabilityLabels = {
-  healthy: 'Healthy',
+  healthy: 'In Stock',
   'low-stock': 'Low Stock',
   'out-of-stock': 'Out of Stock',
 }
@@ -178,15 +194,6 @@ function thumbInitials(name) {
 
         <div class="toolbar__spacer"></div>
 
-        <BaseButton variant="ghost">
-          <template #icon>
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M12 15V3m0 0L8 7m4-4 4 4" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
-            </svg>
-          </template>
-          Export Inventory
-        </BaseButton>
         <BaseButton variant="primary" :to="{ name: 'stock-adjustment-create' }">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
@@ -199,9 +206,17 @@ function thumbInitials(name) {
       <section class="stats">
         <article v-for="stat in stats" :key="stat.key" class="stat">
           <span class="stat__icon" :class="`stat__icon--${stat.tone}`" aria-hidden="true">
-            <svg v-if="stat.icon === 'warning'" viewBox="0 0 24 24" fill="none">
+            <svg v-if="stat.icon === 'box'" viewBox="0 0 24 24" fill="none">
+              <path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z" stroke-linejoin="round" />
+              <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" stroke-linejoin="round" />
+            </svg>
+            <svg v-else-if="stat.icon === 'warning'" viewBox="0 0 24 24" fill="none">
               <path d="M12 3 2 20h20L12 3Z" stroke-linejoin="round" />
               <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
+            </svg>
+            <svg v-else-if="stat.icon === 'check'" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" />
+              <path d="m8.5 12 2.5 2.5 4.5-5" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <svg v-else viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="9" />
@@ -224,7 +239,6 @@ function thumbInitials(name) {
               <th>Product &amp; SKU</th>
               <th>Start-Date</th>
               <th>On Hand</th>
-              <th>Threshold</th>
               <th>Availability</th>
             </tr>
           </thead>
@@ -249,7 +263,6 @@ function thumbInitials(name) {
                 <span class="onhand" :class="`onhand--${item.availability}`">{{ item.onHand }}</span>
                 <span class="onhand__unit">units</span>
               </td>
-              <td class="threshold">Min: {{ item.threshold }}</td>
               <td>
                 <span class="badge" :class="`badge--${item.availability}`">
                   {{ availabilityLabels[item.availability] }}
@@ -257,7 +270,7 @@ function thumbInitials(name) {
               </td>
             </tr>
             <tr v-if="filteredItems.length === 0">
-              <td colspan="5" class="table__empty">No products match your filters.</td>
+              <td colspan="4" class="table__empty">No products match your filters.</td>
             </tr>
           </tbody>
         </table>
@@ -393,12 +406,11 @@ $divider: #eef0f3;
 /* Stat cards */
 .stats {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
 
-  @media (max-width: 640px) {
-    grid-template-columns: 1fr;
-  }
+  @media (max-width: 1100px) { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 560px) { grid-template-columns: 1fr; }
 }
 
 .stat {
@@ -421,8 +433,10 @@ $divider: #eef0f3;
 
     svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.8; }
 
+    &--neutral { background: #f1f3f5; color: #5b6472; }
     &--warning { background: rgba($accent, 0.16); color: #b8890b; }
     &--danger { background: #fdecec; color: #d14343; }
+    &--success { background: #e6f7ee; color: #1f9d57; }
   }
 
   &__label {
@@ -542,11 +556,6 @@ $divider: #eef0f3;
     letter-spacing: 0.03em;
     color: $muted;
   }
-}
-
-.threshold {
-  font-size: 0.85rem;
-  color: $muted;
 }
 
 .badge {

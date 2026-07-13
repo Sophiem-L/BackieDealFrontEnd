@@ -3,64 +3,20 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { promotions as promotionData } from '@/data/promotions'
 
 const router = useRouter()
 
-const promotions = ref([
-  {
-    id: 1,
-    name: 'Black Friday Sale',
-    code: 'BLACKFRIDAY2023',
-    period: 'Nov 20 - Nov 30',
-    status: 'active',
-    benefit: 'Up to 30% OFF',
-    benefitType: 'Percentage',
-    used: 245,
-    limit: 500,
-    banner: 'linear-gradient(135deg, #b3091a 0%, #2b0a0a 100%)',
-  },
-  {
-    id: 2,
-    name: 'Intel 14th Gen Launch',
-    code: 'INTEL14TH',
-    period: 'Oct 15 - Oct 31',
-    status: 'active',
-    benefit: 'Flat $50 OFF',
-    benefitType: 'Fixed Amount',
-    used: 112,
-    limit: 200,
-    banner: 'linear-gradient(135deg, #0a3a6b 0%, #061b33 100%)',
-  },
-  {
-    id: 3,
-    name: 'Student Special',
-    code: 'STUDENT10',
-    period: 'Permanent',
-    status: 'paused',
-    benefit: '10% OFF Storewide',
-    benefitType: 'Percentage',
-    used: 892,
-    limit: null,
-    banner: 'linear-gradient(135deg, #1f6f5c 0%, #0c2e27 100%)',
-  },
-  {
-    id: 4,
-    name: 'NVIDIA Bundle Promo',
-    code: 'RTXBUNDLE',
-    period: 'Sep 01 - Sep 30',
-    status: 'expired',
-    benefit: 'Free Game Key',
-    benefitType: 'Gift',
-    used: 150,
-    limit: 150,
-    banner: 'linear-gradient(135deg, #2f7d3a 0%, #0c2913 100%)',
-  },
-])
+const promotions = ref([...promotionData])
 
 const statusLabels = { active: 'Active', paused: 'Paused', expired: 'Expired' }
 
 function usageText(promo) {
   return `${promo.used}/${promo.limit ?? '∞'}`
+}
+
+function viewPromotion(promo) {
+  router.push({ name: 'promotion-detail', params: { id: promo.id } })
 }
 
 function editPromotion(promo) {
@@ -109,7 +65,15 @@ function deletePromotion(promo) {
 
       <!-- Cards grid -->
       <section class="grid">
-        <article v-for="promo in promotions" :key="promo.id" class="promo">
+        <article
+          v-for="promo in promotions"
+          :key="promo.id"
+          class="promo"
+          role="button"
+          tabindex="0"
+          @click="viewPromotion(promo)"
+          @keydown.enter="viewPromotion(promo)"
+        >
           <div class="promo__banner" :style="{ background: promo.banner }">
             <span class="promo__status" :class="`promo__status--${promo.status}`">
               {{ statusLabels[promo.status] }}
@@ -121,7 +85,7 @@ function deletePromotion(promo) {
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.2-6.2A2 2 0 0 1 4 12V5a1 1 0 0 1 1-1h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6Z" stroke-linejoin="round" />
                   </svg>
-                  {{ promo.code }}
+                  {{ promo.benefitType }}
                 </span>
                 <span class="chip chip--dark">
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -147,9 +111,8 @@ function deletePromotion(promo) {
             </div>
 
             <div class="promo__footer">
-              <span class="chip chip--type">{{ promo.benefitType }}</span>
               <div class="promo__actions">
-                <BaseButton variant="ghost" size="sm" @click="editPromotion(promo)">
+                <BaseButton variant="ghost" size="sm" @click.stop="editPromotion(promo)">
                   <template #icon>
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
@@ -162,7 +125,7 @@ function deletePromotion(promo) {
                   type="button"
                   class="icon-btn icon-btn--danger"
                   aria-label="Delete promotion"
-                  @click="deletePromotion(promo)"
+                  @click.stop="deletePromotion(promo)"
                 >
                   <svg viewBox="0 0 24 24" fill="none">
                     <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
@@ -261,10 +224,12 @@ $divider: #eef0f3;
 /* Cards */
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1.25rem;
 
-  @media (max-width: 860px) { grid-template-columns: 1fr; }
+  @media (max-width: 1200px) { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 900px) { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 560px) { grid-template-columns: 1fr; }
 }
 
 .promo {
@@ -274,6 +239,20 @@ $divider: #eef0f3;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    border-color: #dfe2e7;
+    box-shadow: 0 8px 24px rgba(20, 23, 28, 0.1);
+    transform: translateY(-2px);
+  }
+
+  &:focus-visible {
+    outline: none;
+    border-color: $accent;
+    box-shadow: 0 0 0 3px rgba($accent, 0.3);
+  }
 
   &__banner {
     position: relative;
@@ -354,7 +333,7 @@ $divider: #eef0f3;
   &__footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 0.75rem;
     padding-top: 0.9rem;
     border-top: 1px solid $divider;
@@ -378,15 +357,6 @@ $divider: #eef0f3;
     background: rgba(0, 0, 0, 0.45);
     color: #fff;
     backdrop-filter: blur(2px);
-  }
-
-  &--type {
-    background: #f1f3f5;
-    color: #5b6472;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 0.64rem;
-    font-weight: 700;
   }
 }
 

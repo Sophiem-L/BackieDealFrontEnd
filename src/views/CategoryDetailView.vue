@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { products as catalog } from '@/data/products'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,20 +18,6 @@ const categoryName = computed(() => {
     .join(' ')
 })
 
-const stats = [
-  { key: 'products', label: 'Total Products', value: '42', icon: 'box' },
-  { key: 'inventory', label: 'Total Inventory', value: '158 Units', icon: 'layers' },
-  { key: 'sales', label: 'Monthly Sales', value: '$124,500', icon: 'chart' },
-  { key: 'subs', label: 'Sub-Categories', value: '3', icon: 'tag' },
-]
-
-const tabs = [
-  { key: 'products', label: 'Products in Category' },
-  { key: 'attributes', label: 'Attributes & Filters' },
-  { key: 'seo', label: 'SEO & Meta' },
-]
-const activeTab = ref('products')
-
 const search = ref('')
 
 const products = ref([
@@ -41,7 +28,12 @@ const products = ref([
   { name: 'Gigabyte Eagle RTX 4060', sku: 'GB-RTX4060-EG', price: '$299', stock: 15, status: 'active' },
 ])
 
-const statusLabels = { active: 'Active', 'out-of-stock': 'Out of Stock' }
+const statusLabels = { 'in-stock': 'In Stock', 'out-of-stock': 'Out of Stock' }
+
+// Status reflects availability, derived from stock on hand.
+function stockStatus(product) {
+  return product.stock > 0 ? 'in-stock' : 'out-of-stock'
+}
 
 const filteredProducts = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -53,6 +45,60 @@ const filteredProducts = computed(() => {
 
 function thumbInitials(name) {
   return name.replace(/[^A-Za-z0-9 ]/g, '').slice(0, 2).toUpperCase()
+}
+
+function money(value) {
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+}
+
+// --- Add Product to Category picker ---------------------------------------
+const pickerOpen = ref(false)
+const pickerSearch = ref('')
+// SKUs ticked in the picker; multiple products can be added at once.
+const selectedSkus = ref([])
+
+// Catalog products that aren't already part of this category, filtered by search.
+const availableProducts = computed(() => {
+  const inCategory = new Set(products.value.map((p) => p.sku))
+  const q = pickerSearch.value.trim().toLowerCase()
+  return catalog.filter((p) => {
+    if (inCategory.has(p.sku)) return false
+    if (!q) return true
+    return p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
+  })
+})
+
+function toggleSku(sku) {
+  const i = selectedSkus.value.indexOf(sku)
+  if (i === -1) selectedSkus.value.push(sku)
+  else selectedSkus.value.splice(i, 1)
+}
+
+function openPicker() {
+  pickerSearch.value = ''
+  selectedSkus.value = []
+  pickerOpen.value = true
+}
+
+function closePicker() {
+  pickerOpen.value = false
+}
+
+function addSelectedProducts() {
+  const picked = catalog.filter((p) => selectedSkus.value.includes(p.sku))
+  if (picked.length === 0) return
+  // No backend yet — add the chosen products to the in-memory list. Stock isn't
+  // allocated to the category yet, so each starts at zero / out of stock.
+  for (const p of picked) {
+    products.value.push({
+      name: p.name,
+      sku: p.sku,
+      price: money(p.price),
+      stock: 0,
+      status: 'out-of-stock',
+    })
+  }
+  closePicker()
 }
 </script>
 
@@ -73,16 +119,7 @@ function thumbInitials(name) {
           </div>
         </div>
         <div class="lead__actions">
-          <BaseButton variant="ghost">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M12 2.5l1.6 2.3 2.8-.5.6 2.8 2.6 1.2-1 2.6 1 2.6-2.6 1.2-.6 2.8-2.8-.5L12 21.5l-1.6-2.3-2.8.5-.6-2.8-2.6-1.2 1-2.6-1-2.6 2.6-1.2.6-2.8 2.8.5L12 2.5Z" stroke-linejoin="round" />
-              </svg>
-            </template>
-            Category Settings
-          </BaseButton>
-          <BaseButton variant="primary">
+          <BaseButton variant="primary" @click="openPicker">
             <template #icon>
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
             </template>
@@ -91,50 +128,11 @@ function thumbInitials(name) {
         </div>
       </section>
 
-      <!-- Stat cards -->
-      <section class="stats">
-        <article v-for="stat in stats" :key="stat.key" class="stat">
-          <span class="stat__icon" aria-hidden="true">
-            <svg v-if="stat.icon === 'box'" viewBox="0 0 24 24" fill="none">
-              <path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z" stroke-linejoin="round" />
-              <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" stroke-linejoin="round" />
-            </svg>
-            <svg v-else-if="stat.icon === 'layers'" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2 2 7l10 5 10-5-10-5Z" stroke-linejoin="round" />
-              <path d="m2 12 10 5 10-5M2 17l10 5 10-5" stroke-linejoin="round" />
-            </svg>
-            <svg v-else-if="stat.icon === 'chart'" viewBox="0 0 24 24" fill="none">
-              <path d="M3 17l6-6 4 4 7-7" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M14 7h6v6" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" fill="none">
-              <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.2-6.2a2 2 0 0 1-.6-1.4V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l6.4 6.4a2 2 0 0 1 0 2.4Z" stroke-linejoin="round" />
-              <circle cx="8" cy="8" r="1.3" />
-            </svg>
-          </span>
-          <div class="stat__meta">
-            <p class="stat__label">{{ stat.label }}</p>
-            <p class="stat__value">{{ stat.value }}</p>
-          </div>
-        </article>
-      </section>
-
-      <!-- Tabbed content card -->
+      <!-- Products content card -->
       <section class="table-card">
-        <header class="tabs">
-          <nav class="tabs__list">
-            <button
-              v-for="tab in tabs"
-              :key="tab.key"
-              type="button"
-              class="tabs__tab"
-              :class="{ 'is-active': activeTab === tab.key }"
-              @click="activeTab = tab.key"
-            >
-              {{ tab.label }}
-            </button>
-          </nav>
-          <label v-if="activeTab === 'products'" class="tabs__search">
+        <header class="table-head">
+          <h3 class="table-head__title">Products in Category</h3>
+          <label class="table-head__search">
             <span aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none">
                 <circle cx="11" cy="11" r="7" />
@@ -145,8 +143,7 @@ function thumbInitials(name) {
           </label>
         </header>
 
-        <!-- Products tab -->
-        <table v-if="activeTab === 'products'" class="table">
+        <table class="table">
           <thead>
             <tr>
               <th>Product</th>
@@ -170,7 +167,7 @@ function thumbInitials(name) {
                 <span class="stock" :class="{ 'stock--out': product.stock === 0 }">{{ product.stock }} pcs</span>
               </td>
               <td>
-                <span class="badge" :class="`badge--${product.status}`">{{ statusLabels[product.status] }}</span>
+                <span class="badge" :class="`badge--${stockStatus(product)}`">{{ statusLabels[stockStatus(product)] }}</span>
               </td>
             </tr>
             <tr v-if="filteredProducts.length === 0">
@@ -178,20 +175,75 @@ function thumbInitials(name) {
             </tr>
           </tbody>
         </table>
-
-        <!-- Placeholder tabs -->
-        <div v-else class="placeholder">
-          <p class="placeholder__title">
-            {{ activeTab === 'attributes' ? 'Attributes & Filters' : 'SEO & Meta' }}
-          </p>
-          <p class="placeholder__sub">
-            {{ activeTab === 'attributes'
-              ? 'Define the filterable attributes shoppers can use to narrow this category.'
-              : 'Set the meta title, description and slug used for this category page.' }}
-          </p>
-        </div>
       </section>
     </div>
+
+    <!-- Add product to category picker -->
+    <Teleport to="body">
+      <div v-if="pickerOpen" class="modal" @click.self="closePicker">
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="addProductTitle">
+          <header class="modal__header">
+            <h3 id="addProductTitle" class="modal__title">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z" stroke-linejoin="round" />
+                <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" stroke-linejoin="round" />
+              </svg>
+              Add Product to {{ categoryName }}
+            </h3>
+            <button type="button" class="modal__close" aria-label="Close" @click="closePicker">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+              </svg>
+            </button>
+          </header>
+
+          <div class="modal__body">
+            <label class="picker-search">
+              <span aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.2-3.2" stroke-linecap="round" />
+                </svg>
+              </span>
+              <input v-model="pickerSearch" type="search" placeholder="Search products to add..." />
+            </label>
+
+            <ul class="picker-list">
+              <li v-for="product in availableProducts" :key="product.sku">
+                <label
+                  class="picker-item"
+                  :class="{ 'is-selected': selectedSkus.includes(product.sku) }"
+                >
+                  <input
+                    type="checkbox"
+                    class="picker-item__checkbox"
+                    :value="product.sku"
+                    :checked="selectedSkus.includes(product.sku)"
+                    @change="toggleSku(product.sku)"
+                  />
+                  <span class="picker-item__thumb" aria-hidden="true">{{ thumbInitials(product.name) }}</span>
+                  <span class="picker-item__meta">
+                    <span class="picker-item__name">{{ product.name }}</span>
+                    <span class="picker-item__sub">{{ product.sku }} · {{ product.category }}</span>
+                  </span>
+                  <span class="picker-item__price">{{ money(product.price) }}</span>
+                </label>
+              </li>
+              <li v-if="availableProducts.length === 0" class="picker-empty">
+                {{ pickerSearch ? 'No matching products found.' : 'All products are already in this category.' }}
+              </li>
+            </ul>
+          </div>
+
+          <footer class="modal__footer">
+            <BaseButton variant="ghost" @click="closePicker">Cancel</BaseButton>
+            <BaseButton variant="primary" :disabled="selectedSkus.length === 0" @click="addSelectedProducts">
+              {{ selectedSkus.length ? `Add ${selectedSkus.length} Product${selectedSkus.length > 1 ? 's' : ''}` : 'Add Products' }}
+            </BaseButton>
+          </footer>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -258,80 +310,33 @@ $divider: #eef0f3;
   &__actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 }
 
-/* Stat cards */
-.stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1rem;
-
-  @media (max-width: 900px) { grid-template-columns: repeat(2, 1fr); }
-  @media (max-width: 480px) { grid-template-columns: 1fr; }
-}
-
-.stat {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  background: #fff;
-  border: 1px solid $divider;
-  border-radius: 14px;
-  padding: 1.1rem 1.25rem;
-
-  &__icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    background: #f4f5f7;
-    color: #6b7280;
-    flex-shrink: 0;
-    svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.8; }
-  }
-
-  &__label { margin: 0; font-size: 0.74rem; color: $muted; }
-  &__value { margin: 0.2rem 0 0; font-size: 1.35rem; font-weight: 700; color: $color-text; }
-}
-
-/* Tabbed table card */
+/* Products table card */
 .table-card {
   background: #fff;
   border: 1px solid $divider;
   border-radius: 14px;
 }
 
-.tabs {
+.table-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.5rem 1rem 0;
+  padding: 1rem 1rem 0.9rem;
   border-bottom: 1px solid $divider;
   flex-wrap: wrap;
 
-  &__list { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-
-  &__tab {
-    padding: 0.8rem 0.85rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    font-family: inherit;
-    color: $muted;
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-    cursor: pointer;
-    &:hover { color: $color-text; }
-    &.is-active { color: #1f242d; border-bottom-color: $accent; }
+  &__title {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: $color-text;
   }
 
   &__search {
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    margin-bottom: 0.5rem;
     padding: 0 0.7rem;
     background: #f4f5f7;
     border: 1px solid transparent;
@@ -342,8 +347,8 @@ $divider: #eef0f3;
     svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
 
     input {
-      width: 200px;
-      max-width: 40vw;
+      width: 360px;
+      max-width: 60vw;
       border: none;
       background: transparent;
       padding: 0.5rem 0;
@@ -421,15 +426,173 @@ $divider: #eef0f3;
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--active { background: #e6f7ee; color: #1f9d57; }
+  &--in-stock { background: #e6f7ee; color: #1f9d57; }
   &--out-of-stock { background: #fdecec; color: #d14343; }
 }
 
-.placeholder {
-  padding: 3rem 1.5rem;
-  text-align: center;
+/* Add product modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(17, 22, 30, 0.5);
+  backdrop-filter: blur(2px);
 
-  &__title { margin: 0; font-size: 1rem; font-weight: 700; color: $color-text; }
-  &__sub { margin: 0.4rem auto 0; max-width: 420px; font-size: 0.86rem; color: $muted; }
+  &__dialog {
+    width: 100%;
+    max-width: 520px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 50px rgba(15, 20, 30, 0.25);
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 2.5rem);
+    overflow: hidden;
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid $divider;
+  }
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: $color-text;
+
+    svg { width: 18px; height: 18px; stroke: $accent; stroke-width: 1.8; }
+  }
+
+  &__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: $muted;
+    cursor: pointer;
+
+    &:hover { background: #f4f5f7; color: $color-text; }
+    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
+  }
+
+  &__body {
+    padding: 1.25rem 1.5rem;
+    overflow-y: auto;
+  }
+
+  &__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid $divider;
+  }
+}
+
+.picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.7rem;
+  margin-bottom: 0.85rem;
+  background: #f4f5f7;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  &:focus-within { background: #fff; border-color: #e6e8ec; }
+
+  span { display: inline-flex; color: $muted; }
+  svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
+
+  input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 0.55rem 0;
+    font-size: 0.85rem;
+    font-family: inherit;
+    color: $color-text;
+    &:focus { outline: none; }
+  }
+}
+
+.picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.picker-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.7rem;
+  background: #fff;
+  border: 1.5px solid #eef0f3;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+
+  &:hover { border-color: #d7dae0; background: #fafbfc; }
+
+  &.is-selected {
+    border-color: $accent;
+    background: rgba($accent, 0.1);
+  }
+
+  &__checkbox {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    accent-color: $accent;
+    cursor: pointer;
+  }
+
+  &__thumb {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background: #eef0f3;
+    color: #6b7280;
+    font-size: 0.7rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  &__meta { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
+  &__name { font-size: 0.86rem; font-weight: 600; color: $color-text; }
+  &__sub { font-size: 0.74rem; color: $muted; }
+  &__price { font-size: 0.86rem; font-weight: 700; color: $color-text; white-space: nowrap; }
+}
+
+.picker-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  font-size: 0.86rem;
+  color: $muted;
 }
 </style>

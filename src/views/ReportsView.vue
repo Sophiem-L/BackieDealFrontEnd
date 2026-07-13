@@ -91,29 +91,6 @@ const unitsPeak = Math.max(...topProducts.map((p) => p.units))
           <h2 class="intro__title">Order & Sales Volume</h2>
           <p class="intro__sub">Orders, units and fulfillment across {{ range.toLowerCase() }}.</p>
         </div>
-        <div class="intro__actions">
-          <label class="rangepick">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="17" rx="2" />
-              <path d="M3 9h18M8 2v4M16 2v4" stroke-linecap="round" />
-            </svg>
-            <select v-model="range">
-              <option v-for="r in ranges" :key="r" :value="r">{{ r }}</option>
-            </select>
-            <svg class="rangepick__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </label>
-          <BaseButton variant="ghost">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M12 3v12m0 0 4-4m-4 4-4-4" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
-              </svg>
-            </template>
-            Export
-          </BaseButton>
-        </div>
       </section>
 
       <!-- KPI cards -->

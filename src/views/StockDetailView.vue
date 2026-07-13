@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
-import BaseButton from '@/components/BaseButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -87,24 +86,10 @@ const records = {
 const item = computed(() => records[route.params.id] || records[1])
 
 const availabilityLabels = {
-  healthy: 'Healthy',
+  healthy: 'In Stock',
   'low-stock': 'Low Stock',
   'out-of-stock': 'Out of Stock',
 }
-
-const stockValue = computed(() =>
-  (item.value.onHand * item.value.unitPrice).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }),
-)
-
-const unitPriceLabel = computed(() =>
-  item.value.unitPrice.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }),
-)
 
 // Sample adjustment history (most recent first).
 const history = ref([
@@ -130,7 +115,6 @@ function thumbInitials(name) {
       <!-- Heading -->
       <section class="lead">
         <div class="lead__text">
-          <RouterLink class="lead__crumb" :to="{ name: 'stock' }">All Stock</RouterLink>
           <div class="lead__row">
             <button type="button" class="lead__back" aria-label="Back to stock management" @click="router.back()">
               <svg viewBox="0 0 24 24" fill="none"><path d="m15 6-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
@@ -139,78 +123,6 @@ function thumbInitials(name) {
             <span class="badge" :class="`badge--${item.availability}`">{{ availabilityLabels[item.availability] }}</span>
           </div>
         </div>
-        <div class="lead__actions">
-          <BaseButton variant="ghost">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
-                <path d="M13.5 6.5l3 3" stroke-linecap="round" />
-              </svg>
-            </template>
-            Edit Product
-          </BaseButton>
-          <BaseButton variant="primary" :to="{ name: 'stock-adjustment-create' }">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-            </template>
-            Adjust Stock
-          </BaseButton>
-        </div>
-      </section>
-
-      <!-- Stat cards -->
-      <section class="stats">
-        <article class="stat">
-          <span class="stat__icon stat__icon--neutral" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z" stroke-linejoin="round" />
-              <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" stroke-linejoin="round" />
-            </svg>
-          </span>
-          <div class="stat__meta">
-            <p class="stat__label">On Hand</p>
-            <p class="stat__value" :class="`stat__value--${item.availability}`">{{ item.onHand }} <span>units</span></p>
-          </div>
-        </article>
-
-        <article class="stat">
-          <span class="stat__icon stat__icon--warning" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M12 3 2 20h20L12 3Z" stroke-linejoin="round" />
-              <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
-            </svg>
-          </span>
-          <div class="stat__meta">
-            <p class="stat__label">Low Stock Threshold</p>
-            <p class="stat__value">Min: {{ item.threshold }}</p>
-          </div>
-        </article>
-
-        <article class="stat">
-          <span class="stat__icon stat__icon--neutral" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M3 17l6-6 4 4 7-7" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M14 7h6v6" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </span>
-          <div class="stat__meta">
-            <p class="stat__label">Stock Value</p>
-            <p class="stat__value">${{ stockValue }}</p>
-          </div>
-        </article>
-
-        <article class="stat">
-          <span class="stat__icon stat__icon--neutral" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M12 2 2 7l10 5 10-5-10-5Z" stroke-linejoin="round" />
-              <path d="m2 12 10 5 10-5M2 17l10 5 10-5" stroke-linejoin="round" />
-            </svg>
-          </span>
-          <div class="stat__meta">
-            <p class="stat__label">Unit Price</p>
-            <p class="stat__value">${{ unitPriceLabel }}</p>
-          </div>
-        </article>
       </section>
 
       <div class="grid">
@@ -295,15 +207,6 @@ $divider: #eef0f3;
   gap: 1rem;
   flex-wrap: wrap;
 
-  &__crumb {
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: $muted;
-    &:hover { color: #4a5160; text-decoration: none; }
-  }
-
   &__row {
     display: flex;
     align-items: center;
@@ -328,56 +231,6 @@ $divider: #eef0f3;
   }
 
   &__title { margin: 0; font-size: 1.4rem; font-weight: 700; color: $color-text; }
-
-  &__actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-}
-
-/* Stat cards */
-.stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1rem;
-
-  @media (max-width: 900px) { grid-template-columns: repeat(2, 1fr); }
-  @media (max-width: 480px) { grid-template-columns: 1fr; }
-}
-
-.stat {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  background: #fff;
-  border: 1px solid $divider;
-  border-radius: 14px;
-  padding: 1.1rem 1.25rem;
-
-  &__icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    flex-shrink: 0;
-    svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.8; }
-
-    &--neutral { background: #f4f5f7; color: #6b7280; }
-    &--warning { background: rgba($accent, 0.16); color: #b8890b; }
-  }
-
-  &__label { margin: 0; font-size: 0.74rem; color: $muted; }
-
-  &__value {
-    margin: 0.2rem 0 0;
-    font-size: 1.35rem;
-    font-weight: 700;
-    color: $color-text;
-
-    span { font-size: 0.78rem; font-weight: 600; color: $muted; text-transform: uppercase; }
-
-    &--low-stock { color: #b8890b; }
-    &--out-of-stock { color: #d14343; }
-  }
 }
 
 /* Layout */

@@ -249,17 +249,6 @@ function exportOrders() {
               {{ tab.label }} ({{ tab.count }})
             </button>
           </nav>
-          <div class="tabs__meta">
-            <span class="tabs__count">Showing 1-{{ filteredOrders.length }} of 142</span>
-            <div class="tabs__nav">
-              <button type="button" class="icon-btn" aria-label="Previous page">
-                <svg viewBox="0 0 24 24" fill="none"><path d="m15 6-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              </button>
-              <button type="button" class="icon-btn" aria-label="Next page">
-                <svg viewBox="0 0 24 24" fill="none"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              </button>
-            </div>
-          </div>
         </header>
 
         <table class="table">

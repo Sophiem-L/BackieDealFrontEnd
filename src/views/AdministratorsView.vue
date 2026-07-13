@@ -1,8 +1,9 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { administrators } from '@/data/administrators'
+import { administrators, nextAdministratorId } from '@/data/administrators'
+import { roles } from '@/data/roles'
 
 const search = ref('')
 
@@ -28,9 +29,33 @@ function manageAdmin(admin) {
   void admin
 }
 
-function revokeAdmin(admin) {
-  // TODO: confirm + revoke access for `admin`
-  void admin
+/* Create-user modal */
+const showCreate = ref(false)
+const form = reactive({ name: '', role: '' })
+
+const canSubmit = computed(() => form.name.trim() && form.role)
+
+function addAdmin() {
+  form.name = ''
+  form.role = roles[0]?.name || ''
+  showCreate.value = true
+}
+
+function closeCreate() {
+  showCreate.value = false
+}
+
+function submitCreate() {
+  if (!canSubmit.value) return
+  administrators.push({
+    id: nextAdministratorId(),
+    name: form.name.trim(),
+    role: form.role,
+    lastSeen: 'Just added',
+    online: false,
+    avatar: '',
+  })
+  closeCreate()
 }
 </script>
 
@@ -51,6 +76,16 @@ function revokeAdmin(admin) {
           <input v-model="search" type="search" placeholder="Search administrators..." />
         </label>
 
+        <BaseButton variant="primary" @click="addAdmin">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" stroke-linecap="round" />
+              <circle cx="9.5" cy="7" r="4" />
+              <path d="M19 8v6M22 11h-6" stroke-linecap="round" />
+            </svg>
+          </template>
+          Add User
+        </BaseButton>
       </section>
 
       <!-- Administrator cards -->
@@ -91,18 +126,6 @@ function revokeAdmin(admin) {
                 />
               </svg>
             </button>
-
-            <button
-              type="button"
-              class="icon-btn icon-btn--danger"
-              :aria-label="`Revoke access for ${admin.name}`"
-              @click="revokeAdmin(admin)"
-            >
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M10 8l-4 4 4 4M6 12h11" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
           </div>
         </article>
 
@@ -111,6 +134,49 @@ function revokeAdmin(admin) {
         </p>
       </section>
     </div>
+
+    <!-- Create user modal -->
+    <Teleport to="body">
+      <div v-if="showCreate" class="modal" @click.self="closeCreate">
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
+          <header class="modal__head">
+            <h2 id="create-user-title" class="modal__title">Add User</h2>
+            <button type="button" class="modal__close" aria-label="Close" @click="closeCreate">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
+              </svg>
+            </button>
+          </header>
+
+          <form class="modal__body" @submit.prevent="submitCreate">
+            <label class="field">
+              <span class="field__label">Full name</span>
+              <input
+                v-model="form.name"
+                type="text"
+                class="field__input"
+                placeholder="e.g. Jane Doe"
+                autofocus
+              />
+            </label>
+
+            <label class="field">
+              <span class="field__label">Role</span>
+              <select v-model="form.role" class="field__input">
+                <option v-for="role in roles" :key="role.id" :value="role.name">
+                  {{ role.name }}
+                </option>
+              </select>
+            </label>
+
+            <footer class="modal__foot">
+              <BaseButton variant="ghost" type="button" @click="closeCreate">Cancel</BaseButton>
+              <BaseButton variant="primary" type="submit" :disabled="!canSubmit">Create User</BaseButton>
+            </footer>
+          </form>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -184,7 +250,7 @@ $divider: #eef0f3;
 /* Cards grid */
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
 
   &__empty {
@@ -200,7 +266,11 @@ $divider: #eef0f3;
   }
 }
 
-@media (max-width: 880px) {
+@media (max-width: 1200px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
   .grid { grid-template-columns: 1fr; }
 }
 
@@ -315,6 +385,100 @@ $divider: #eef0f3;
   &--danger {
     color: #d14343;
     &:hover { background: #fff5f5; border-color: #f0c9c9; }
+  }
+}
+
+/* Create user modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(20, 23, 28, 0.45);
+
+  &__dialog {
+    width: 100%;
+    max-width: 420px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 50px rgba(20, 23, 28, 0.25);
+    overflow: hidden;
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid $divider;
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: $color-text;
+  }
+
+  &__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: $muted;
+    cursor: pointer;
+
+    &:hover { background: #f4f5f7; color: $color-text; }
+
+    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.25rem;
+  }
+
+  &__foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 0.25rem;
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+
+  &__label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #4a5160;
+  }
+
+  &__input {
+    width: 100%;
+    border: 1px solid #e6e8ec;
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.85rem;
+    font-family: inherit;
+    color: $color-text;
+    background: #fff;
+
+    &:focus { outline: none; border-color: $accent; }
   }
 }
 </style>

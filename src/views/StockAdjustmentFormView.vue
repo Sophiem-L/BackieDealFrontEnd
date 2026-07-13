@@ -3,6 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { products as catalog } from '@/data/products'
 
 const router = useRouter()
 
@@ -15,15 +16,8 @@ const adjustmentTypes = [
   'Correction',
 ]
 
-// Sample selected product (stands in for the catalog picker result).
-const product = ref({
-  name: 'NVIDIA RTX 4090 Founders Edition',
-  sku: 'NV-4090-FE',
-  location: 'A-12-04',
-  currentStock: 8,
-  unitPrice: 1599,
-  threshold: 5,
-})
+// No product until one is chosen via the Browse Product picker.
+const product = ref(null)
 
 const form = reactive({
   adjustmentType: 'Inventory Recount',
@@ -42,29 +36,48 @@ const signedChange = computed(() =>
   form.quantityChange > 0 ? `+${form.quantityChange}` : `${form.quantityChange}`,
 )
 
-const newQuantity = computed(() =>
-  Math.max(0, product.value.currentStock + form.quantityChange),
-)
-
-const valueChange = computed(() => form.quantityChange * product.value.unitPrice)
-
-const formattedValueChange = computed(() => {
-  const amount = Math.abs(valueChange.value).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-  const sign = valueChange.value > 0 ? '+' : valueChange.value < 0 ? '-' : ''
-  return `${sign}$${amount}`
-})
-
-const systemStatus = computed(() => {
-  if (newQuantity.value <= 0) return { key: 'out-of-stock', label: 'Out of Stock' }
-  if (newQuantity.value <= product.value.threshold) return { key: 'low-stock', label: 'Low Stock' }
-  return { key: 'healthy', label: 'Healthy' }
-})
-
 function thumbInitials(name) {
   return name.replace(/[^A-Za-z0-9 ]/g, '').slice(0, 2).toUpperCase()
+}
+
+// --- Browse Product picker (single select) --------------------------------
+const pickerOpen = ref(false)
+const pickerSearch = ref('')
+const selectedSku = ref('')
+
+const availableProducts = computed(() => {
+  const q = pickerSearch.value.trim().toLowerCase()
+  if (!q) return catalog
+  return catalog.filter(
+    (p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q),
+  )
+})
+
+function openPicker() {
+  pickerSearch.value = ''
+  selectedSku.value = product.value?.sku || ''
+  pickerOpen.value = true
+}
+
+function closePicker() {
+  pickerOpen.value = false
+}
+
+function confirmSelect() {
+  const picked = catalog.find((p) => p.sku === selectedSku.value)
+  if (!picked) return
+  // Map the catalog entry onto the adjustment product shape. Stock/location
+  // aren't part of the catalog, so they start blank until a backend provides them.
+  product.value = {
+    name: picked.name,
+    sku: picked.sku,
+    location: '—',
+    currentStock: 0,
+    unitPrice: picked.price,
+    threshold: 5,
+  }
+  form.quantityChange = 0
+  closePicker()
 }
 
 function cancel() {
@@ -100,8 +113,8 @@ function complete() {
           <section class="card">
             <h3 class="card__title">Product Details</h3>
 
-            <!-- Product picker -->
-            <div class="picker">
+            <!-- Product picker (shown until a product is selected) -->
+            <div v-if="!product" class="picker">
               <span class="picker__icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none">
                   <circle cx="11" cy="11" r="7" />
@@ -109,11 +122,12 @@ function complete() {
                 </svg>
               </span>
               <p class="picker__text">Search and select a product to adjust</p>
-              <BaseButton variant="ghost" size="sm">Browse Catalog</BaseButton>
+              <BaseButton variant="ghost" size="sm" @click="openPicker">Browse Product</BaseButton>
             </div>
 
-            <!-- Selected product -->
-            <div v-if="product" class="selected">
+            <!-- Selected product + adjustment controls (after a product is chosen) -->
+            <template v-if="product">
+            <div class="selected">
               <span class="selected__thumb" aria-hidden="true">{{ thumbInitials(product.name) }}</span>
               <div class="selected__meta">
                 <p class="selected__name">{{ product.name }}</p>
@@ -123,6 +137,7 @@ function complete() {
                 <p class="selected__stock-label">Current Stock</p>
                 <p class="selected__stock-value">{{ product.currentStock }} Units</p>
               </div>
+              <button type="button" class="selected__change" @click="openPicker">Change</button>
             </div>
 
             <!-- Adjustment controls -->
@@ -160,43 +175,7 @@ function complete() {
                 placeholder="Monthly inventory recount. Found 2 additional units in warehouse back-shelf."
               ></textarea>
             </div>
-          </section>
-        </div>
-
-        <!-- Side column -->
-        <div class="col col--side">
-          <section class="card">
-            <h3 class="card__title">Adjustment Impact</h3>
-            <dl class="impact">
-              <div class="impact__row">
-                <dt>New Quantity</dt>
-                <dd class="impact__value impact__value--accent">{{ newQuantity }} Units</dd>
-              </div>
-              <div class="impact__row">
-                <dt>Value Change</dt>
-                <dd class="impact__value">{{ formattedValueChange }}</dd>
-              </div>
-              <div class="impact__row">
-                <dt>System Status</dt>
-                <dd>
-                  <span class="badge" :class="`badge--${systemStatus.key}`">{{ systemStatus.label }}</span>
-                </dd>
-              </div>
-            </dl>
-          </section>
-
-          <section class="policy">
-            <p class="policy__title">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              Policy Reminder
-            </p>
-            <p class="policy__text">
-              All manual adjustments are logged in the system audit trail. Large adjustments may
-              require secondary approval from a Store Manager.
-            </p>
+            </template>
           </section>
         </div>
       </div>
@@ -204,9 +183,74 @@ function complete() {
       <!-- Footer actions -->
       <div class="actions">
         <BaseButton variant="ghost" @click="cancel">Cancel</BaseButton>
-        <BaseButton variant="primary" @click="complete">Complete Adjustment</BaseButton>
+        <BaseButton variant="primary" :disabled="!product" @click="complete">Create</BaseButton>
       </div>
     </div>
+
+    <!-- Browse product picker -->
+    <Teleport to="body">
+      <div v-if="pickerOpen" class="modal" @click.self="closePicker">
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="browseProductTitle">
+          <header class="modal__header">
+            <h3 id="browseProductTitle" class="modal__title">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z" stroke-linejoin="round" />
+                <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" stroke-linejoin="round" />
+              </svg>
+              Browse Product
+            </h3>
+            <button type="button" class="modal__close" aria-label="Close" @click="closePicker">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+              </svg>
+            </button>
+          </header>
+
+          <div class="modal__body">
+            <label class="picker-search">
+              <span aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.2-3.2" stroke-linecap="round" />
+                </svg>
+              </span>
+              <input v-model="pickerSearch" type="search" placeholder="Search products..." />
+            </label>
+
+            <ul class="picker-list">
+              <li v-for="item in availableProducts" :key="item.sku">
+                <label
+                  class="picker-item"
+                  :class="{ 'is-selected': selectedSku === item.sku }"
+                >
+                  <input
+                    type="radio"
+                    class="picker-item__radio"
+                    name="browse-product"
+                    :value="item.sku"
+                    :checked="selectedSku === item.sku"
+                    @change="selectedSku = item.sku"
+                  />
+                  <span class="picker-item__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
+                  <span class="picker-item__meta">
+                    <span class="picker-item__name">{{ item.name }}</span>
+                    <span class="picker-item__sub">{{ item.sku }} · {{ item.category }}</span>
+                  </span>
+                </label>
+              </li>
+              <li v-if="availableProducts.length === 0" class="picker-empty">
+                No matching products found.
+              </li>
+            </ul>
+          </div>
+
+          <footer class="modal__footer">
+            <BaseButton variant="ghost" @click="closePicker">Cancel</BaseButton>
+            <BaseButton variant="primary" :disabled="!selectedSku" @click="confirmSelect">Select Product</BaseButton>
+          </footer>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -266,13 +310,9 @@ $divider: #eef0f3;
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: 1fr;
   gap: 1.25rem;
   align-items: start;
-
-  @media (max-width: 900px) {
-    grid-template-columns: 1fr;
-  }
 }
 
 .col {
@@ -378,6 +418,20 @@ $divider: #eef0f3;
     font-size: 1.2rem;
     font-weight: 700;
     color: $color-text;
+  }
+
+  &__change {
+    flex-shrink: 0;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #4a5160;
+    background: #f4f5f7;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    &:hover { background: #eceef1; }
   }
 }
 
@@ -486,85 +540,176 @@ $divider: #eef0f3;
   }
 }
 
-/* Adjustment impact */
-.impact {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-
-  &__row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.7rem 0;
-
-    & + & { border-top: 1px solid $divider; }
-
-    dt {
-      font-size: 0.85rem;
-      color: $muted;
-    }
-  }
-
-  &__value {
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: $color-text;
-
-    &--accent { color: #1f9d57; }
-  }
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  border-radius: 999px;
-
-  &--healthy { background: #e6f0ff; color: #2563c9; }
-  &--low-stock { background: rgba($accent, 0.2); color: #b8890b; }
-  &--out-of-stock { background: #fdecec; color: #d14343; }
-}
-
-/* Policy reminder */
-.policy {
-  background: #fff7ec;
-  border: 1px solid #f6e2bf;
-  border-radius: 14px;
-  padding: 1.1rem 1.25rem;
-
-  &__title {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    margin: 0 0 0.5rem;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: #c2730a;
-
-    svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
-  }
-
-  &__text {
-    margin: 0;
-    font-size: 0.8rem;
-    line-height: 1.5;
-    color: #9a6a14;
-  }
-}
-
 /* Footer actions */
 .actions {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 0.75rem;
+}
+
+/* Browse product modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(17, 22, 30, 0.5);
+  backdrop-filter: blur(2px);
+
+  &__dialog {
+    width: 100%;
+    max-width: 520px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 50px rgba(15, 20, 30, 0.25);
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 2.5rem);
+    overflow: hidden;
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid $divider;
+  }
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: $color-text;
+
+    svg { width: 18px; height: 18px; stroke: $accent; stroke-width: 1.8; }
+  }
+
+  &__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: $muted;
+    cursor: pointer;
+
+    &:hover { background: #f4f5f7; color: $color-text; }
+    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
+  }
+
+  &__body {
+    padding: 1.25rem 1.5rem;
+    overflow-y: auto;
+  }
+
+  &__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid $divider;
+  }
+}
+
+.picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.7rem;
+  margin-bottom: 0.85rem;
+  background: #f4f5f7;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  &:focus-within { background: #fff; border-color: #e6e8ec; }
+
+  span { display: inline-flex; color: $muted; }
+  svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
+
+  input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 0.55rem 0;
+    font-size: 0.85rem;
+    font-family: inherit;
+    color: $color-text;
+    &:focus { outline: none; }
+  }
+}
+
+.picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.picker-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.7rem;
+  background: #fff;
+  border: 1.5px solid #eef0f3;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+
+  &:hover { border-color: #d7dae0; background: #fafbfc; }
+
+  &.is-selected {
+    border-color: $accent;
+    background: rgba($accent, 0.1);
+  }
+
+  &__radio {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    accent-color: $accent;
+    cursor: pointer;
+  }
+
+  &__thumb {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background: #eef0f3;
+    color: #6b7280;
+    font-size: 0.7rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  &__meta { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
+  &__name { font-size: 0.86rem; font-weight: 600; color: $color-text; }
+  &__sub { font-size: 0.74rem; color: $muted; }
+}
+
+.picker-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  font-size: 0.86rem;
+  color: $muted;
 }
 </style>

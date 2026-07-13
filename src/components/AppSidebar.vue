@@ -1,15 +1,24 @@
 <script setup>
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 
 const ui = useUiStore()
 const auth = useAuthStore()
 const router = useRouter()
+const route = useRoute()
 
 async function handleLogout() {
   await auth.logout()
   router.push({ name: 'login' })
+}
+
+// Detail/form pages (e.g. /orders/:id, /slides/:id/edit) are declared as sibling
+// routes rather than children, so Vue Router's active-class won't highlight the
+// parent nav item. Match by path prefix so a section stays active on its subpages.
+function isActive(to) {
+  if (to === '/') return route.path === '/'
+  return route.path === to || route.path.startsWith(`${to}/`)
 }
 
 // Nav model — grouped to match the Admin Portal layout.
@@ -19,7 +28,6 @@ const sections = [
     title: 'Dashboard',
     items: [
       { label: 'Overview', icon: 'overview', to: '/' },
-      { label: 'Reports', icon: 'reports', to: '/reports' },
     ],
   },
   {
@@ -30,6 +38,7 @@ const sections = [
       { label: 'Categories', icon: 'categories', to: '/categories' },
       { label: 'Promotions', icon: 'promotions', to: '/promotions' },
       { label: 'Stock Management', icon: 'stock', to: '/stock' },
+      { label: 'Reports', icon: 'reports', to: '/reports' },
     ],
   },
   {
@@ -68,7 +77,7 @@ const sections = [
             <RouterLink
               :to="item.to"
               class="nav__link"
-              active-class="is-active"
+              :class="{ 'is-active': isActive(item.to) }"
               :title="ui.sidebarCollapsed ? item.label : null"
             >
               <span class="nav__icon" aria-hidden="true">

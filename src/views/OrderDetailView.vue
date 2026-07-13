@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -70,6 +70,18 @@ const statusLabels = {
 const savedStatus = ref(order.value.status)
 const isDirty = computed(() => order.value.status !== savedStatus.value)
 
+// Custom status dropdown (edit mode).
+const statusOpen = ref(false)
+function selectStatus(value) {
+  order.value.status = value
+  statusOpen.value = false
+}
+function closeStatus() {
+  statusOpen.value = false
+}
+onMounted(() => document.addEventListener('click', closeStatus))
+onBeforeUnmount(() => document.removeEventListener('click', closeStatus))
+
 function money(value) {
   return `$${value.toFixed(2)}`
 }
@@ -138,23 +150,6 @@ function editOrder() {
       <div class="grid">
         <!-- Main column -->
         <div class="col col--main">
-          <!-- Order status (read-only, view mode) -->
-          <section v-if="!isEditMode" class="card">
-            <header class="card__head">
-              <h3 class="card__title">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M9 11l3 3 8-8" stroke-linecap="round" stroke-linejoin="round" />
-                  <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-                Order Status
-              </h3>
-            </header>
-            <p class="status-text" :class="`status-text--${order.status}`">
-              <span class="status-text__dot" aria-hidden="true"></span>
-              {{ statusLabels[order.status] }}
-            </p>
-          </section>
-
           <!-- Order items -->
           <section class="card">
             <header class="card__head">
@@ -201,8 +196,12 @@ function editOrder() {
             </dl>
           </section>
 
-          <!-- Order status (editable, edit mode) -->
-          <section v-if="isEditMode" class="card">
+        </div>
+
+        <!-- Side column -->
+        <div class="col col--side">
+          <!-- Order status -->
+          <section class="card">
             <header class="card__head">
               <h3 class="card__title">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -211,38 +210,56 @@ function editOrder() {
                 </svg>
                 Order Status
               </h3>
-              <span class="badge" :class="`badge--${order.status}`">{{ statusLabels[order.status] }}</span>
             </header>
 
-            <div class="status-picker" role="group" aria-label="Update order status">
+            <!-- View mode: read-only status text -->
+            <p v-if="!isEditMode" class="status-text" :class="`status-text--${order.status}`">
+              <span class="status-text__dot" aria-hidden="true"></span>
+              {{ statusLabels[order.status] }}
+            </p>
+
+            <!-- Edit mode: custom dropdown to update the status -->
+            <div v-else class="status-dd" :class="{ 'is-open': statusOpen }" @click.stop>
               <button
-                v-for="(label, value) in statusLabels"
-                :key="value"
                 type="button"
-                class="status-opt"
-                :class="[`status-opt--${value}`, { 'is-active': order.status === value }]"
-                :aria-pressed="order.status === value"
-                @click="order.status = value"
+                class="status-dd__trigger"
+                :class="`status-dd__trigger--${order.status}`"
+                :aria-expanded="statusOpen"
+                @click="statusOpen = !statusOpen"
               >
-                <span class="status-opt__dot" aria-hidden="true"></span>
-                <span class="status-opt__label">{{ label }}</span>
-                <svg
-                  v-if="order.status === value"
-                  class="status-opt__check"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
+                <span class="status-dd__dot" aria-hidden="true"></span>
+                <span class="status-dd__value">{{ statusLabels[order.status] }}</span>
+                <svg class="status-dd__chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
+
+              <ul v-if="statusOpen" class="status-dd__menu" role="listbox">
+                <li
+                  v-for="(label, value) in statusLabels"
+                  :key="value"
+                  class="status-dd__option"
+                  :class="[`status-dd__option--${value}`, { 'is-selected': order.status === value }]"
+                  role="option"
+                  :aria-selected="order.status === value"
+                  @click="selectStatus(value)"
+                >
+                  <span class="status-dd__dot" aria-hidden="true"></span>
+                  <span class="status-dd__label">{{ label }}</span>
+                  <svg
+                    v-if="order.status === value"
+                    class="status-dd__check"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </li>
+              </ul>
             </div>
           </section>
 
-        </div>
-
-        <!-- Side column -->
-        <div class="col col--side">
           <!-- Customer -->
           <section class="card">
             <header class="card__head">
@@ -587,84 +604,122 @@ $divider: #eef0f3;
 }
 
 /* Order status */
-.status-picker {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.6rem;
+$status-colors: (
+  'pending': (#b8890b, #fff2d6, #e0a815),
+  'processing': (#a8780a, rgba($accent, 0.22), $accent),
+  'completed': (#1f9d57, #e6f7ee, #1f9d57),
+  'cancelled': (#d14343, #fdecec, #d14343),
+);
 
-  @media (max-width: 520px) {
-    grid-template-columns: 1fr;
-  }
-}
-
-.status-opt {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.7rem 0.85rem;
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #6b7280;
-  text-align: left;
-  background: #fff;
-  border: 1.5px solid #e6e8ec;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+/* Edit mode: custom status dropdown */
+.status-dd {
+  position: relative;
 
   &__dot {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     background: #c4c9d2;
     flex-shrink: 0;
-    transition: background-color 0.15s ease, box-shadow 0.15s ease;
   }
 
-  &__label { flex: 1; }
+  &__trigger {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.7rem 0.85rem;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #4a5160;
+    background: #fff;
+    border: 1.5px solid #e6e8ec;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 
-  &__check {
+    &:hover { border-color: #d7dae0; }
+    &:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba($accent, 0.25); }
+  }
+
+  &__value { flex: 1; text-align: left; }
+
+  &__chevron {
     width: 16px;
     height: 16px;
     stroke: currentColor;
-    stroke-width: 2.4;
-    flex-shrink: 0;
+    stroke-width: 2;
+    transition: transform 0.18s ease;
   }
 
-  // Per-status accent colours, applied on hover + active.
-  $status-colors: (
-    'pending': (#b8890b, #fff2d6, #e0a815),
-    'processing': (#a8780a, rgba($accent, 0.22), $accent),
-    'completed': (#1f9d57, #e6f7ee, #1f9d57),
-    'cancelled': (#d14343, #fdecec, #d14343),
-  );
+  &.is-open &__chevron { transform: rotate(180deg); }
 
+  // Trigger reflects the selected status colour.
   @each $name, $c in $status-colors {
     $text: nth($c, 1);
     $bg: nth($c, 2);
     $dot: nth($c, 3);
 
-    &--#{$name}:hover {
-      border-color: $dot;
+    &__trigger--#{$name} {
       color: $text;
-    }
-
-    &--#{$name}.is-active {
+      border-color: $dot;
       background: $bg;
-      border-color: $dot;
-      color: $text;
-      box-shadow: 0 0 0 3px rgba($dot, 0.14);
-
-      .status-opt__dot { background: $dot; box-shadow: 0 0 0 3px rgba($dot, 0.2); }
+      .status-dd__dot { background: $dot; }
     }
-
-    &--#{$name}:hover .status-opt__dot { background: $dot; }
   }
 
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba($accent, 0.35);
+  &__menu {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 0.35rem;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #e9ebef;
+    border-radius: 12px;
+    box-shadow: 0 12px 30px rgba(20, 23, 28, 0.14);
+  }
+
+  &__option {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.55rem 0.6rem;
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: #4a5160;
+    border-radius: 8px;
+    cursor: pointer;
+
+    &:hover { background: #f6f7f9; }
+  }
+
+  &__label { flex: 1; }
+
+  &__check {
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    flex-shrink: 0;
+  }
+
+  // Each option carries its own status colour dot; selected row is tinted.
+  @each $name, $c in $status-colors {
+    $text: nth($c, 1);
+    $bg: nth($c, 2);
+    $dot: nth($c, 3);
+
+    &__option--#{$name} .status-dd__dot { background: $dot; }
+
+    &__option--#{$name}.is-selected {
+      color: $text;
+      background: $bg;
+    }
   }
 }
 
