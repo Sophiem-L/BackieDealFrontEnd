@@ -225,7 +225,7 @@ $divider: #eef0f3;
 
   &__row { cursor: pointer; }
 
-  &__actions-head { text-align: right; }
+  &__actions-head { text-align: left; }
 
   &__empty { text-align: center; color: $muted; font-size: 0.88rem; padding: 2.5rem 1rem; }
 }
@@ -284,7 +284,7 @@ $divider: #eef0f3;
 .row-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0.4rem;
 }
 

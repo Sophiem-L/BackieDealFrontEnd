@@ -1,70 +1,118 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { apiFetch } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 
-const stats = [
-  { key: 'total', label: 'Total Products', value: '1,284', icon: 'box', tone: 'neutral' },
-  { key: 'low', label: 'Low Stock', value: '14', icon: 'warning', tone: 'warning' },
-  { key: 'out', label: 'Out of Stock', value: '3', icon: 'forbidden', tone: 'danger' },
-  { key: 'in-stock', label: 'In Stock', value: '1,267', icon: 'check', tone: 'success' },
-]
+const PER_PAGE = 10
+const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 
-const products = ref([
-  {
-    id: 1,
-    name: 'NVIDIA GeForce RTX 4090 Founders Edition',
-    sku: 'NV-RTX4090-FE',
-    category: 'Graphics Cards',
-    stock: 8,
-    price: '$1,599.00',
-    status: 'in-stock',
-  },
-  {
-    id: 2,
-    name: 'Intel Core i9-14900K Processor',
-    sku: 'INT-I9-14900K',
-    category: 'Processors',
-    stock: 15,
-    price: '$589.00',
-    status: 'in-stock',
-  },
-  {
-    id: 3,
-    name: 'ASUS ROG Maximus Z790 Dark Hero',
-    sku: 'AS-MAX-Z790',
-    category: 'Motherboards',
-    stock: 4,
-    price: '$699.00',
-    status: 'low-stock',
-  },
-  {
-    id: 4,
-    name: 'Corsair Dominator Platinum 64GB DDR5',
-    sku: 'COR-DP-64G5',
-    category: 'Memory',
-    stock: 0,
-    price: '$299.00',
-    status: 'out-of-stock',
-  },
-  {
-    id: 5,
-    name: 'Samsung 980 Pro 2TB NVMe SSD',
-    sku: 'SAM-980P-2TB',
-    category: 'Storage',
-    stock: 42,
-    price: '$179.99',
-    status: 'in-stock',
-  },
+// Server-driven list state (GET /admin/products).
+const products = ref([])
+const search = ref('')
+const page = ref(1)
+const lastPage = ref(1)
+const total = ref(0)
+const loading = ref(false)
+const error = ref('')
+
+// NOTE: the list endpoint only exposes a catalog-wide Total (via pagination.total).
+// There is no summary endpoint for Low/Out/In-stock aggregate counts, so those
+// three cards are intentionally left blank ('—') until the API provides them.
+const stats = computed(() => [
+  { key: 'total', label: 'Total Products', value: total.value.toLocaleString(), icon: 'box', tone: 'neutral' },
+  { key: 'low', label: 'Low Stock', value: '—', icon: 'warning', tone: 'warning' },
+  { key: 'out', label: 'Out of Stock', value: '—', icon: 'forbidden', tone: 'danger' },
+  { key: 'in-stock', label: 'In Stock', value: '—', icon: 'check', tone: 'success' },
 ])
 
 const statusLabels = {
   'in-stock': 'In Stock',
   'low-stock': 'Low Stock',
   'out-of-stock': 'Out of Stock',
+}
+
+// The API has no explicit list status; derive it the same way the backend's
+// `low_stock` filter does (stock_quantity vs min_stock_alert).
+function deriveStatus(item) {
+  const stock = Number(item.stock_quantity ?? 0)
+  if (stock <= 0) return 'out-of-stock'
+  if (item.min_stock_alert != null && stock <= Number(item.min_stock_alert)) return 'low-stock'
+  return 'in-stock'
+}
+
+function mapProduct(item) {
+  return {
+    id: item.id,
+    uuid: item.uuid,
+    name: item.name,
+    sku: item.sku,
+    category: item.category?.name ?? '—',
+    stock: Number(item.stock_quantity ?? 0),
+    price: item.price != null ? currency.format(item.price) : '—',
+    status: deriveStatus(item),
+  }
+}
+
+async function loadProducts() {
+  loading.value = true
+  error.value = ''
+  try {
+    const params = new URLSearchParams({
+      page: String(page.value),
+      per_page: String(PER_PAGE),
+      sort: 'id',
+      direction: 'desc',
+    })
+    const q = search.value.trim()
+    if (q) params.set('q', q)
+
+    const response = await apiFetch(`/admin/products?${params.toString()}`, {
+      token: auth.accessToken,
+    })
+    const data = response?.data ?? {}
+    products.value = (data.items ?? []).map(mapProduct)
+
+    const pagination = data.pagination ?? {}
+    total.value = pagination.total ?? products.value.length
+    lastPage.value = pagination.last_page ?? 1
+  } catch (err) {
+    error.value = err.message || 'Unable to load products. Please try again.'
+    products.value = []
+    total.value = 0
+    lastPage.value = 1
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadProducts)
+
+// Debounce search; any new query resets to the first page.
+let searchTimer
+watch(search, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    page.value = 1
+    loadProducts()
+  }, 350)
+})
+
+watch(page, loadProducts)
+
+const rangeStart = computed(() => (total.value === 0 ? 0 : (page.value - 1) * PER_PAGE + 1))
+const rangeEnd = computed(() => (page.value - 1) * PER_PAGE + products.value.length)
+
+function prevPage() {
+  if (page.value > 1) page.value -= 1
+}
+function nextPage() {
+  if (page.value < lastPage.value) page.value += 1
 }
 
 // Row selection
@@ -84,12 +132,16 @@ function toggleAll() {
 }
 
 // Actions
+// The detail/edit route carries the uuid: Product::getRouteKeyName() is `uuid`,
+// so the API resolves /admin/products/{uuid}, not the numeric id.
 function viewProduct(product) {
-  router.push({ name: 'product-edit', params: { id: product.id }, query: { view: '1' } })
+  router.push({ name: 'product-edit', params: { id: product.uuid }, query: { view: '1' } })
 }
 function editProduct(product) {
-  router.push({ name: 'product-edit', params: { id: product.id } })
+  router.push({ name: 'product-edit', params: { id: product.uuid } })
 }
+// NOTE: no duplicate endpoint exists on the API yet — this stays client-side
+// only and will not persist across a reload. Flagged for the backend team.
 function duplicateProduct(product) {
   const copy = {
     ...product,
@@ -98,9 +150,23 @@ function duplicateProduct(product) {
   }
   products.value.splice(products.value.indexOf(product) + 1, 0, copy)
 }
-function deleteProduct(product) {
+async function deleteProduct(product) {
   if (!window.confirm(`Delete "${product.name}"? This action cannot be undone.`)) return
-  products.value = products.value.filter((p) => p.id !== product.id)
+  try {
+    // Route-model binding resolves by uuid (Product::getRouteKeyName()).
+    await apiFetch(`/admin/products/${product.uuid}`, {
+      method: 'DELETE',
+      token: auth.accessToken,
+    })
+    // If we just removed the last row on a page past the first, step back.
+    if (products.value.length === 1 && page.value > 1) {
+      page.value -= 1
+    } else {
+      await loadProducts()
+    }
+  } catch (err) {
+    window.alert(err.message || 'Unable to delete this product.')
+  }
 }
 
 // Export the current products to a CSV file.
@@ -151,7 +217,7 @@ function thumbInitials(name) {
               <path d="m20 20-3.2-3.2" stroke-linecap="round" />
             </svg>
           </span>
-          <input type="search" placeholder="Search by Product Name, SKU, or Serial..." />
+          <input v-model="search" type="search" placeholder="Search by Product Name, SKU, or Serial..." />
         </label>
 
         <div class="select">
@@ -240,7 +306,19 @@ function thumbInitials(name) {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="product in products" :key="product.id">
+            <tr v-if="loading">
+              <td colspan="7" class="table__state">Loading products…</td>
+            </tr>
+            <tr v-else-if="error">
+              <td colspan="7" class="table__state table__state--error">
+                {{ error }}
+                <button type="button" class="table__retry" @click="loadProducts">Retry</button>
+              </td>
+            </tr>
+            <tr v-else-if="products.length === 0">
+              <td colspan="7" class="table__state">No products found.</td>
+            </tr>
+            <tr v-for="product in products" v-else :key="product.id">
               <td class="table__check">
                 <input
                   type="checkbox"
@@ -324,12 +402,22 @@ function thumbInitials(name) {
 
         <!-- Pagination -->
         <footer class="pagination">
-          <p class="pagination__info">Showing 1-{{ products.length }} of 1,284 products</p>
+          <p class="pagination__info">
+            Showing {{ rangeStart }}-{{ rangeEnd }} of {{ total.toLocaleString() }} products
+          </p>
           <div class="pagination__controls">
-            <button type="button" class="page-btn">Previous</button>
-            <button type="button" class="page-btn page-btn--active">1</button>
-            <button type="button" class="page-btn">2</button>
-            <button type="button" class="page-btn">Next</button>
+            <button type="button" class="page-btn" :disabled="page <= 1 || loading" @click="prevPage">
+              Previous
+            </button>
+            <button type="button" class="page-btn page-btn--active">{{ page }}</button>
+            <button
+              type="button"
+              class="page-btn"
+              :disabled="page >= lastPage || loading"
+              @click="nextPage"
+            >
+              Next
+            </button>
           </div>
         </footer>
       </section>
@@ -553,6 +641,30 @@ $divider: #eef0f3;
   &__check { width: 44px; }
   &__actions-head { text-align: right; }
 
+  &__state {
+    text-align: center;
+    color: $muted;
+    font-size: 0.88rem;
+    padding: 2.5rem 1rem;
+
+    &--error { color: #d14343; }
+  }
+
+  &__retry {
+    margin-left: 0.6rem;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #4a5160;
+    background: #fff;
+    border: 1px solid #e6e8ec;
+    border-radius: 8px;
+    cursor: pointer;
+
+    &:hover { background: #f6f7f9; }
+  }
+
   input[type='checkbox'] {
     width: 15px;
     height: 15px;
@@ -675,7 +787,9 @@ $divider: #eef0f3;
   border-radius: 8px;
   cursor: pointer;
 
-  &:hover { background: #f6f7f9; }
+  &:hover:not(:disabled) { background: #f6f7f9; }
+
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
 
   &--active {
     background: $accent;

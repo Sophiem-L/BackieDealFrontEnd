@@ -1,28 +1,33 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import { apiFetch } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
-// Edit mode when the route carries a product id; otherwise we're creating.
+// Edit mode when the route carries a product key; otherwise we're creating.
+// The param holds the product `uuid` — the API's route key.
 const isEdit = computed(() => Boolean(route.params.id))
+const productUuid = computed(() => route.params.id)
 // Read-only view mode when opened with ?view=1 (the list's View icon).
 const isView = computed(() => Boolean(route.query.view))
 
-const categories = [
-  'Graphics Cards',
-  'Processors',
-  'Motherboards',
-  'Memory',
-  'Storage',
-  'Peripherals',
-]
+const loading = ref(false)
+const saving = ref(false)
+const error = ref('')
 
-// Active promotions available to attach — a product can have at most one.
+// Loaded from GET /admin/categories to populate the dropdown.
+const categories = ref([])
+
+// NOTE: there is no product↔promotion relation in the API (the promotions table
+// has no product link and Product exposes no promotion relationship), so this
+// list stays static and is NOT persisted on save. Flagged for the backend team.
 const promotions = [
   { id: 1, name: 'Black Friday Sale', benefit: 'Up to 30% OFF', period: 'Nov 20 - Nov 30' },
   { id: 2, name: 'Intel 14th Gen Launch', benefit: 'Flat $50 OFF', period: 'Oct 15 - Oct 31' },
@@ -32,7 +37,7 @@ const promotions = [
 const form = reactive({
   name: '',
   sku: '',
-  category: 'Graphics Cards',
+  categoryId: '',
   description: '',
   imageUrl: '',
   stock: 0,
@@ -41,29 +46,68 @@ const form = reactive({
   basePrice: '',
   costPrice: '',
   promotionId: '',
+  // NOTE: Product has no specs/attributes field on the API (the `attributes`
+  // table is a global definition list with no product link; only ProductVariant
+  // carries an attributes JSON). Not persisted on save — flagged for the team.
   specs: [{ key: '', value: '' }],
 })
 
-// Prefill with the sample product when editing (stands in for an API fetch).
-if (isEdit.value) {
-  Object.assign(form, {
-    name: 'NVIDIA GeForce RTX 4090 Founders Edition',
-    sku: 'NV-RTX4090-FE',
-    category: 'Graphics Cards',
-    description:
-      'The NVIDIA GeForce RTX 4090 is the ultimate GeForce GPU. It brings an enormous leap in performance, efficiency, and AI-powered graphics. Experience ultra-high performance gaming, incredibly detailed virtual worlds with ray tracing, unprecedented productivity, and new ways to create.',
-    stock: 8,
-    lowStockThreshold: 5,
-    availableForOrder: true,
-    basePrice: '1,599.00',
-    costPrice: '1,350.00',
-    promotionId: 1,
-    specs: [
-      { key: 'Cuda Cores', value: '16384' },
-      { key: 'Memory Size', value: '24GB GDDR6X' },
-    ],
+// "1,599.00" <-> 1599.00
+function formatMoney(value) {
+  if (value == null) return ''
+  return Number(value).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   })
 }
+function parseMoney(value) {
+  const n = Number(String(value ?? '').replace(/,/g, '').trim())
+  return Number.isFinite(n) ? n : 0
+}
+
+async function loadCategories() {
+  try {
+    const response = await apiFetch('/admin/categories?per_page=100', { token: auth.accessToken })
+    // The endpoint wraps a paginator, so `data` may be the array itself or {data: [...]}.
+    const payload = response?.data
+    categories.value = Array.isArray(payload) ? payload : (payload?.data ?? [])
+  } catch {
+    // A failed category load shouldn't block the form; the dropdown just stays empty.
+    categories.value = []
+  }
+}
+
+async function loadProduct() {
+  if (!isEdit.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    const response = await apiFetch(`/admin/products/${productUuid.value}`, {
+      token: auth.accessToken,
+    })
+    const p = response?.data ?? {}
+    Object.assign(form, {
+      name: p.name ?? '',
+      sku: p.sku ?? '',
+      categoryId: p.category_id ?? '',
+      description: p.description ?? '',
+      imageUrl: p.thumbnail ?? '',
+      stock: p.stock_quantity ?? 0,
+      lowStockThreshold: p.min_stock_alert ?? 5,
+      availableForOrder: Boolean(p.is_active),
+      basePrice: formatMoney(p.price),
+      costPrice: formatMoney(p.cost_price),
+    })
+  } catch (err) {
+    error.value = err.message || 'Unable to load this product.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([loadCategories(), loadProduct()])
+})
 
 const pageTitle = computed(() => {
   if (isView.value) return `Product Details: ${form.name || 'Product'}`
@@ -90,9 +134,45 @@ function removeSpec(index) {
   form.specs.splice(index, 1)
 }
 
-function save() {
-  // TODO: POST/PUT to the products API.
-  router.push('/products')
+async function save() {
+  saving.value = true
+  error.value = ''
+
+  const body = {
+    name: form.name,
+    sku: form.sku,
+    description: form.description || null,
+    price: parseMoney(form.basePrice),
+    cost_price: parseMoney(form.costPrice),
+    stock_quantity: Number(form.stock) || 0,
+    min_stock_alert: Number(form.lowStockThreshold) || 0,
+    in_stock: Number(form.stock) > 0,
+    is_active: form.availableForOrder,
+  }
+
+  if (form.categoryId) body.category_id = Number(form.categoryId)
+  // Only send a real stored path — `blob:` previews from the file picker are
+  // local object URLs and would not resolve for anyone else.
+  if (form.imageUrl && !form.imageUrl.startsWith('blob:')) body.thumbnail = form.imageUrl
+
+  try {
+    if (isEdit.value) {
+      await apiFetch(`/admin/products/${productUuid.value}`, {
+        method: 'PUT',
+        body,
+        token: auth.accessToken,
+      })
+    } else {
+      await apiFetch('/admin/products', { method: 'POST', body, token: auth.accessToken })
+    }
+    router.push('/products')
+  } catch (err) {
+    // Surface the first field error from a 422 when there is one.
+    const fieldError = Object.values(err.errors ?? {})[0]
+    error.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to save this product.'
+  } finally {
+    saving.value = false
+  }
 }
 function cancel() {
   router.push('/products')
@@ -116,7 +196,10 @@ function cancel() {
         </RouterLink>
       </div>
 
-      <fieldset class="grid" :disabled="isView">
+      <p v-if="error" class="alert">{{ error }}</p>
+      <p v-if="loading" class="loading-note">Loading product…</p>
+
+      <fieldset v-else class="grid" :disabled="isView">
         <!-- Left column -->
         <div class="col col--side">
           <section class="card">
@@ -194,8 +277,9 @@ function cancel() {
               <div class="field">
                 <label for="category">Category</label>
                 <div class="select-wrap">
-                  <select id="category" v-model="form.category">
-                    <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+                  <select id="category" v-model="form.categoryId">
+                    <option value="">Select a category</option>
+                    <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
                   </select>
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
                 </div>
@@ -279,10 +363,11 @@ function cancel() {
       </fieldset>
 
       <!-- Form actions -->
-      <div v-if="!isView" class="form-footer">
-        <BaseButton variant="ghost" @click="cancel">Cancel</BaseButton>
-        <BaseButton variant="primary" @click="save">
-          {{ isEdit ? 'Update Product' : 'Create Product' }}
+      <div v-if="!isView && !loading" class="form-footer">
+        <BaseButton variant="ghost" :disabled="saving" @click="cancel">Cancel</BaseButton>
+        <BaseButton variant="primary" :disabled="saving" @click="save">
+          <template v-if="saving">Saving…</template>
+          <template v-else>{{ isEdit ? 'Update Product' : 'Create Product' }}</template>
         </BaseButton>
       </div>
     </div>
@@ -334,6 +419,24 @@ $divider: #eef0f3;
     text-transform: uppercase;
     color: $muted;
   }
+}
+
+.alert {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: #d14343;
+  background: #fdf2f2;
+  border: 1px solid #f0c9c9;
+  border-radius: 10px;
+}
+
+.loading-note {
+  margin: 0;
+  padding: 2.5rem 1rem;
+  text-align: center;
+  font-size: 0.88rem;
+  color: $muted;
 }
 
 .grid {
