@@ -4,7 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
+import { fromApiVariant, toApiVariants } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -50,7 +52,14 @@ const form = reactive({
   // table is a global definition list with no product link; only ProductVariant
   // carries an attributes JSON). Not persisted on save — flagged for the team.
   specs: [{ key: '', value: '' }],
+  // SKU-level variants. Sent nested on create only; see variantsSentOnSave.
+  variants: [],
 })
+
+// VariantEditor reports whether its rows would pass the API's rules. Duplicate
+// or malformed variant SKUs come back as a raw 500 rather than a 422, so the
+// Create button stays disabled until they're clean.
+const variantsValid = ref(true)
 
 // "1,599.00" <-> 1599.00
 function formatMoney(value) {
@@ -97,6 +106,7 @@ async function loadProduct() {
       availableForOrder: Boolean(p.is_active),
       basePrice: formatMoney(p.price),
       costPrice: formatMoney(p.cost_price),
+      variants: (p.variants ?? []).map(fromApiVariant),
     })
   } catch (err) {
     error.value = err.message || 'Unable to load this product.'
@@ -154,6 +164,13 @@ async function save() {
   // Only send a real stored path — `blob:` previews from the file picker are
   // local object URLs and would not resolve for anyone else.
   if (form.imageUrl && !form.imageUrl.startsWith('blob:')) body.thumbnail = form.imageUrl
+
+  // Variants go out on create only. The update path soft-deletes variants and
+  // recreates them, which collides with the soft-delete-ignoring unique index
+  // on `sku`/`slug` and 500s — so PUT never carries `variants`.
+  if (!isEdit.value && form.variants.length) {
+    body.variants = toApiVariants(form.variants)
+  }
 
   try {
     if (isEdit.value) {
@@ -335,6 +352,17 @@ function cancel() {
           </section>
 
           <section class="card">
+            <h3 class="card__title">Variants</h3>
+            <VariantEditor
+              v-model="form.variants"
+              v-model:valid="variantsValid"
+              :base-sku="form.sku"
+              :base-price="form.basePrice"
+              :readonly="isEdit"
+            />
+          </section>
+
+          <section class="card">
             <h3 class="card__title">Promotion</h3>
             <div v-if="!isView" class="field">
               <label for="promotion">Applied Promotion</label>
@@ -364,8 +392,11 @@ function cancel() {
 
       <!-- Form actions -->
       <div v-if="!isView && !loading" class="form-footer">
+        <p v-if="!variantsValid" class="form-footer__blocked">
+          Fix the highlighted variant before saving.
+        </p>
         <BaseButton variant="ghost" :disabled="saving" @click="cancel">Cancel</BaseButton>
-        <BaseButton variant="primary" :disabled="saving" @click="save">
+        <BaseButton variant="primary" :disabled="saving || !variantsValid" @click="save">
           <template v-if="saving">Saving…</template>
           <template v-else>{{ isEdit ? 'Update Product' : 'Create Product' }}</template>
         </BaseButton>
@@ -475,6 +506,13 @@ function cancel() {
   align-items: center;
   justify-content: flex-end;
   gap: 0.6rem;
+
+  &__blocked {
+    margin: 0 auto 0 0;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--danger);
+  }
 }
 
 .card {
