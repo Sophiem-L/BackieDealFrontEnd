@@ -182,9 +182,6 @@ function thumbInitials(name) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -224,13 +221,13 @@ $divider: #eef0f3;
     background: transparent;
     border: none;
     border-radius: 8px;
-    color: #4a5160;
+    color: var(--text-body);
     cursor: pointer;
-    &:hover { background: #eceef1; }
+    &:hover { background: var(--surface-hover); }
     svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.9; }
   }
 
-  &__title { margin: 0; font-size: 1.4rem; font-weight: 700; color: $color-text; }
+  &__title { margin: 0; font-size: 1.4rem; font-weight: 700; color: var(--text-strong); }
 }
 
 /* Layout */
@@ -245,12 +242,12 @@ $divider: #eef0f3;
 
 /* History table */
 .table-card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   overflow: hidden;
 
-  &__head { padding: 1.1rem 1.25rem; border-bottom: 1px solid $divider; }
+  &__head { padding: 1.1rem 1.25rem; border-bottom: 1px solid var(--border-subtle); }
 
   &__title {
     margin: 0;
@@ -258,7 +255,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 }
 
@@ -273,33 +270,33 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
-    background: #fafbfc;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
   }
 
-  tbody tr + tr td { border-top: 1px solid $divider; }
-  tbody tr:hover { background: #fafbfc; }
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
 
-  td { font-size: 0.86rem; color: $color-text; }
+  td { font-size: 0.86rem; color: var(--text-strong); }
 
-  .muted { color: $muted; }
+  .muted { color: var(--text-subtle); }
 
-  &__empty { text-align: center; color: $muted; padding: 2.5rem 1rem; }
+  &__empty { text-align: center; color: var(--text-subtle); padding: 2.5rem 1rem; }
 }
 
 .change {
   font-weight: 700;
-  &--up { color: #1f9d57; }
-  &--down { color: #d14343; }
+  &--up { color: var(--success); }
+  &--down { color: var(--danger); }
 }
 
 .balance { font-weight: 600; }
 
 /* Product info card */
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -309,7 +306,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 }
 
@@ -318,7 +315,7 @@ $divider: #eef0f3;
   align-items: center;
   gap: 0.8rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid $divider;
+  border-bottom: 1px solid var(--border-subtle);
 
   &__thumb {
     display: inline-flex;
@@ -327,15 +324,15 @@ $divider: #eef0f3;
     width: 46px;
     height: 46px;
     border-radius: 10px;
-    background: #eef0f3;
-    color: #6b7280;
+    background: var(--border-subtle);
+    color: var(--text-muted);
     font-size: 0.78rem;
     font-weight: 700;
     flex-shrink: 0;
   }
 
-  &__name { margin: 0; font-size: 0.9rem; font-weight: 700; color: $color-text; }
-  &__sku { margin: 0.2rem 0 0; font-size: 0.74rem; color: $muted; }
+  &__name { margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--text-strong); }
+  &__sku { margin: 0.2rem 0 0; font-size: 0.74rem; color: var(--text-subtle); }
 }
 
 .info {
@@ -349,10 +346,10 @@ $divider: #eef0f3;
     gap: 1rem;
     padding: 0.6rem 0;
 
-    & + & { border-top: 1px solid $divider; }
+    & + & { border-top: 1px solid var(--border-subtle); }
 
-    dt { font-size: 0.82rem; color: $muted; }
-    dd { margin: 0; font-size: 0.85rem; font-weight: 600; color: $color-text; }
+    dt { font-size: 0.82rem; color: var(--text-subtle); }
+    dd { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--text-strong); }
   }
 }
 
@@ -366,8 +363,8 @@ $divider: #eef0f3;
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--healthy { background: #e6f7ee; color: #1f9d57; }
-  &--low-stock { background: rgba($accent, 0.2); color: #b8890b; }
-  &--out-of-stock { background: #fdecec; color: #d14343; }
+  &--healthy { background: var(--success-bg); color: var(--success); }
+  &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
+  &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
 }
 </style>

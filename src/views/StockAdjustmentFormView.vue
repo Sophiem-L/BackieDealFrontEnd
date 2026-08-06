@@ -255,9 +255,6 @@ function complete() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -284,12 +281,12 @@ $divider: #eef0f3;
     width: 38px;
     height: 38px;
     border-radius: 50%;
-    background: #fff;
-    border: 1px solid $divider;
-    color: #4a5160;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-body);
     flex-shrink: 0;
 
-    &:hover { background: #f6f7f9; text-decoration: none; }
+    &:hover { background: var(--surface-alt); text-decoration: none; }
 
     svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.8; }
   }
@@ -298,13 +295,13 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1.3rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__desc {
     margin: 0.15rem 0 0;
     font-size: 0.85rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -323,8 +320,8 @@ $divider: #eef0f3;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -334,7 +331,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 }
 
@@ -345,21 +342,21 @@ $divider: #eef0f3;
   align-items: center;
   gap: 0.6rem;
   padding: 1.6rem 1rem;
-  border: 1px dashed #d3d7dd;
+  border: 1px dashed var(--switch-track);
   border-radius: 12px;
-  background: #fafbfc;
+  background: var(--surface-sunken);
   text-align: center;
 
   &__icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 26px; height: 26px; stroke: currentColor; stroke-width: 1.6; }
   }
 
   &__text {
     margin: 0;
     font-size: 0.85rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -370,7 +367,7 @@ $divider: #eef0f3;
   gap: 0.9rem;
   margin-top: 1rem;
   padding: 1rem;
-  border: 1px solid $divider;
+  border: 1px solid var(--border-subtle);
   border-radius: 12px;
 
   &__thumb {
@@ -380,8 +377,8 @@ $divider: #eef0f3;
     width: 48px;
     height: 48px;
     border-radius: 10px;
-    background: #eef0f3;
-    color: #6b7280;
+    background: var(--border-subtle);
+    color: var(--text-muted);
     font-size: 0.8rem;
     font-weight: 700;
     flex-shrink: 0;
@@ -393,13 +390,13 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 0.95rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__sub {
     margin: 0.2rem 0 0;
     font-size: 0.75rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__stock { text-align: right; flex-shrink: 0; }
@@ -410,14 +407,14 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__stock-value {
     margin: 0.2rem 0 0;
     font-size: 1.2rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__change {
@@ -426,12 +423,12 @@ $divider: #eef0f3;
     font-size: 0.78rem;
     font-weight: 600;
     font-family: inherit;
-    color: #4a5160;
-    background: #f4f5f7;
+    color: var(--text-body);
+    background: var(--bg);
     border: none;
     border-radius: 8px;
     cursor: pointer;
-    &:hover { background: #eceef1; }
+    &:hover { background: var(--surface-hover); }
   }
 }
 
@@ -459,27 +456,27 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   select,
   textarea {
     width: 100%;
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.65rem 0.8rem;
     font-size: 0.9rem;
     font-family: inherit;
-    color: $color-text;
-    background: #fff;
+    color: var(--text-strong);
+    background: var(--surface);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
-    &::placeholder { color: #b4b9c2; }
+    &::placeholder { color: var(--text-faint); }
 
     &:focus {
       outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
   }
 
@@ -498,7 +495,7 @@ $divider: #eef0f3;
     transform: translateY(-50%);
     width: 16px;
     height: 16px;
-    stroke: $muted;
+    stroke: var(--text-subtle);
     stroke-width: 1.8;
     pointer-events: none;
   }
@@ -509,7 +506,7 @@ $divider: #eef0f3;
   display: grid;
   grid-template-columns: 48px 1fr 48px;
   align-items: stretch;
-  border: 1px solid #e6e8ec;
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
 
@@ -517,12 +514,12 @@ $divider: #eef0f3;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: #f4f5f7;
+    background: var(--bg);
     border: none;
-    color: #4a5160;
+    color: var(--text-body);
     cursor: pointer;
 
-    &:hover { background: #eceef1; }
+    &:hover { background: var(--surface-hover); }
 
     svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; }
   }
@@ -533,10 +530,10 @@ $divider: #eef0f3;
     justify-content: center;
     font-size: 1rem;
     font-weight: 700;
-    color: #1f9d57;
+    color: var(--success);
     padding: 0.65rem 0;
 
-    &--neg { color: #d14343; }
+    &--neg { color: var(--danger); }
   }
 }
 
@@ -557,13 +554,13 @@ $divider: #eef0f3;
   align-items: center;
   justify-content: center;
   padding: 1.25rem;
-  background: rgba(17, 22, 30, 0.5);
+  background: var(--backdrop);
   backdrop-filter: blur(2px);
 
   &__dialog {
     width: 100%;
     max-width: 520px;
-    background: #fff;
+    background: var(--surface);
     border-radius: 16px;
     box-shadow: 0 20px 50px rgba(15, 20, 30, 0.25);
     display: flex;
@@ -578,7 +575,7 @@ $divider: #eef0f3;
     justify-content: space-between;
     gap: 1rem;
     padding: 1.25rem 1.5rem;
-    border-bottom: 1px solid $divider;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   &__title {
@@ -588,9 +585,9 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
 
-    svg { width: 18px; height: 18px; stroke: $accent; stroke-width: 1.8; }
+    svg { width: 18px; height: 18px; stroke: rgb(var(--accent-rgb)); stroke-width: 1.8; }
   }
 
   &__close {
@@ -603,10 +600,10 @@ $divider: #eef0f3;
     background: transparent;
     border: none;
     border-radius: 8px;
-    color: $muted;
+    color: var(--text-subtle);
     cursor: pointer;
 
-    &:hover { background: #f4f5f7; color: $color-text; }
+    &:hover { background: var(--bg); color: var(--text-strong); }
     svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -620,7 +617,7 @@ $divider: #eef0f3;
     justify-content: flex-end;
     gap: 0.6rem;
     padding: 1rem 1.5rem;
-    border-top: 1px solid $divider;
+    border-top: 1px solid var(--border-subtle);
   }
 }
 
@@ -630,12 +627,12 @@ $divider: #eef0f3;
   gap: 0.4rem;
   padding: 0 0.7rem;
   margin-bottom: 0.85rem;
-  background: #f4f5f7;
+  background: var(--bg);
   border: 1px solid transparent;
   border-radius: 9px;
-  &:focus-within { background: #fff; border-color: #e6e8ec; }
+  &:focus-within { background: var(--surface); border-color: var(--border); }
 
-  span { display: inline-flex; color: $muted; }
+  span { display: inline-flex; color: var(--text-subtle); }
   svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
 
   input {
@@ -645,7 +642,7 @@ $divider: #eef0f3;
     padding: 0.55rem 0;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
@@ -665,25 +662,25 @@ $divider: #eef0f3;
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.7rem;
-  background: #fff;
-  border: 1.5px solid #eef0f3;
+  background: var(--surface);
+  border: 1.5px solid var(--border-subtle);
   border-radius: 10px;
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 
-  &:hover { border-color: #d7dae0; background: #fafbfc; }
+  &:hover { border-color: var(--border); background: var(--surface-sunken); }
 
   &.is-selected {
-    border-color: $accent;
-    background: rgba($accent, 0.1);
+    border-color: rgb(var(--accent-rgb));
+    background: rgb(var(--accent-rgb) / 0.1);
   }
 
   &__radio {
     width: 18px;
     height: 18px;
     flex-shrink: 0;
-    accent-color: $accent;
+    accent-color: rgb(var(--accent-rgb));
     cursor: pointer;
   }
 
@@ -694,22 +691,22 @@ $divider: #eef0f3;
     width: 38px;
     height: 38px;
     border-radius: 8px;
-    background: #eef0f3;
-    color: #6b7280;
+    background: var(--border-subtle);
+    color: var(--text-muted);
     font-size: 0.7rem;
     font-weight: 700;
     flex-shrink: 0;
   }
 
   &__meta { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
-  &__name { font-size: 0.86rem; font-weight: 600; color: $color-text; }
-  &__sub { font-size: 0.74rem; color: $muted; }
+  &__name { font-size: 0.86rem; font-weight: 600; color: var(--text-strong); }
+  &__sub { font-size: 0.74rem; color: var(--text-subtle); }
 }
 
 .picker-empty {
   padding: 2rem 1rem;
   text-align: center;
   font-size: 0.86rem;
-  color: $muted;
+  color: var(--text-subtle);
 }
 </style>

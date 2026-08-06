@@ -10,6 +10,10 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const PER_PAGE = 10
+// `per_page` is capped at 200 by IndexProductsRequest; export walks pages at
+// that size. The page cap is a runaway guard — a truncated export warns.
+const EXPORT_PER_PAGE = 200
+const EXPORT_MAX_PAGES = 50
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 
 // Server-driven list state (GET /admin/products).
@@ -21,14 +25,34 @@ const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 
-// NOTE: the list endpoint only exposes a catalog-wide Total (via pagination.total).
-// There is no summary endpoint for Low/Out/In-stock aggregate counts, so those
-// three cards are intentionally left blank ('—') until the API provides them.
+// `category_id` filters server-side. Stock level does not: the API's `low_stock`
+// is one bucket covering low AND zero stock, and In Stock (stock_quantity >
+// min_stock_alert) is a two-column comparison no query param expresses. Until
+// `stock_status` ships (docs/products-api-gaps.md) a stock filter pulls the
+// matching catalog at per_page=200 and pages over it locally, so the row set,
+// the total and the page count all stay correct.
+const categoryId = ref('')
+const stockLevel = ref('') // '' | 'in-stock' | 'low-stock' | 'out-of-stock'
+const categories = ref([])
+const hasFilters = computed(() => Boolean(search.value.trim() || categoryId.value || stockLevel.value))
+// True when the client-side stock filter stopped at EXPORT_MAX_PAGES.
+const filterTruncated = ref(false)
+
+// Catalog-wide counts, deliberately independent of the active filters.
+// There is no products summary endpoint, so these come from two calls:
+// `pagination.total` for the catalog size, and GET /admin/stock/alerts (the
+// full stock_quantity <= min_stock_alert set) split by stock on hand.
+const summary = ref({ total: null, low: null, out: null, inStock: null })
+
+function countLabel(value) {
+  return value == null ? '—' : value.toLocaleString()
+}
+
 const stats = computed(() => [
-  { key: 'total', label: 'Total Products', value: total.value.toLocaleString(), icon: 'box', tone: 'neutral' },
-  { key: 'low', label: 'Low Stock', value: '—', icon: 'warning', tone: 'warning' },
-  { key: 'out', label: 'Out of Stock', value: '—', icon: 'forbidden', tone: 'danger' },
-  { key: 'in-stock', label: 'In Stock', value: '—', icon: 'check', tone: 'success' },
+  { key: 'total', label: 'Total Products', value: countLabel(summary.value.total), icon: 'box', tone: 'neutral' },
+  { key: 'low', label: 'Low Stock', value: countLabel(summary.value.low), icon: 'warning', tone: 'warning' },
+  { key: 'out', label: 'Out of Stock', value: countLabel(summary.value.out), icon: 'forbidden', tone: 'danger' },
+  { key: 'in-stock', label: 'In Stock', value: countLabel(summary.value.inStock), icon: 'check', tone: 'success' },
 ])
 
 const statusLabels = {
@@ -46,6 +70,14 @@ function deriveStatus(item) {
   return 'in-stock'
 }
 
+// Product thumbnails are Cloudinary `secure_url` values (see MediaController),
+// so only absolute/rooted URLs are renderable — a bare storage path can't be
+// resolved from here and keeps the initials tile instead.
+function usableImage(value) {
+  const url = String(value ?? '').trim()
+  return /^(https?:\/\/|data:|blob:|\/)/.test(url) ? url : ''
+}
+
 function mapProduct(item) {
   return {
     id: item.id,
@@ -56,31 +88,100 @@ function mapProduct(item) {
     stock: Number(item.stock_quantity ?? 0),
     price: item.price != null ? currency.format(item.price) : '—',
     status: deriveStatus(item),
+    thumbnail: usableImage(item.thumbnail),
   }
+}
+
+// Thumbnails that fail to load fall back to the initials tile.
+const brokenThumbs = ref(new Set())
+function onThumbError(id) {
+  const next = new Set(brokenThumbs.value)
+  next.add(id)
+  brokenThumbs.value = next
+}
+
+// Shared query builder so the list and the export read the same filtered set.
+function listParams({ page: targetPage = page.value, perPage = PER_PAGE } = {}) {
+  const params = new URLSearchParams({
+    page: String(targetPage),
+    per_page: String(perPage),
+    sort: 'id',
+    direction: 'desc',
+  })
+  const q = search.value.trim()
+  if (q) params.set('q', q)
+  if (categoryId.value) params.set('category_id', String(categoryId.value))
+  // Low and out-of-stock are both subsets of `low_stock`, so the server still
+  // narrows those two before the client-side split runs.
+  if (stockLevel.value === 'low-stock' || stockLevel.value === 'out-of-stock') {
+    params.set('low_stock', '1')
+  }
+  return params
+}
+
+// Walks every page of the current filter set. Shared by the stock filter and Export.
+async function fetchAllFiltered() {
+  const rows = []
+  let current = 1
+  let last
+  do {
+    const response = await apiFetch(
+      `/admin/products?${listParams({ page: current, perPage: EXPORT_PER_PAGE }).toString()}`,
+      { token: auth.accessToken },
+    )
+    const data = response?.data ?? {}
+    rows.push(...(data.items ?? []))
+    last = data.pagination?.last_page ?? 1
+    current += 1
+  } while (current <= last && current <= EXPORT_MAX_PAGES)
+
+  return { rows, truncated: last > EXPORT_MAX_PAGES }
+}
+
+// Paging inside a client-filtered set shouldn't refetch the catalog every time.
+let statusCache = { key: '', rows: [], truncated: false }
+function filterKey() {
+  return JSON.stringify([search.value.trim(), categoryId.value, stockLevel.value])
+}
+function invalidateStatusCache() {
+  statusCache = { key: '', rows: [], truncated: false }
 }
 
 async function loadProducts() {
   loading.value = true
   error.value = ''
   try {
-    const params = new URLSearchParams({
-      page: String(page.value),
-      per_page: String(PER_PAGE),
-      sort: 'id',
-      direction: 'desc',
-    })
-    const q = search.value.trim()
-    if (q) params.set('q', q)
+    if (stockLevel.value) {
+      const key = filterKey()
+      if (statusCache.key !== key) {
+        const { rows, truncated } = await fetchAllFiltered()
+        statusCache = {
+          key,
+          rows: rows.filter((row) => deriveStatus(row) === stockLevel.value),
+          truncated,
+        }
+      }
 
-    const response = await apiFetch(`/admin/products?${params.toString()}`, {
-      token: auth.accessToken,
-    })
-    const data = response?.data ?? {}
-    products.value = (data.items ?? []).map(mapProduct)
+      const matched = statusCache.rows
+      const start = (page.value - 1) * PER_PAGE
+      products.value = matched.slice(start, start + PER_PAGE).map(mapProduct)
+      total.value = matched.length
+      lastPage.value = Math.max(1, Math.ceil(matched.length / PER_PAGE))
+      filterTruncated.value = statusCache.truncated
+    } else {
+      const response = await apiFetch(`/admin/products?${listParams().toString()}`, {
+        token: auth.accessToken,
+      })
+      const data = response?.data ?? {}
+      products.value = (data.items ?? []).map(mapProduct)
 
-    const pagination = data.pagination ?? {}
-    total.value = pagination.total ?? products.value.length
-    lastPage.value = pagination.last_page ?? 1
+      const pagination = data.pagination ?? {}
+      total.value = pagination.total ?? products.value.length
+      lastPage.value = pagination.last_page ?? 1
+      filterTruncated.value = false
+    }
+
+    brokenThumbs.value = new Set()
   } catch (err) {
     error.value = err.message || 'Unable to load products. Please try again.'
     products.value = []
@@ -91,17 +192,84 @@ async function loadProducts() {
   }
 }
 
-onMounted(loadProducts)
+// Catalog totals for the stat cards. `/admin/stock/alerts` returns every product
+// at or below its min_stock_alert (unpaginated); stock <= 0 is Out of Stock and
+// the rest is Low Stock, matching deriveStatus() above. In Stock is the
+// remainder of the catalog. A failure here leaves the cards at '—'.
+async function loadSummary() {
+  try {
+    const [catalog, alerts] = await Promise.all([
+      apiFetch('/admin/products?page=1&per_page=1', { token: auth.accessToken }),
+      apiFetch('/admin/stock/alerts', { token: auth.accessToken }),
+    ])
 
-// Debounce search; any new query resets to the first page.
+    const catalogTotal = catalog?.data?.pagination?.total ?? null
+    const rows = Array.isArray(alerts?.data) ? alerts.data : []
+    const out = rows.filter((row) => Number(row.stock_quantity ?? 0) <= 0).length
+
+    summary.value = {
+      total: catalogTotal,
+      low: rows.length - out,
+      out,
+      inStock: catalogTotal == null ? null : Math.max(0, catalogTotal - rows.length),
+    }
+  } catch {
+    summary.value = { total: null, low: null, out: null, inStock: null }
+  }
+}
+
+// Category options for the filter. GET /admin/categories hard-codes paginate(20)
+// and ignores per_page, so walk the pages (guarded at 10 = 200 categories).
+async function loadCategories() {
+  try {
+    const collected = []
+    let current = 1
+    let last = 1
+    do {
+      const response = await apiFetch(`/admin/categories?page=${current}`, {
+        token: auth.accessToken,
+      })
+      // The endpoint wraps a paginator, so `data` may be the array itself or {data: [...]}.
+      const payload = response?.data
+      const rows = Array.isArray(payload) ? payload : (payload?.data ?? [])
+      collected.push(...rows)
+      last = payload?.meta?.last_page ?? 1
+      current += 1
+    } while (current <= last && current <= 10)
+
+    categories.value = collected
+      .filter((row) => row?.id != null)
+      .map((row) => ({ id: row.id, name: row.name ?? `Category ${row.id}` }))
+  } catch {
+    // A failed category load shouldn't block the list; the dropdown stays empty.
+    categories.value = []
+  }
+}
+
+onMounted(() => {
+  loadProducts()
+  loadSummary()
+  loadCategories()
+})
+
+// Any filter change resets to page 1. Reload directly only when the page is
+// already 1, otherwise the page watcher below does it (avoids a double fetch).
+function applyFilters() {
+  if (page.value !== 1) {
+    page.value = 1
+  } else {
+    loadProducts()
+  }
+}
+
+// Debounce search; the dropdowns apply immediately.
 let searchTimer
 watch(search, () => {
   clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => {
-    page.value = 1
-    loadProducts()
-  }, 350)
+  searchTimer = setTimeout(applyFilters, 350)
 })
+
+watch([categoryId, stockLevel], applyFilters)
 
 watch(page, loadProducts)
 
@@ -140,15 +308,95 @@ function viewProduct(product) {
 function editProduct(product) {
   router.push({ name: 'product-edit', params: { id: product.uuid } })
 }
-// NOTE: no duplicate endpoint exists on the API yet — this stays client-side
-// only and will not persist across a reload. Flagged for the backend team.
-function duplicateProduct(product) {
-  const copy = {
-    ...product,
-    id: Math.max(0, ...products.value.map((p) => p.id)) + 1,
-    name: `${product.name} (Copy)`,
+// Fields carried over to a copy. `category_id`, `name`, `sku`, `slug` and
+// `price` are set explicitly; the rest ride along when present.
+const COPY_FIELDS = [
+  'brand_id',
+  'short_description',
+  'description',
+  'sale_price',
+  'cost_price',
+  'stock_quantity',
+  'min_stock_alert',
+  'track_inventory',
+  'in_stock',
+  'weight',
+  'length',
+  'width',
+  'height',
+  'thumbnail',
+  'meta_title',
+  'meta_description',
+  'is_active',
+  'is_featured',
+  'is_digital',
+  'sort_order',
+]
+
+function slugify(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function buildCopyBody(detail, attempt) {
+  const label = attempt === 1 ? 'Copy' : `Copy ${attempt}`
+  const tag = attempt === 1 ? 'COPY' : `COPY-${attempt}`
+
+  const body = {
+    category_id: detail.category_id,
+    name: `${detail.name} (${label})`,
+    // sku max:64 / slug max:191 on StoreProductRequest.
+    sku: `${detail.sku}-${tag}`.slice(0, 64),
+    slug: `${detail.slug || slugify(detail.name)}-${tag.toLowerCase()}`.slice(0, 191),
+    price: detail.price ?? 0,
   }
-  products.value.splice(products.value.indexOf(product) + 1, 0, copy)
+
+  for (const key of COPY_FIELDS) {
+    if (detail[key] !== null && detail[key] !== undefined) body[key] = detail[key]
+  }
+
+  return body
+}
+
+// There is no duplicate endpoint, so a copy is a real GET detail + POST create.
+// `sku`, `slug` and `barcode` are globally unique: the copy gets a suffixed
+// sku/slug, drops the barcode, and retries with the next suffix on a 422.
+// Variants are NOT copied — their sku/slug/barcode are unique too and the API
+// has no conflict handling for them (see docs/products-api-gaps.md).
+const duplicatingId = ref(null)
+async function duplicateProduct(product) {
+  if (duplicatingId.value) return
+  duplicatingId.value = product.id
+  try {
+    const detail = (await apiFetch(`/admin/products/${product.uuid}`, {
+      token: auth.accessToken,
+    }))?.data
+    if (!detail?.category_id) throw new Error('This product is missing a category and cannot be copied.')
+
+    let lastError = null
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      try {
+        await apiFetch('/admin/products', {
+          method: 'POST',
+          token: auth.accessToken,
+          body: buildCopyBody(detail, attempt),
+        })
+        invalidateStatusCache()
+        await Promise.all([loadProducts(), loadSummary()])
+        return
+      } catch (err) {
+        if (err.status !== 422) throw err
+        lastError = err
+      }
+    }
+    throw lastError ?? new Error('Unable to duplicate this product.')
+  } catch (err) {
+    window.alert(err.message || 'Unable to duplicate this product.')
+  } finally {
+    duplicatingId.value = null
+  }
 }
 async function deleteProduct(product) {
   if (!window.confirm(`Delete "${product.name}"? This action cannot be undone.`)) return
@@ -158,34 +406,42 @@ async function deleteProduct(product) {
       method: 'DELETE',
       token: auth.accessToken,
     })
+    invalidateStatusCache()
     // If we just removed the last row on a page past the first, step back.
     if (products.value.length === 1 && page.value > 1) {
       page.value -= 1
     } else {
       await loadProducts()
     }
+    loadSummary()
   } catch (err) {
     window.alert(err.message || 'Unable to delete this product.')
   }
 }
 
-// Export the current products to a CSV file.
-function exportProducts() {
-  const columns = [
-    { key: 'name', label: 'Product Name' },
-    { key: 'sku', label: 'SKU' },
-    { key: 'category', label: 'Category' },
-    { key: 'stock', label: 'Stock' },
-    { key: 'price', label: 'Price' },
-    { key: 'status', label: 'Status' },
-  ]
+// CSV columns read straight off ProductResource.
+const EXPORT_COLUMNS = [
+  { label: 'Product Name', value: (p) => p.name },
+  { label: 'SKU', value: (p) => p.sku },
+  { label: 'Barcode', value: (p) => p.barcode },
+  { label: 'Category', value: (p) => p.category?.name },
+  { label: 'Brand', value: (p) => p.brand?.name },
+  { label: 'Stock', value: (p) => p.stock_quantity },
+  { label: 'Min Stock Alert', value: (p) => p.min_stock_alert },
+  { label: 'Status', value: (p) => statusLabels[deriveStatus(p)] },
+  { label: 'Price', value: (p) => p.price },
+  { label: 'Sale Price', value: (p) => p.sale_price },
+  { label: 'Cost Price', value: (p) => p.cost_price },
+  { label: 'Active', value: (p) => (p.is_active ? 'Yes' : 'No') },
+  { label: 'Created At', value: (p) => p.created_at },
+]
 
+function downloadCsv(rows) {
   const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`
-  const rows = [
-    columns.map((c) => escape(c.label)).join(','),
-    ...products.value.map((p) => columns.map((c) => escape(p[c.key])).join(',')),
-  ]
-  const csv = rows.join('\r\n')
+  const csv = [
+    EXPORT_COLUMNS.map((c) => escape(c.label)).join(','),
+    ...rows.map((row) => EXPORT_COLUMNS.map((c) => escape(c.value(row))).join(',')),
+  ].join('\r\n')
 
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -198,8 +454,309 @@ function exportProducts() {
   URL.revokeObjectURL(url)
 }
 
+// Export every row matching the active filters, not just the visible page:
+// walk GET /admin/products at per_page=200 until the last page.
+const exporting = ref(false)
+async function exportProducts() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const { rows, truncated } = await fetchAllFiltered()
+    // Apply the same client-side stock split as the table, so the file matches
+    // exactly what the filters show.
+    const matched = stockLevel.value
+      ? rows.filter((row) => deriveStatus(row) === stockLevel.value)
+      : rows
+
+    if (!matched.length) {
+      window.alert('There is nothing to export for the current filters.')
+      return
+    }
+
+    downloadCsv(matched)
+
+    if (truncated) {
+      window.alert(
+        `Exported the first ${matched.length.toLocaleString()} products only — the export ` +
+          `stops after ${EXPORT_MAX_PAGES} pages. Narrow the filters to export the rest.`,
+      )
+    }
+  } catch (err) {
+    window.alert(err.message || 'Unable to export products.')
+  } finally {
+    exporting.value = false
+  }
+}
+
 function thumbInitials(name) {
   return name.replace(/[^A-Za-z0-9 ]/g, '').slice(0, 2).toUpperCase()
+}
+
+/* ------------------------------------------------------------------ *
+ * Import
+ *
+ * There is no import endpoint (docs/products-api-gaps.md), so parsing,
+ * column mapping and validation all happen here and each accepted row is
+ * created through POST /admin/products. Nothing is sent until the preview
+ * is confirmed.
+ * ------------------------------------------------------------------ */
+
+const IMPORT_MAX_ROWS = 500
+
+// Accepted header spellings per field. Headers are matched case-insensitively
+// with non-alphanumerics collapsed, so "Product Name" == "product_name".
+const IMPORT_FIELDS = [
+  { key: 'name', headers: ['productname', 'name'], required: true },
+  { key: 'sku', headers: ['sku'], required: true },
+  { key: 'price', headers: ['price', 'unitprice', 'baseprice'], required: true },
+  { key: 'category', headers: ['category', 'categoryname'], required: false },
+  { key: 'categoryId', headers: ['categoryid'], required: false },
+  { key: 'stock', headers: ['stock', 'stockquantity', 'quantity'], required: false },
+  { key: 'minStockAlert', headers: ['minstockalert', 'lowstockthreshold'], required: false },
+  { key: 'barcode', headers: ['barcode'], required: false },
+  { key: 'costPrice', headers: ['costprice'], required: false },
+  { key: 'salePrice', headers: ['saleprice'], required: false },
+  { key: 'description', headers: ['description'], required: false },
+]
+
+function normaliseHeader(value) {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+// Minimal RFC-4180 reader: quoted fields, escaped quotes, CRLF or LF.
+function parseCsv(text) {
+  const rows = []
+  let row = []
+  let field = ''
+  let quoted = false
+
+  const pushField = () => {
+    row.push(field)
+    field = ''
+  }
+  const pushRow = () => {
+    pushField()
+    if (row.some((cell) => cell.trim() !== '')) rows.push(row)
+    row = []
+  }
+
+  // Strip a leading BOM (Excel writes one) without putting U+FEFF in the source.
+  const input = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i]
+
+    if (quoted) {
+      if (char === '"') {
+        if (input[i + 1] === '"') {
+          field += '"'
+          i += 1
+        } else {
+          quoted = false
+        }
+      } else {
+        field += char
+      }
+      continue
+    }
+
+    if (char === '"') quoted = true
+    else if (char === ',') pushField()
+    else if (char === '\r') continue
+    else if (char === '\n') pushRow()
+    else field += char
+  }
+
+  if (field !== '' || row.length) pushRow()
+  return rows
+}
+
+const importInput = ref(null)
+const importPreview = ref(null) // { fileName, rows, validCount, missing }
+const importing = ref(false)
+const importResult = ref(null) // { created, failures: [{name, message}] }
+
+function pickImportFile() {
+  importInput.value?.click()
+}
+
+function toNumber(value) {
+  const cleaned = String(value ?? '').replace(/[$,\s]/g, '')
+  if (cleaned === '') return null
+  const n = Number(cleaned)
+  return Number.isFinite(n) ? n : null
+}
+
+// Category names resolve against the loaded dropdown options.
+const categoryByName = computed(() => {
+  const map = new Map()
+  for (const category of categories.value) {
+    map.set(normaliseHeader(category.name), category.id)
+  }
+  return map
+})
+
+function buildImportRow(record, index, seenSkus) {
+  const errors = []
+  const name = String(record.name ?? '').trim()
+  const sku = String(record.sku ?? '').trim()
+  const price = toNumber(record.price)
+
+  if (!name) errors.push('Product name is required')
+  if (!sku) errors.push('SKU is required')
+  else if (!/^[A-Za-z0-9._-]+$/.test(sku)) errors.push('SKU may only contain letters, digits, dot, underscore and dash')
+  else if (seenSkus.has(sku.toLowerCase())) errors.push('Duplicate SKU in this file')
+  if (price == null) errors.push('Price must be a number')
+  else if (price < 0) errors.push('Price cannot be negative')
+
+  // category_id wins; otherwise resolve the name against the dropdown options.
+  let resolvedCategoryId = toNumber(record.categoryId)
+  const categoryName = String(record.category ?? '').trim()
+  if (resolvedCategoryId == null && categoryName) {
+    resolvedCategoryId = categoryByName.value.get(normaliseHeader(categoryName)) ?? null
+    if (resolvedCategoryId == null) errors.push(`Unknown category "${categoryName}"`)
+  } else if (resolvedCategoryId == null) {
+    errors.push('Category is required')
+  }
+
+  if (sku) seenSkus.add(sku.toLowerCase())
+
+  const stock = toNumber(record.stock)
+  const minStockAlert = toNumber(record.minStockAlert)
+  const costPrice = toNumber(record.costPrice)
+  const salePrice = toNumber(record.salePrice)
+  if (salePrice != null && price != null && salePrice > price) {
+    errors.push('Sale price must be less than or equal to price')
+  }
+
+  const body = {
+    category_id: resolvedCategoryId,
+    name,
+    sku,
+    price: price ?? 0,
+  }
+  if (stock != null) body.stock_quantity = Math.max(0, Math.round(stock))
+  if (minStockAlert != null) body.min_stock_alert = Math.max(0, Math.round(minStockAlert))
+  if (costPrice != null) body.cost_price = costPrice
+  if (salePrice != null) body.sale_price = salePrice
+  if (String(record.barcode ?? '').trim()) body.barcode = String(record.barcode).trim()
+  if (String(record.description ?? '').trim()) body.description = String(record.description).trim()
+
+  return {
+    line: index + 2, // +1 for the header row, +1 for 1-based lines
+    name: name || '(no name)',
+    sku,
+    categoryName: categoryName || (resolvedCategoryId != null ? `#${resolvedCategoryId}` : '—'),
+    stock: stock == null ? '—' : Math.max(0, Math.round(stock)),
+    price: price == null ? '—' : currency.format(price),
+    errors,
+    body,
+  }
+}
+
+async function onImportFileChange(event) {
+  const file = event.target.files?.[0]
+  event.target.value = '' // let the same file be picked again
+  if (!file) return
+
+  try {
+    const table = parseCsv(await file.text())
+    if (table.length < 2) {
+      window.alert('That file has no data rows. Download the template for the expected columns.')
+      return
+    }
+
+    const headers = table[0].map(normaliseHeader)
+    const columnFor = {}
+    for (const field of IMPORT_FIELDS) {
+      const index = headers.findIndex((header) => field.headers.includes(header))
+      if (index !== -1) columnFor[field.key] = index
+    }
+
+    const missing = IMPORT_FIELDS.filter((f) => f.required && columnFor[f.key] === undefined).map(
+      (f) => f.headers[0],
+    )
+    if (missing.length) {
+      window.alert(`This file is missing required column(s): ${missing.join(', ')}.`)
+      return
+    }
+
+    const seenSkus = new Set()
+    const dataRows = table.slice(1, IMPORT_MAX_ROWS + 1)
+    const rows = dataRows.map((cells, index) => {
+      const record = {}
+      for (const [key, column] of Object.entries(columnFor)) record[key] = cells[column]
+      return buildImportRow(record, index, seenSkus)
+    })
+
+    importResult.value = null
+    importPreview.value = {
+      fileName: file.name,
+      rows,
+      validCount: rows.filter((row) => row.errors.length === 0).length,
+      skipped: Math.max(0, table.length - 1 - dataRows.length),
+    }
+  } catch (err) {
+    window.alert(err.message || 'Unable to read that file.')
+  }
+}
+
+function closeImport() {
+  if (importing.value) return
+  importPreview.value = null
+  importResult.value = null
+}
+
+function downloadImportTemplate() {
+  const sample = categories.value[0]?.name ?? 'Category Name'
+  const csv = [
+    'Product Name,SKU,Category,Stock,Min Stock Alert,Price,Cost Price,Barcode,Description',
+    `"Example Product","EXAMPLE-001","${sample}",25,5,199.00,150.00,,"Optional description"`,
+  ].join('\r\n')
+
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'products-import-template.csv'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+// One POST per accepted row — there is no bulk create endpoint. Rows are sent
+// sequentially so a mid-run failure leaves a clear boundary, and every failure
+// is reported rather than aborting the run.
+async function runImport() {
+  const rows = (importPreview.value?.rows ?? []).filter((row) => row.errors.length === 0)
+  if (!rows.length || importing.value) return
+
+  importing.value = true
+  const failures = []
+  let created = 0
+
+  try {
+    for (const row of rows) {
+      try {
+        await apiFetch('/admin/products', {
+          method: 'POST',
+          token: auth.accessToken,
+          body: row.body,
+        })
+        created += 1
+      } catch (err) {
+        const detail = Object.values(err.errors ?? {}).flat()[0]
+        failures.push({ line: row.line, name: row.name, message: detail || err.message || 'Failed' })
+      }
+    }
+  } finally {
+    importing.value = false
+    importResult.value = { created, failures }
+    if (created) {
+      invalidateStatusCache()
+      await Promise.all([loadProducts(), loadSummary()])
+    }
+  }
 }
 </script>
 
@@ -220,41 +777,62 @@ function thumbInitials(name) {
           <input v-model="search" type="search" placeholder="Search by Product Name, SKU, or Serial..." />
         </label>
 
-        <div class="select">
-          All Categories
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-        </div>
-        <div class="select">
-          Stock Level
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-        </div>
+        <div class="toolbar__actions">
+          <label class="select">
+            <select v-model="categoryId" aria-label="Filter by category">
+              <option value="">All Categories</option>
+              <option v-for="category in categories" :key="category.id" :value="category.id">
+                {{ category.name }}
+              </option>
+            </select>
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </label>
+          <label class="select">
+            <select v-model="stockLevel" aria-label="Filter by stock level">
+              <option value="">Stock Level: Any</option>
+              <option value="in-stock">In Stock</option>
+              <option value="low-stock">Low Stock</option>
+              <option value="out-of-stock">Out of Stock</option>
+            </select>
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </label>
 
-        <div class="toolbar__spacer"></div>
-
-        <BaseButton variant="ghost">
-          <template #icon>
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M12 15V3m0 0L8 7m4-4 4 4" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
-            </svg>
-          </template>
-          Import
-        </BaseButton>
-        <BaseButton variant="ghost" :disabled="!products.length" @click="exportProducts">
-          <template #icon>
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </template>
-          Export
-        </BaseButton>
-        <BaseButton variant="primary" :to="{ name: 'product-create' }">
-          <template #icon>
-            <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-          </template>
-          Add Product
-        </BaseButton>
+          <input
+            ref="importInput"
+            type="file"
+            accept=".csv,text/csv"
+            class="visually-hidden"
+            @change="onImportFileChange"
+          />
+          <BaseButton variant="ghost" :disabled="importing" @click="pickImportFile">
+            <template #icon>
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M12 15V3m0 0L8 7m4-4 4 4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
+              </svg>
+            </template>
+            Import
+          </BaseButton>
+          <BaseButton
+            variant="ghost"
+            :disabled="exporting || loading || total === 0"
+            @click="exportProducts"
+          >
+            <template #icon>
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </template>
+            {{ exporting ? 'Exporting…' : 'Export' }}
+          </BaseButton>
+          <BaseButton variant="primary" :to="{ name: 'product-create' }">
+            <template #icon>
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
+            </template>
+            Add Product
+          </BaseButton>
+        </div>
       </section>
 
       <!-- Stat cards -->
@@ -289,6 +867,12 @@ function thumbInitials(name) {
         </article>
       </section>
 
+      <!-- The stock filter runs client-side; say so when it stopped early. -->
+      <p v-if="filterTruncated" class="notice">
+        Stock level was matched against the first {{ (EXPORT_PER_PAGE * EXPORT_MAX_PAGES).toLocaleString() }}
+        products only. Add a search term or category to narrow the set.
+      </p>
+
       <!-- Table -->
       <section class="table-card">
         <table class="table">
@@ -316,7 +900,9 @@ function thumbInitials(name) {
               </td>
             </tr>
             <tr v-else-if="products.length === 0">
-              <td colspan="7" class="table__state">No products found.</td>
+              <td colspan="7" class="table__state">
+                {{ hasFilters ? 'No products match the current filters.' : 'No products found.' }}
+              </td>
             </tr>
             <tr v-for="product in products" v-else :key="product.id">
               <td class="table__check">
@@ -328,7 +914,16 @@ function thumbInitials(name) {
               </td>
               <td>
                 <div class="product">
-                  <span class="product__thumb" aria-hidden="true">{{ thumbInitials(product.name) }}</span>
+                  <span class="product__thumb" aria-hidden="true">
+                    <img
+                      v-if="product.thumbnail && !brokenThumbs.has(product.id)"
+                      :src="product.thumbnail"
+                      alt=""
+                      loading="lazy"
+                      @error="onThumbError(product.id)"
+                    />
+                    <template v-else>{{ thumbInitials(product.name) }}</template>
+                  </span>
                   <div class="product__meta">
                     <p class="product__name">{{ product.name }}</p>
                     <p class="product__sku">SKU: {{ product.sku }}</p>
@@ -376,6 +971,7 @@ function thumbInitials(name) {
                     class="icon-btn"
                     title="Duplicate product"
                     aria-label="Duplicate product"
+                    :disabled="duplicatingId !== null"
                     @click="duplicateProduct(product)"
                   >
                     <svg viewBox="0 0 24 24" fill="none">
@@ -422,13 +1018,107 @@ function thumbInitials(name) {
         </footer>
       </section>
     </div>
+
+    <!-- Import preview -->
+    <div v-if="importPreview" class="modal" role="dialog" aria-modal="true" aria-label="Import products">
+      <div class="modal__backdrop" @click="closeImport"></div>
+      <div class="modal__panel">
+        <header class="modal__head">
+          <div>
+            <h2 class="modal__title">Import products</h2>
+            <p class="modal__sub">{{ importPreview.fileName }}</p>
+          </div>
+          <button type="button" class="modal__close" aria-label="Close" @click="closeImport">
+            <svg viewBox="0 0 24 24" fill="none"><path d="m6 6 12 12M18 6 6 18" stroke-linecap="round" /></svg>
+          </button>
+        </header>
+
+        <div class="modal__body">
+          <!-- Result view, shown after the run -->
+          <template v-if="importResult">
+            <p class="import-summary">
+              <strong>{{ importResult.created.toLocaleString() }}</strong> product(s) created.
+              <template v-if="importResult.failures.length">
+                <strong>{{ importResult.failures.length }}</strong> failed.
+              </template>
+            </p>
+            <ul v-if="importResult.failures.length" class="import-errors">
+              <li v-for="failure in importResult.failures" :key="failure.line">
+                Line {{ failure.line }} — {{ failure.name }}: {{ failure.message }}
+              </li>
+            </ul>
+          </template>
+
+          <!-- Preview view -->
+          <template v-else>
+            <p class="import-summary">
+              <strong>{{ importPreview.validCount.toLocaleString() }}</strong> of
+              {{ importPreview.rows.length.toLocaleString() }} row(s) ready to import.
+              <span v-if="importPreview.validCount < importPreview.rows.length">
+                Rows with errors are skipped.
+              </span>
+              <span v-if="importPreview.skipped">
+                Only the first {{ IMPORT_MAX_ROWS.toLocaleString() }} rows are read
+                ({{ importPreview.skipped.toLocaleString() }} ignored).
+              </span>
+            </p>
+
+            <div class="modal__scroll">
+              <table class="table table--compact">
+                <thead>
+                  <tr>
+                    <th>Line</th>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th>Category</th>
+                    <th>Stock</th>
+                    <th>Price</th>
+                    <th>Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in importPreview.rows" :key="row.line">
+                    <td>{{ row.line }}</td>
+                    <td>{{ row.name }}</td>
+                    <td>{{ row.sku || '—' }}</td>
+                    <td>{{ row.categoryName }}</td>
+                    <td>{{ row.stock }}</td>
+                    <td>{{ row.price }}</td>
+                    <td>
+                      <span v-if="!row.errors.length" class="badge badge--in-stock">Ready</span>
+                      <span v-else class="import-row-errors">{{ row.errors.join('; ') }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </div>
+
+        <footer class="modal__foot">
+          <BaseButton variant="ghost" size="sm" @click="downloadImportTemplate">
+            Download template
+          </BaseButton>
+          <div class="modal__foot-actions">
+            <BaseButton variant="subtle" :disabled="importing" @click="closeImport">
+              {{ importResult ? 'Close' : 'Cancel' }}
+            </BaseButton>
+            <BaseButton
+              v-if="!importResult"
+              variant="primary"
+              :disabled="importing || importPreview.validCount === 0"
+              @click="runImport"
+            >
+              {{ importing ? 'Importing…' : `Import ${importPreview.validCount} product(s)` }}
+            </BaseButton>
+          </div>
+        </footer>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -458,8 +1148,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.9rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
 
@@ -479,23 +1169,23 @@ $divider: #eef0f3;
     }
 
     &--neutral {
-      background: #f4f5f7;
-      color: #6b7280;
+      background: var(--bg);
+      color: var(--text-muted);
       svg { stroke: currentColor; }
     }
     &--warning {
-      background: rgba($accent, 0.16);
-      color: #b8890b;
+      background: rgb(var(--accent-rgb) / 0.16);
+      color: var(--accent-ink);
       svg { stroke: currentColor; }
     }
     &--danger {
-      background: #fdecec;
-      color: #d14343;
+      background: var(--danger-bg);
+      color: var(--danger);
       svg { stroke: currentColor; }
     }
     &--success {
-      background: #e6f7ee;
-      color: #1f9d57;
+      background: var(--success-bg);
+      color: var(--success);
       svg { stroke: currentColor; }
     }
   }
@@ -503,14 +1193,14 @@ $divider: #eef0f3;
   &__label {
     margin: 0;
     font-size: 0.78rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__value {
     margin: 0.15rem 0 0;
     font-size: 1.45rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 }
 
@@ -519,8 +1209,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -530,24 +1220,30 @@ $divider: #eef0f3;
     min-width: 240px;
     display: flex;
     align-items: center;
-    background: #f4f5f7;
+    background: var(--bg);
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 0 0.75rem;
 
     &:focus-within {
-      background: #fff;
-      border-color: #e6e8ec;
+      background: var(--surface);
+      border-color: var(--border);
     }
   }
 
   &__search-icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
-  &__spacer { flex: 1; }
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
 
   input {
     flex: 1;
@@ -557,26 +1253,47 @@ $divider: #eef0f3;
     padding: 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
 
 .select {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.55rem 0.8rem;
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: #4a5160;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  cursor: pointer;
-  white-space: nowrap;
 
-  svg { width: 14px; height: 14px; stroke: $muted; stroke-width: 1.8; }
+  &:focus-within { border-color: var(--border); }
+
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    max-width: 190px;
+    padding: 0.55rem 2rem 0.55rem 0.8rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    font-family: inherit;
+    color: var(--text-body);
+    background: transparent;
+    border: none;
+    border-radius: inherit;
+    cursor: pointer;
+
+    &:focus { outline: none; }
+  }
+
+  svg {
+    position: absolute;
+    right: 0.65rem;
+    width: 14px;
+    height: 14px;
+    stroke: var(--text-subtle);
+    stroke-width: 1.8;
+    pointer-events: none;
+  }
 }
 
 .btn {
@@ -595,22 +1312,165 @@ $divider: #eef0f3;
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
 
   &--ghost {
-    background: #fff;
-    border-color: #e6e8ec;
-    color: #4a5160;
-    &:hover { background: #f6f7f9; }
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text-body);
+    &:hover { background: var(--surface-alt); }
   }
   &--primary {
-    background: $accent;
-    color: #1f242d;
+    background: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
     &:hover { filter: brightness(0.96); border-color: transparent; }
   }
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.notice {
+  margin: 0;
+  padding: 0.7rem 1rem;
+  font-size: 0.8rem;
+  color: var(--accent-ink);
+  background: rgb(var(--accent-rgb) / 0.12);
+  border: 1px solid rgb(var(--accent-rgb) / 0.4);
+  border-radius: 10px;
+}
+
+/* Import modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+
+  &__backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--backdrop);
+  }
+
+  &__panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: min(920px, 100%);
+    max-height: min(80vh, 720px);
+    background: var(--surface);
+    border-radius: 14px;
+    border: 1px solid var(--border-subtle);
+    box-shadow: 0 18px 50px rgba(20, 24, 31, 0.2);
+    overflow: hidden;
+  }
+
+  &__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-strong);
+  }
+
+  &__sub {
+    margin: 0.2rem 0 0;
+    font-size: 0.8rem;
+    color: var(--text-subtle);
+  }
+
+  &__close {
+    display: inline-flex;
+    padding: 0.35rem;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-subtle);
+    cursor: pointer;
+
+    &:hover { background: var(--bg); color: var(--text-strong); }
+
+    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
+  }
+
+  &__body {
+    padding: 1.1rem 1.25rem;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    min-height: 0;
+  }
+
+  &__scroll {
+    overflow: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+  }
+
+  &__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem 1.25rem;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
+    flex-wrap: wrap;
+  }
+
+  &__foot-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-left: auto;
+  }
+}
+
+.import-summary {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-body);
+
+  strong { color: var(--text-strong); }
+}
+
+.import-errors {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.8rem;
+  color: var(--danger);
+  overflow: auto;
+
+  li + li { margin-top: 0.25rem; }
+}
+
+.import-row-errors {
+  font-size: 0.75rem;
+  color: var(--danger);
+}
+
 /* Table */
 .table-card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   overflow: visible;
 }
@@ -630,24 +1490,32 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
-    background: #fafbfc;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
   }
 
-  tbody tr + tr td { border-top: 1px solid $divider; }
-  tbody tr:hover { background: #fafbfc; }
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
 
   &__check { width: 44px; }
-  &__actions-head { text-align: right; }
+  /* Needs the element in the selector: `.table th` above is (0,1,1) and would
+     otherwise outrank a bare class and keep the label left of its icons. */
+  th#{&}__actions-head { text-align: center; }
+
+  /* Import preview: denser rows, header pinned while the list scrolls. */
+  &--compact {
+    th, td { padding: 0.55rem 0.7rem; font-size: 0.8rem; }
+    thead th { position: sticky; top: 0; z-index: 1; }
+  }
 
   &__state {
     text-align: center;
-    color: $muted;
+    color: var(--text-subtle);
     font-size: 0.88rem;
     padding: 2.5rem 1rem;
 
-    &--error { color: #d14343; }
+    &--error { color: var(--danger); }
   }
 
   &__retry {
@@ -656,19 +1524,19 @@ $divider: #eef0f3;
     font-size: 0.8rem;
     font-weight: 600;
     font-family: inherit;
-    color: #4a5160;
-    background: #fff;
-    border: 1px solid #e6e8ec;
+    color: var(--text-body);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 8px;
     cursor: pointer;
 
-    &:hover { background: #f6f7f9; }
+    &:hover { background: var(--surface-alt); }
   }
 
   input[type='checkbox'] {
     width: 15px;
     height: 15px;
-    accent-color: $accent;
+    accent-color: rgb(var(--accent-rgb));
     cursor: pointer;
   }
 }
@@ -685,24 +1553,32 @@ $divider: #eef0f3;
     width: 40px;
     height: 40px;
     border-radius: 8px;
-    background: #eef0f3;
-    color: #6b7280;
+    background: var(--border-subtle);
+    color: var(--text-muted);
     font-size: 0.72rem;
     font-weight: 700;
     flex-shrink: 0;
+    overflow: hidden;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
   }
 
   &__name {
     margin: 0;
     font-size: 0.88rem;
     font-weight: 600;
-    color: #a8850a;
+    color: var(--accent-ink);
   }
 
   &__sku {
     margin: 0.15rem 0 0;
     font-size: 0.74rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -717,27 +1593,27 @@ $divider: #eef0f3;
   border-radius: 999px;
 
   &--category {
-    background: #f1f3f5;
-    color: #5b6472;
+    background: var(--surface-track);
+    color: var(--text-muted);
     text-transform: none;
     letter-spacing: 0;
     font-weight: 600;
   }
-  &--in-stock { background: #e6f7ee; color: #1f9d57; }
-  &--low-stock { background: rgba($accent, 0.2); color: #b8890b; }
-  &--out-of-stock { background: #fdecec; color: #d14343; }
+  &--in-stock { background: var(--success-bg); color: var(--success); }
+  &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
+  &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
 }
 
 .stock {
-  &__count { margin: 0; font-size: 0.88rem; font-weight: 600; color: $color-text; }
+  &__count { margin: 0; font-size: 0.88rem; font-weight: 600; color: var(--text-strong); }
 }
 
-.price { font-size: 0.9rem; font-weight: 600; color: $color-text; }
+.price { font-size: 0.9rem; font-weight: 600; color: var(--text-strong); }
 
 .row-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 0.4rem;
 }
 
@@ -748,15 +1624,17 @@ $divider: #eef0f3;
   width: 32px;
   height: 32px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: #6b7280;
+  color: var(--text-muted);
   cursor: pointer;
 
-  &:hover { background: #f6f7f9; color: $color-text; border-color: #dfe2e7; }
+  &:hover:not(:disabled) { background: var(--surface-alt); color: var(--text-strong); border-color: var(--border); }
 
-  &--danger:hover { background: #fdf2f2; color: #d14343; border-color: #f0c9c9; }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  &--danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
 }
@@ -768,10 +1646,10 @@ $divider: #eef0f3;
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem;
-  border-top: 1px solid $divider;
+  border-top: 1px solid var(--border-subtle);
   flex-wrap: wrap;
 
-  &__info { margin: 0; font-size: 0.82rem; color: $muted; }
+  &__info { margin: 0; font-size: 0.82rem; color: var(--text-subtle); }
   &__controls { display: flex; gap: 0.4rem; }
 }
 
@@ -781,20 +1659,20 @@ $divider: #eef0f3;
   font-size: 0.82rem;
   font-weight: 600;
   font-family: inherit;
-  color: #4a5160;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;
 
-  &:hover:not(:disabled) { background: #f6f7f9; }
+  &:hover:not(:disabled) { background: var(--surface-alt); }
 
   &:disabled { opacity: 0.5; cursor: not-allowed; }
 
   &--active {
-    background: $accent;
-    border-color: $accent;
-    color: #1f242d;
+    background: rgb(var(--accent-rgb));
+    border-color: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
   }
 }
 </style>

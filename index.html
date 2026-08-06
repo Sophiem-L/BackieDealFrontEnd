@@ -7,6 +7,32 @@
     <title>BackieDeal</title>
   </head>
   <body>
+    <!--
+      Resolve the theme before first paint. Vue mounts after the first frame, so
+      leaving this to the store would flash the light palette on a dark-mode
+      load. src/stores/ui.js reads the attribute this sets, keeping one source
+      of truth. Must stay inline and blocking — an external or deferred script
+      would paint first.
+    -->
+    <script>
+      ;(function () {
+        var theme = null
+        try {
+          var stored = localStorage.getItem('backiedeal.theme')
+          if (stored === 'light' || stored === 'dark') theme = stored
+        } catch (e) {
+          /* storage denied in some privacy modes — fall through */
+        }
+        if (!theme) {
+          theme =
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+        }
+        document.documentElement.dataset.theme = theme
+      })()
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
   </body>

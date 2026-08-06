@@ -181,11 +181,6 @@ const sections = [
 
 <style scoped lang="scss">
 $sidebar-width: 252px;
-$accent: #f4c10f;
-$muted: #8a909c;
-$heading: #aab0bb;
-$divider: #eef0f3;
-
 $sidebar-rail: 74px;
 
 .sidebar {
@@ -195,8 +190,8 @@ $sidebar-rail: 74px;
   top: 0;
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  border-right: 1px solid $divider;
+  background: var(--surface);
+  border-right: 1px solid var(--border-subtle);
   transition: width 0.2s ease, transform 0.2s ease;
 
   /* ---- Collapsed (icon rail) on desktop ---- */
@@ -230,7 +225,7 @@ $sidebar-rail: 74px;
     top: 0;
     left: 0;
     z-index: 50;
-    box-shadow: 0 0 40px rgba(20, 23, 28, 0.18);
+    box-shadow: var(--shadow-md);
 
     /* On mobile, "collapsed" hides it off-screen instead of showing a rail */
     &--collapsed {
@@ -261,7 +256,7 @@ $sidebar-rail: 74px;
   align-items: center;
   gap: 0.65rem;
   padding: 1.15rem 1.25rem;
-  border-bottom: 1px solid $divider;
+  border-bottom: 1px solid var(--border-subtle);
 
   &:hover {
     text-decoration: none;
@@ -277,7 +272,7 @@ $sidebar-rail: 74px;
   &__name {
     font-size: 1.05rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 }
 
@@ -296,7 +291,7 @@ $sidebar-rail: 74px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: $heading;
+    color: var(--text-faint);
   }
 
   &__list {
@@ -318,21 +313,21 @@ $sidebar-rail: 74px;
     font-size: 0.9rem;
     font-weight: 500;
     text-align: left;
-    color: #4a5160;
+    color: var(--text-body);
     background: transparent;
     border: none;
     cursor: pointer;
     transition: background-color 0.15s ease, color 0.15s ease;
 
     &:hover {
-      background: #f6f7f9;
+      background: var(--surface-alt);
       text-decoration: none;
-      color: $color-text;
+      color: var(--text-strong);
     }
 
     &.is-active {
-      background: rgba($accent, 0.16);
-      color: #1f242d;
+      background: rgb(var(--accent-rgb) / 0.16);
+      color: var(--nav-active-ink);
       font-weight: 600;
     }
   }
@@ -366,23 +361,24 @@ $sidebar-rail: 74px;
     justify-content: center;
     font-size: 0.7rem;
     font-weight: 700;
-    color: #6b4e00;
-    background: $accent;
+    // The badge sits on the accent, which stays yellow in both themes.
+    color: var(--ink-on-accent);
+    background: rgb(var(--accent-rgb));
     border-radius: 999px;
   }
 
   &__link--logout {
-    color: #d14343;
+    color: var(--danger);
 
     &:hover {
-      background: rgba(#d14343, 0.08);
-      color: #d14343;
+      background: var(--danger-bg);
+      color: var(--danger);
     }
   }
 }
 
 .sidebar__footer {
   padding: 0.75rem;
-  border-top: 1px solid $divider;
+  border-top: 1px solid var(--border-subtle);
 }
 </style>

@@ -181,9 +181,6 @@ function submitCreate() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -204,8 +201,8 @@ $divider: #eef0f3;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -217,20 +214,20 @@ $divider: #eef0f3;
   flex: 1;
   min-width: 220px;
   max-width: 420px;
-  background: #f4f5f7;
+  background: var(--bg);
   border: 1px solid transparent;
   border-radius: 999px;
   padding: 0 0.85rem;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 
   &:focus-within {
-    background: #fff;
-    border-color: #e6e8ec;
+    background: var(--surface);
+    border-color: var(--border);
   }
 
   &__icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -242,7 +239,7 @@ $divider: #eef0f3;
     padding: 0.5rem 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
@@ -257,11 +254,11 @@ $divider: #eef0f3;
     grid-column: 1 / -1;
     margin: 0;
     text-align: center;
-    color: $muted;
+    color: var(--text-subtle);
     font-size: 0.88rem;
     padding: 2.5rem 1rem;
-    background: #fff;
-    border: 1px solid $divider;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 14px;
   }
 }
@@ -278,14 +275,14 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.9rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
   &:hover {
-    border-color: #e1e4e9;
+    border-color: var(--border);
     box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
   }
 
@@ -298,8 +295,8 @@ $divider: #eef0f3;
     height: 48px;
     border-radius: 50%;
     overflow: hidden;
-    background: #eef0f3;
-    color: #6b7280;
+    background: var(--border-subtle);
+    color: var(--text-muted);
     font-size: 0.85rem;
     font-weight: 700;
 
@@ -315,7 +312,7 @@ $divider: #eef0f3;
     margin: 0 0 0.35rem;
     font-size: 0.98rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__meta {
@@ -330,16 +327,16 @@ $divider: #eef0f3;
     align-items: center;
     gap: 0.35rem;
     font-size: 0.78rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #c4c9d1;
+    background: var(--text-faint);
 
-    &--online { background: #34c759; }
+    &--online { background: var(--success); }
   }
 
   &__actions {
@@ -358,8 +355,8 @@ $divider: #eef0f3;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #2563c9;
-  background: #eaf1fd;
+  color: var(--info);
+  background: var(--info-bg);
   border-radius: 6px;
   white-space: nowrap;
 }
@@ -371,20 +368,20 @@ $divider: #eef0f3;
   width: 38px;
   height: 38px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 
-  &:hover { background: #f6f7f9; }
+  &:hover { background: var(--surface-alt); }
 
   svg { width: 17px; height: 17px; stroke: currentColor; stroke-width: 1.7; }
 
   &--danger {
-    color: #d14343;
-    &:hover { background: #fff5f5; border-color: #f0c9c9; }
+    color: var(--danger);
+    &:hover { background: var(--danger-bg); border-color: var(--danger-border); }
   }
 }
 
@@ -397,12 +394,12 @@ $divider: #eef0f3;
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background: rgba(20, 23, 28, 0.45);
+  background: var(--backdrop);
 
   &__dialog {
     width: 100%;
     max-width: 420px;
-    background: #fff;
+    background: var(--surface);
     border-radius: 16px;
     box-shadow: 0 20px 50px rgba(20, 23, 28, 0.25);
     overflow: hidden;
@@ -414,14 +411,14 @@ $divider: #eef0f3;
     justify-content: space-between;
     gap: 1rem;
     padding: 1.1rem 1.25rem;
-    border-bottom: 1px solid $divider;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   &__title {
     margin: 0;
     font-size: 1rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__close {
@@ -434,10 +431,10 @@ $divider: #eef0f3;
     background: transparent;
     border: none;
     border-radius: 8px;
-    color: $muted;
+    color: var(--text-subtle);
     cursor: pointer;
 
-    &:hover { background: #f4f5f7; color: $color-text; }
+    &:hover { background: var(--bg); color: var(--text-strong); }
 
     svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
   }
@@ -465,20 +462,20 @@ $divider: #eef0f3;
   &__label {
     font-size: 0.78rem;
     font-weight: 600;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   &__input {
     width: 100%;
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.6rem 0.75rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
-    background: #fff;
+    color: var(--text-strong);
+    background: var(--surface);
 
-    &:focus { outline: none; border-color: $accent; }
+    &:focus { outline: none; border-color: rgb(var(--accent-rgb)); }
   }
 }
 </style>

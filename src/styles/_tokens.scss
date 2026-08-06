@@ -1,0 +1,180 @@
+// Runtime theme tokens.
+//
+// IMPORTANT: this file must only ever be imported by main.scss. vite.config.js
+// injects _variables.scss into every component's <style lang="scss">, so
+// declaring these :root rules there would duplicate them into all 40+ compiled
+// stylesheets.
+//
+// Light values are the colours the app already shipped, so light mode is a
+// pure refactor. Dark values are contrast-verified — see
+// docs/superpowers/specs/2026-08-05-dark-mode-toggle-design.md §3.3.
+
+:root {
+  color-scheme: light;
+
+  --bg: #f4f5f7; // app canvas
+  --surface: #ffffff; // cards, header, sidebar
+  --surface-sunken: #fafbfc; // table stripes, inset panels
+  --surface-alt: #f6f7f9; // nav / ghost-button hover — a hair warmer than sunken
+  --surface-track: #f1f3f5; // progress/meter tracks, inset wells
+  --surface-hover: #eceef1; // hover fills on subtle controls
+
+  --border: #e6e8ec; // decorative dividers
+  --border-subtle: #eef0f3;
+  // Reserved for the control-boundary retrofit: inputs currently use --border,
+  // which is only 1.23:1 on white. Clears 3:1 in both themes.
+  --border-strong: #8a909c;
+
+  --switch-track: #d3d7dd; // ToggleSwitch off-state
+
+  --text-strong: #2c3e50; // headings
+  --text-body: #4a5160;
+  --text-muted: #6b7280;
+  --text-subtle: #8a909c;
+  --text-faint: #aab0bb; // sidebar section headings
+
+  --nav-active-ink: #1f242d; // text on the accent-tinted active nav row
+  --success-ink: #2f7d52; // success text on a plain surface (deeper than --success)
+
+  --primary: #42b883;
+  --secondary: #35495e;
+
+  // Channel triplet, not hex: enables rgb(var(--accent-rgb) / 0.16) tints,
+  // because rgba(var(--x), 0.16) is invalid CSS.
+  --accent-rgb: 244 193 15;
+  --accent-ink: #a8850a; // readable text on accent tints
+  // Ink on a SOLID accent fill. Identical in both themes: the accent stays
+  // yellow, so its ink must stay dark. Distinct from --nav-active-ink, which
+  // sits on a translucent tint and therefore lightens in dark mode.
+  --ink-on-accent: #1f242d;
+
+  --success: #1f9d57;
+  --success-bg: #e6f7ee;
+  --success-border: #aee3c4;
+  --violet-border: #d6c2f7;
+  --danger: #d14343;
+  --danger-bg: #fdecec;
+  --danger-border: #f0c9c9;
+  --info: #3f6fd6;
+  --info-bg: #eaf1fe;
+  --violet: #7c3aed;
+  --violet-bg: #f1e9fe;
+  --rose: #d4567a;
+
+  // Channel triplets for translucent semantic tints, same reason as
+  // --accent-rgb: rgba(var(--x), 0.1) is invalid CSS.
+  --danger-rgb: 209 67 67;
+  --success-rgb: 31 157 87;
+  --info-rgb: 63 111 214;
+
+  /* ---- Solid fills -------------------------------------------------------
+   * The semantic tokens above go PALE in dark mode so they stay legible as
+   * text on a dark surface. That makes them wrong as solid badge/button
+   * fills, where white ink needs a saturated background.
+   *
+   * These keep their saturated value in BOTH themes — a saturated chip reads
+   * fine on a dark surface — so the design is identical either way, and
+   * --ink-on-solid stays white throughout. */
+  --ink-on-solid: #ffffff;
+  --success-solid: #1f9d57;
+  --danger-solid: #d14343;
+  --neutral-solid: #6b7280;
+
+  // Exact light values preserved: --shadow-sm is the ToggleSwitch thumb,
+  // --shadow-md the off-canvas sidebar on mobile.
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
+  --shadow-md: 0 0 40px rgb(20 23 28 / 0.18);
+  --backdrop: rgb(20 23 28 / 0.4);
+
+  // Categorical order-status palette for the dashboard donut. The light steps
+  // are the values validated against a white surface (see HomeView.vue).
+  --chart-completed: #1f9d57;
+  --chart-pending: #b8890b;
+  --chart-processing: #2c6fbb;
+  --chart-cancelled: #d14343;
+
+  // Chart tooltips invert against the page: dark bubble in light mode. In dark
+  // mode --surface would collide with the panel behind it, so it lifts instead.
+  --tooltip-bg: #1f242d;
+  --tooltip-ink: #ffffff;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #14171c;
+  --surface: #1f242d;
+  --surface-sunken: #262c36;
+  --surface-alt: #2b323d;
+  --surface-track: #2a313b;
+  --surface-hover: #2f3641;
+
+  --border: #333a45;
+  --border-subtle: #282e38;
+  --border-strong: #6d7a8c;
+
+  --switch-track: #4a5462;
+
+  --text-strong: #f2f4f7;
+  --text-body: #d4d9e0;
+  --text-muted: #9aa2ae;
+  --text-subtle: #8d97a5;
+  // Lighter than its light-mode counterpart relative to the ramp, so it still
+  // clears AA on every surface token rather than only on --surface.
+  --text-faint: #949dab;
+
+  // The active nav row keeps its accent tint, so its ink lightens with it.
+  --nav-active-ink: #f0cf6a;
+  --success-ink: #43c07d;
+
+  --primary: #55c99a;
+  --secondary: #8fa3b8;
+
+  --accent-rgb: 247 205 60;
+  --accent-ink: #f0cf6a;
+  --ink-on-accent: #1f242d; // unchanged: the accent fill stays yellow
+
+  // Semantic pairs are solved jointly: the tinted background must be visible
+  // against --surface (>=1.25:1, or the chip disappears into the card) while
+  // its ink still clears AA on that background. Raising one lowers the other,
+  // so the inks are lighter here than a naive darkening would give.
+  --success: #43c07d;
+  --success-bg: #1b3d28;
+  --success-border: #2c5c40;
+  --violet-border: #4a3d70;
+  --danger: #f08a8a;
+  --danger-bg: #55272b;
+  --danger-border: #6d3438;
+  --info: #8fbdf5;
+  --info-bg: #274670;
+  --violet: #b69bfb;
+  --violet-bg: #322a52;
+  --rose: #f294ae;
+
+  --danger-rgb: 240 138 138;
+  --success-rgb: 67 192 125;
+  --info-rgb: 143 189 245;
+
+  // Deliberately NOT re-themed — see the note in the light block.
+  --ink-on-solid: #ffffff;
+  --success-solid: #1f9d57;
+  --danger-solid: #d14343;
+  --neutral-solid: #6b7280;
+
+  // Shadows read as noise on dark surfaces; lean on borders instead.
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px rgb(0 0 0 / 0.45);
+  --backdrop: rgb(0 0 0 / 0.6);
+
+  // Re-lightened for the dark surface: the light steps were validated against
+  // white and drop below 3:1 here. All four clear 3:1 on --surface and stay
+  // well separated from each other.
+  --chart-completed: #43c07d;
+  --chart-pending: #e8b93f;
+  --chart-processing: #5b9bea;
+  --chart-cancelled: #e86a6a;
+
+  // Lifted above --surface rather than inverted to white, which would glare.
+  --tooltip-bg: #3d4654;
+  --tooltip-ink: #f2f4f7;
+}

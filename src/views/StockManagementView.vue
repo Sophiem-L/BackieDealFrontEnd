@@ -280,9 +280,6 @@ function thumbInitials(name) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -302,8 +299,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -313,20 +310,20 @@ $divider: #eef0f3;
     min-width: 240px;
     display: flex;
     align-items: center;
-    background: #f4f5f7;
+    background: var(--bg);
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 0 0.75rem;
 
     &:focus-within {
-      background: #fff;
-      border-color: #e6e8ec;
+      background: var(--surface);
+      border-color: var(--border);
     }
   }
 
   &__search-icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -340,7 +337,7 @@ $divider: #eef0f3;
     padding: 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
@@ -355,22 +352,22 @@ $divider: #eef0f3;
   font-size: 0.82rem;
   font-weight: 500;
   font-family: inherit;
-  color: #4a5160;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
 
   &__icon {
     display: inline-flex;
-    color: #b8890b;
+    color: var(--accent-ink);
     svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
   }
 
-  &__caret { width: 14px; height: 14px; stroke: $muted; stroke-width: 1.8; }
+  &__caret { width: 14px; height: 14px; stroke: var(--text-subtle); stroke-width: 1.8; }
 
-  &--active { border-color: rgba($accent, 0.7); background: rgba($accent, 0.08); }
+  &--active { border-color: rgb(var(--accent-rgb) / 0.7); background: rgb(var(--accent-rgb) / 0.08); }
 }
 
 .filter__popup {
@@ -379,8 +376,8 @@ $divider: #eef0f3;
   left: 0;
   z-index: 20;
   min-width: 168px;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 10px 28px rgba(20, 23, 28, 0.12);
   padding: 0.35rem;
@@ -395,12 +392,12 @@ $divider: #eef0f3;
   font-weight: 500;
   font-family: inherit;
   text-align: left;
-  color: #4a5160;
+  color: var(--text-body);
   background: transparent;
   border: none;
   border-radius: 7px;
   cursor: pointer;
-  &:hover { background: #f6f7f9; }
+  &:hover { background: var(--surface-alt); }
 }
 
 /* Stat cards */
@@ -417,8 +414,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.9rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
 
@@ -433,10 +430,10 @@ $divider: #eef0f3;
 
     svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.8; }
 
-    &--neutral { background: #f1f3f5; color: #5b6472; }
-    &--warning { background: rgba($accent, 0.16); color: #b8890b; }
-    &--danger { background: #fdecec; color: #d14343; }
-    &--success { background: #e6f7ee; color: #1f9d57; }
+    &--neutral { background: var(--surface-track); color: var(--text-muted); }
+    &--warning { background: rgb(var(--accent-rgb) / 0.16); color: var(--accent-ink); }
+    &--danger { background: var(--danger-bg); color: var(--danger); }
+    &--success { background: var(--success-bg); color: var(--success); }
   }
 
   &__label {
@@ -445,27 +442,27 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__value {
     margin: 0.2rem 0 0;
     font-size: 1.6rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__note {
     margin: 0.1rem 0 0;
     font-size: 0.74rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
 /* Table */
 .table-card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   overflow: hidden;
 }
@@ -485,19 +482,19 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
-    background: #fafbfc;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
   }
 
-  tbody tr + tr td { border-top: 1px solid $divider; }
-  tbody tr:hover { background: #fafbfc; }
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
 
   &__row { cursor: pointer; }
 
   &__empty {
     text-align: center;
-    color: $muted;
+    color: var(--text-subtle);
     font-size: 0.88rem;
     padding: 2rem 1rem;
   }
@@ -515,8 +512,8 @@ $divider: #eef0f3;
     width: 40px;
     height: 40px;
     border-radius: 8px;
-    background: #eef0f3;
-    color: #6b7280;
+    background: var(--border-subtle);
+    color: var(--text-muted);
     font-size: 0.72rem;
     font-weight: 700;
     flex-shrink: 0;
@@ -526,35 +523,35 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 0.88rem;
     font-weight: 600;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__sku {
     margin: 0.15rem 0 0;
     font-size: 0.74rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
 .start-date {
   font-size: 0.85rem;
-  color: #4a5160;
+  color: var(--text-body);
 }
 
 .onhand {
   font-size: 0.95rem;
   font-weight: 700;
-  color: $color-text;
+  color: var(--text-strong);
 
-  &--low-stock { color: #b8890b; }
-  &--out-of-stock { color: #d14343; }
+  &--low-stock { color: var(--accent-ink); }
+  &--out-of-stock { color: var(--danger); }
 
   &__unit {
     margin-left: 0.3rem;
     font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -568,8 +565,8 @@ $divider: #eef0f3;
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--healthy { background: #e6f7ee; color: #1f9d57; }
-  &--low-stock { background: rgba($accent, 0.2); color: #b8890b; }
-  &--out-of-stock { background: #fdecec; color: #d14343; }
+  &--healthy { background: var(--success-bg); color: var(--success); }
+  &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
+  &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
 }
 </style>

@@ -136,9 +136,6 @@ function initials(name) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -158,8 +155,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -169,17 +166,17 @@ $divider: #eef0f3;
     min-width: 240px;
     display: flex;
     align-items: center;
-    background: #f4f5f7;
+    background: var(--bg);
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 0 0.75rem;
 
-    &:focus-within { background: #fff; border-color: #e6e8ec; }
+    &:focus-within { background: var(--surface); border-color: var(--border); }
   }
 
   &__search-icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -193,15 +190,15 @@ $divider: #eef0f3;
     padding: 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
 
 /* Table */
 .table-card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
 }
 
@@ -216,18 +213,18 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
-  tbody tr + tr td { border-top: 1px solid $divider; }
-  tbody tr:hover { background: #fafbfc; }
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
 
   &__row { cursor: pointer; }
 
   &__actions-head { text-align: left; }
 
-  &__empty { text-align: center; color: $muted; font-size: 0.88rem; padding: 2.5rem 1rem; }
+  &__empty { text-align: center; color: var(--text-subtle); font-size: 0.88rem; padding: 2.5rem 1rem; }
 }
 
 .customer {
@@ -244,27 +241,27 @@ $divider: #eef0f3;
     border-radius: 50%;
     font-size: 0.78rem;
     font-weight: 700;
-    color: #fff;
+    color: var(--ink-on-solid);
     flex-shrink: 0;
     overflow: hidden;
 
     img { width: 100%; height: 100%; object-fit: cover; }
 
-    &--photo { background: #eef0f3; }
-    &--blue { background: #4f73c4; }
-    &--green { background: #2f9d6b; }
-    &--violet { background: #8b5cf6; }
-    &--amber { background: #d99a2b; }
-    &--rose { background: #d4567a; }
-    &--slate { background: #5b6472; }
+    &--photo { background: var(--border-subtle); }
+    &--blue { background: var(--info); }
+    &--green { background: var(--success-solid); }
+    &--violet { background: var(--violet); }
+    &--amber { background: var(--accent-ink); }
+    &--rose { background: var(--rose); }
+    &--slate { background: var(--neutral-solid); }
   }
 
-  &__name { margin: 0; font-size: 0.88rem; font-weight: 700; color: $color-text; }
-  &__email { margin: 0.15rem 0 0; font-size: 0.76rem; color: $muted; }
+  &__name { margin: 0; font-size: 0.88rem; font-weight: 700; color: var(--text-strong); }
+  &__email { margin: 0.15rem 0 0; font-size: 0.76rem; color: var(--text-subtle); }
 }
 
-.spent { font-size: 0.9rem; font-weight: 700; color: $color-text; }
-.orders { font-size: 0.84rem; color: #4a5160; }
+.spent { font-size: 0.9rem; font-weight: 700; color: var(--text-strong); }
+.orders { font-size: 0.84rem; color: var(--text-body); }
 
 .badge {
   display: inline-flex;
@@ -276,9 +273,9 @@ $divider: #eef0f3;
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--active { background: #e6f7ee; color: #1f9d57; }
-  &--vip { background: #f1e9fe; color: #7c3aed; }
-  &--inactive { background: #f1f3f5; color: #6b7280; }
+  &--active { background: var(--success-bg); color: var(--success); }
+  &--vip { background: var(--violet-bg); color: var(--violet); }
+  &--inactive { background: var(--surface-track); color: var(--text-muted); }
 }
 
 .row-actions {
@@ -295,16 +292,16 @@ $divider: #eef0f3;
   width: 32px;
   height: 32px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: #6b7280;
+  color: var(--text-muted);
   cursor: pointer;
 
-  &:hover { background: #f6f7f9; color: $color-text; border-color: #dfe2e7; }
+  &:hover { background: var(--surface-alt); color: var(--text-strong); border-color: var(--border); }
 
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
 
-  &--danger:hover { background: #fdf2f2; color: #d14343; border-color: #f0c9c9; }
+  &--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 }
 </style>

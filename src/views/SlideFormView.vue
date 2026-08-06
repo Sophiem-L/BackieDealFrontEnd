@@ -228,9 +228,6 @@ function remove() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -260,7 +257,7 @@ $divider: #eef0f3;
 
     &:hover { text-decoration: none; }
 
-    svg { width: 22px; height: 22px; stroke: #6b7280; stroke-width: 1.8; }
+    svg { width: 22px; height: 22px; stroke: var(--text-muted); stroke-width: 1.8; }
     span { display: flex; flex-direction: column; line-height: 1.2; }
   }
 
@@ -269,10 +266,10 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
-  &__title { font-size: 1.1rem; font-weight: 700; color: $color-text; }
+  &__title { font-size: 1.1rem; font-weight: 700; color: var(--text-strong); }
   &__actions { display: flex; gap: 0.6rem; }
 }
 
@@ -293,8 +290,8 @@ $divider: #eef0f3;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -304,14 +301,14 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
   &__hint {
     margin: 0.75rem 0 0;
     font-size: 0.72rem;
     line-height: 1.5;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -327,28 +324,28 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   input,
   textarea,
   select {
     width: 100%;
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.65rem 0.8rem;
     font-size: 0.9rem;
     font-family: inherit;
-    color: $color-text;
-    background: #fff;
+    color: var(--text-strong);
+    background: var(--surface);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
-    &::placeholder { color: #b4b9c2; }
+    &::placeholder { color: var(--text-faint); }
 
     &:focus {
       outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
   }
 
@@ -367,7 +364,7 @@ $divider: #eef0f3;
     transform: translateY(-50%);
     width: 16px;
     height: 16px;
-    stroke: $muted;
+    stroke: var(--text-subtle);
     stroke-width: 1.8;
     pointer-events: none;
   }
@@ -380,7 +377,7 @@ $divider: #eef0f3;
   aspect-ratio: 16 / 7;
   border-radius: 12px;
   overflow: hidden;
-  background: #eef0f3;
+  background: var(--border-subtle);
 
   &__img {
     position: absolute;
@@ -399,8 +396,8 @@ $divider: #eef0f3;
     justify-content: center;
     gap: 0.55rem;
     padding: 1.75rem;
-    background: linear-gradient(90deg, rgba(10, 12, 18, 0.55) 0%, rgba(10, 12, 18, 0.1) 100%);
-    color: #fff;
+    background: linear-gradient(90deg, var(--backdrop) 0%, rgba(10, 12, 18, 0.1) 100%);
+    color: var(--ink-on-solid);
   }
 
   &__title { margin: 0; font-size: 1.5rem; font-weight: 800; }
@@ -413,8 +410,8 @@ $divider: #eef0f3;
     padding: 0.5rem 1rem;
     font-size: 0.82rem;
     font-weight: 700;
-    color: #1f242d;
-    background: $accent;
+    color: var(--ink-on-accent);
+    background: rgb(var(--accent-rgb));
     border-radius: 8px;
   }
 }
@@ -453,8 +450,8 @@ $divider: #eef0f3;
     gap: 0.4rem;
     font-size: 0.78rem;
     font-weight: 600;
-    color: #fff;
-    background: rgba(20, 23, 28, 0.45);
+    color: var(--ink-on-solid);
+    background: var(--backdrop);
     opacity: 0;
     transition: opacity 0.15s ease;
 
@@ -472,11 +469,11 @@ $divider: #eef0f3;
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: rgba(20, 23, 28, 0.55);
-    color: #fff;
+    background: var(--backdrop);
+    color: var(--ink-on-solid);
     cursor: pointer;
 
-    &:hover { background: #d14343; }
+    &:hover { background: var(--danger); }
 
     svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; }
   }
@@ -499,8 +496,8 @@ $divider: #eef0f3;
   &:hover { transform: translateY(-1px); }
 
   &--active {
-    border-color: #1f242d;
-    box-shadow: 0 0 0 2px #fff inset;
+    border-color: var(--text-strong);
+    box-shadow: 0 0 0 2px var(--surface) inset;
   }
 }
 
@@ -515,8 +512,8 @@ $divider: #eef0f3;
   border-radius: 6px;
   white-space: nowrap;
 
-  &--active { color: #1c8c4a; background: #e7f6ed; }
-  &--scheduled { color: #2563c9; background: #eaf1fd; }
-  &--draft { color: #6b7280; background: #f1f3f5; }
+  &--active { color: var(--success); background: var(--success-bg); }
+  &--scheduled { color: var(--info); background: var(--info-bg); }
+  &--draft { color: var(--text-muted); background: var(--surface-track); }
 }
 </style>

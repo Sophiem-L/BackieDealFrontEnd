@@ -125,9 +125,6 @@ function goBack() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -148,7 +145,7 @@ $divider: #eef0f3;
   align-items: center;
   gap: 0.85rem;
 
-  &__title { margin: 0; font-size: 1.2rem; font-weight: 700; color: $color-text; }
+  &__title { margin: 0; font-size: 1.2rem; font-weight: 700; color: var(--text-strong); }
 }
 
 .back-btn {
@@ -159,12 +156,12 @@ $divider: #eef0f3;
   height: 36px;
   padding: 0;
   flex-shrink: 0;
-  background: #f4f5f7;
+  background: var(--bg);
   border: none;
   border-radius: 9px;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
-  &:hover { background: #eceef1; }
+  &:hover { background: var(--surface-hover); }
   svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.9; }
 }
 
@@ -206,19 +203,19 @@ $divider: #eef0f3;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     border-radius: 999px;
-    color: #fff;
+    color: var(--ink-on-solid);
 
-    &--active { background: #1f9d57; }
-    &--paused { background: #d99413; }
-    &--expired { background: #6b7280; }
+    &--active { background: var(--success-solid); }
+    &--paused { background: var(--accent-ink); }
+    &--expired { background: var(--neutral-solid); }
   }
 
   &__name {
     margin: 0 0 0.6rem;
     font-size: 1.5rem;
     font-weight: 800;
-    color: #fff;
-    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+    color: var(--ink-on-solid);
+    text-shadow: 0 1px 6px var(--backdrop);
   }
 
   &__tags { display: flex; flex-wrap: wrap; gap: 0.5rem; }
@@ -232,8 +229,8 @@ $divider: #eef0f3;
   font-weight: 600;
   border-radius: 7px;
   padding: 0.28rem 0.6rem;
-  background: rgba(0, 0, 0, 0.45);
-  color: #fff;
+  background: var(--backdrop);
+  color: var(--ink-on-solid);
   backdrop-filter: blur(2px);
 
   svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 1.8; }
@@ -241,8 +238,8 @@ $divider: #eef0f3;
 
 /* Cards */
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
 
@@ -254,7 +251,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
   &__subtitle {
@@ -263,10 +260,10 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
-  &__hint { margin: 0.35rem 0 0; font-size: 0.78rem; color: $muted; }
+  &__hint { margin: 0.35rem 0 0; font-size: 0.78rem; color: var(--text-subtle); }
 }
 
 .kv {
@@ -280,21 +277,21 @@ $divider: #eef0f3;
     padding: 0.5rem 0;
     font-size: 0.86rem;
 
-    & + & { border-top: 1px solid $divider; }
+    & + & { border-top: 1px solid var(--border-subtle); }
 
-    dt { margin: 0; color: $muted; }
-    dd { margin: 0; font-weight: 600; color: $color-text; text-align: right; }
+    dt { margin: 0; color: var(--text-subtle); }
+    dd { margin: 0; font-weight: 600; color: var(--text-strong); text-align: right; }
   }
 
   &__mono { font-family: ui-monospace, monospace; }
-  &__benefit { color: #a8850a !important; font-weight: 700 !important; }
+  &__benefit { color: var(--accent-ink) !important; font-weight: 700 !important; }
 }
 
 .description {
   margin: 0;
   font-size: 0.86rem;
   line-height: 1.55;
-  color: #4a5160;
+  color: var(--text-body);
 }
 
 /* Usage */
@@ -307,34 +304,34 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.03em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
     margin-bottom: 0.5rem;
   }
 
-  &__value { color: #a8850a; }
+  &__value { color: var(--accent-ink); }
 
   &__bar {
     height: 8px;
     border-radius: 999px;
-    background: #eceef1;
+    background: var(--surface-hover);
     overflow: hidden;
   }
 
   &__fill {
     height: 100%;
     border-radius: 999px;
-    background: $accent;
+    background: rgb(var(--accent-rgb));
     transition: width 0.2s ease;
   }
 
-  &__note { margin: 0.6rem 0 0; font-size: 0.76rem; color: $muted; }
+  &__note { margin: 0.6rem 0 0; font-size: 0.76rem; color: var(--text-subtle); }
 }
 
 .big-benefit {
   margin: 0;
   font-size: 1.35rem;
   font-weight: 800;
-  color: #a8850a;
+  color: var(--accent-ink);
 }
 
 /* Empty state */
@@ -344,10 +341,10 @@ $divider: #eef0f3;
   align-items: center;
   gap: 1rem;
   padding: 4rem 1.5rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
-  color: $muted;
+  color: var(--text-subtle);
   font-size: 0.9rem;
 }
 </style>

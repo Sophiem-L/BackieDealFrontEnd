@@ -117,9 +117,6 @@ function exportLogs() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -139,8 +136,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -153,7 +150,7 @@ $divider: #eef0f3;
     gap: 0.4rem;
     margin: 0;
     font-size: 0.82rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__note-icon {
@@ -166,16 +163,16 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0 0.7rem;
 
-  &:focus-within { border-color: #d7dade; }
+  &:focus-within { border-color: var(--border); }
 
   &__icon {
     display: inline-flex;
-    color: #6b7280;
+    color: var(--text-muted);
     svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -186,7 +183,7 @@ $divider: #eef0f3;
     font-family: inherit;
     font-size: 0.84rem;
     font-weight: 600;
-    color: #4a5160;
+    color: var(--text-body);
     cursor: pointer;
     &:focus { outline: none; }
   }
@@ -194,8 +191,8 @@ $divider: #eef0f3;
 
 /* Table */
 .table-card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
 }
 
@@ -210,21 +207,21 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
-  tbody tr + tr td { border-top: 1px solid $divider; }
-  tbody tr:hover { background: #fafbfc; }
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
 
   &__ip-head { text-align: right; }
 
-  &__empty { text-align: center; color: $muted; font-size: 0.88rem; padding: 2.5rem 1rem; }
+  &__empty { text-align: center; color: var(--text-subtle); font-size: 0.88rem; padding: 2.5rem 1rem; }
 }
 
-.timestamp { font-size: 0.8rem; color: $muted; white-space: nowrap; }
-.user { font-size: 0.88rem; font-weight: 700; color: $color-text; }
-.details { font-size: 0.85rem; color: #4a5160; }
+.timestamp { font-size: 0.8rem; color: var(--text-subtle); white-space: nowrap; }
+.user { font-size: 0.88rem; font-weight: 700; color: var(--text-strong); }
+.details { font-size: 0.85rem; color: var(--text-body); }
 
 .action {
   display: inline-flex;
@@ -234,9 +231,9 @@ $divider: #eef0f3;
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: #475569;
-  background: #f1f3f5;
-  border: 1px solid #e6e8ec;
+  color: var(--text-body);
+  background: var(--surface-track);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -244,7 +241,7 @@ $divider: #eef0f3;
   text-align: right;
   font-family: 'SFMono-Regular', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
   font-size: 0.8rem;
-  color: #aab0bb;
+  color: var(--text-faint);
   white-space: nowrap;
 }
 </style>

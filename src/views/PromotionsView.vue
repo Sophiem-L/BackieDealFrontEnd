@@ -141,9 +141,6 @@ function deletePromotion(promo) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -163,8 +160,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -174,17 +171,17 @@ $divider: #eef0f3;
     min-width: 220px;
     display: flex;
     align-items: center;
-    background: #f4f5f7;
+    background: var(--bg);
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 0 0.75rem;
 
-    &:focus-within { background: #fff; border-color: #e6e8ec; }
+    &:focus-within { background: var(--surface); border-color: var(--border); }
   }
 
   &__search-icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -198,7 +195,7 @@ $divider: #eef0f3;
     padding: 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
@@ -210,14 +207,14 @@ $divider: #eef0f3;
   padding: 0.55rem 0.8rem;
   font-size: 0.82rem;
   font-weight: 500;
-  color: #4a5160;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
 
-  svg { width: 14px; height: 14px; stroke: $muted; stroke-width: 1.8; }
+  svg { width: 14px; height: 14px; stroke: var(--text-subtle); stroke-width: 1.8; }
   &__caret { margin-left: 0.1rem; }
 }
 
@@ -233,8 +230,8 @@ $divider: #eef0f3;
 }
 
 .promo {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   overflow: hidden;
   display: flex;
@@ -243,15 +240,15 @@ $divider: #eef0f3;
   transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
 
   &:hover {
-    border-color: #dfe2e7;
+    border-color: var(--border);
     box-shadow: 0 8px 24px rgba(20, 23, 28, 0.1);
     transform: translateY(-2px);
   }
 
   &:focus-visible {
     outline: none;
-    border-color: $accent;
-    box-shadow: 0 0 0 3px rgba($accent, 0.3);
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.3);
   }
 
   &__banner {
@@ -273,19 +270,19 @@ $divider: #eef0f3;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     border-radius: 999px;
-    color: #fff;
+    color: var(--ink-on-solid);
 
-    &--active { background: #1f9d57; }
-    &--paused { background: #d99413; }
-    &--expired { background: #6b7280; }
+    &--active { background: var(--success-solid); }
+    &--paused { background: var(--accent-ink); }
+    &--expired { background: var(--neutral-solid); }
   }
 
   &__name {
     margin: 0 0 0.5rem;
     font-size: 1.1rem;
     font-weight: 700;
-    color: #fff;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    color: var(--ink-on-solid);
+    text-shadow: 0 1px 4px var(--backdrop);
   }
 
   &__tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
@@ -313,21 +310,21 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__benefit {
     margin: 0;
     font-size: 1.05rem;
     font-weight: 700;
-    color: #a8850a;
+    color: var(--accent-ink);
   }
 
   &__usage-value {
     margin: 0;
     font-size: 1.05rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__footer {
@@ -336,7 +333,7 @@ $divider: #eef0f3;
     justify-content: flex-end;
     gap: 0.75rem;
     padding-top: 0.9rem;
-    border-top: 1px solid $divider;
+    border-top: 1px solid var(--border-subtle);
   }
 
   &__actions { display: flex; align-items: center; gap: 0.4rem; }
@@ -354,8 +351,8 @@ $divider: #eef0f3;
   svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.8; }
 
   &--dark {
-    background: rgba(0, 0, 0, 0.45);
-    color: #fff;
+    background: var(--backdrop);
+    color: var(--ink-on-solid);
     backdrop-filter: blur(2px);
   }
 }
@@ -367,18 +364,18 @@ $divider: #eef0f3;
   width: 32px;
   height: 32px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: #6b7280;
+  color: var(--text-muted);
   cursor: pointer;
 
   svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
 
   &--danger:hover {
-    background: #fdf2f2;
-    color: #d14343;
-    border-color: #f0c9c9;
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: var(--danger-border);
   }
 }
 </style>

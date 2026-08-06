@@ -1,59 +1,130 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { products as catalog, findProduct } from '@/data/products'
-import { customers as customerList, findCustomer } from '@/data/customers'
+import { apiFetch } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 
 // Blank order — everything starts empty for the user to fill in.
-// `productId` ties a row to a catalog product; SKU + unit price auto-fill.
-const items = ref([{ productId: '', sku: '', qty: 1, unitPrice: null }])
+// `productId` ties a row to a real product id; the unit price auto-fills.
+const items = ref([{ productId: '', qty: 1, unitPrice: null }])
 
-const fees = ref({ assembly: null, delivery: null })
+// Order-level amounts, matching the columns the API persists.
+const fees = ref({ tax: null, shipping: null })
 
-const customer = ref({ id: '', name: '', email: '', phone: '', address: '' })
-const payment = ref({ method: '', transactionId: '' })
+const customerId = ref('')
+// Only the method is set at creation. payment_status defaults to `pending`
+// server-side, and transaction_id comes from the gateway — neither is typed here.
+const payment = ref({ method: '' })
 const note = ref('')
 
-const paymentMethods = ['Online (QR Code)', 'Cash on Delivery', 'Bank Transfer', 'Credit Card']
+// The two methods an admin can record. The orders table also documents `stripe`
+// and `paypal`, but those belong to a gateway checkout, not to an order typed in
+// by hand — the list and detail pages still label them for existing orders.
+const PAYMENT_METHODS = [
+  { value: 'cod', label: 'Cash on Delivery' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+]
 
-// Live totals
+/* ---------------------------------------------------------------------------
+ * Reference data — the pickers are populated from the API, not fixtures.
+ * ------------------------------------------------------------------------- */
+const catalog = ref([])
+const customerList = ref([])
+const loadingRefs = ref(false)
+const refsError = ref('')
+
+// GET /admin/customers pages at a fixed 15 with no search, so this is what the
+// picker can offer today. See docs/orders-api-gaps.md for the same limitation
+// on the orders list.
+async function loadReferenceData() {
+  loadingRefs.value = true
+  refsError.value = ''
+  try {
+    const [productsRes, customersRes] = await Promise.all([
+      apiFetch('/admin/products?per_page=200&sort=name&direction=asc', {
+        token: auth.accessToken,
+      }),
+      apiFetch('/admin/customers', { token: auth.accessToken }),
+    ])
+
+    // Products come back as { items, pagination }; customers as a flat array.
+    const productItems = productsRes?.data?.items ?? productsRes?.data ?? []
+    catalog.value = productItems.map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: Number(p.price ?? 0),
+    }))
+
+    const customerItems = Array.isArray(customersRes?.data)
+      ? customersRes.data
+      : (customersRes?.data?.items ?? [])
+    customerList.value = customerItems.map((c) => ({
+      id: c.id,
+      name: c.name || c.email,
+      email: c.email ?? '',
+      phone: c.phone ?? '',
+      address: formatAddress(c.address),
+    }))
+  } catch (err) {
+    refsError.value = err.message || 'Could not load products and customers.'
+  } finally {
+    loadingRefs.value = false
+  }
+}
+
+onMounted(loadReferenceData)
+
+const selectedCustomer = computed(
+  () => customerList.value.find((c) => c.id === customerId.value) ?? null,
+)
+
+// Live totals — mirrors how the API computes grand_total.
 const subtotal = computed(() =>
   items.value.reduce((sum, i) => sum + (Number(i.qty) || 0) * (Number(i.unitPrice) || 0), 0),
 )
+// No discount is entered here, so this can never go negative.
 const total = computed(
-  () => subtotal.value + (Number(fees.value.assembly) || 0) + (Number(fees.value.delivery) || 0),
+  () => subtotal.value + (Number(fees.value.tax) || 0) + (Number(fees.value.shipping) || 0),
 )
 
 function money(value) {
   return `$${(Number(value) || 0).toFixed(2)}`
 }
 
+// The customer's default address, keyed the same way as an order's
+// address_snapshot. Null when they have none on file.
+function formatAddress(address) {
+  if (!address) return ''
+  if (typeof address === 'string') return address
+  const parts = [
+    address.address_line_1,
+    address.address_line_2,
+    address.state,
+    address.city,
+    address.postal_code,
+    address.country,
+  ].filter(Boolean)
+  return parts.join(', ')
+}
+
 function addItem() {
-  items.value.push({ productId: '', sku: '', qty: 1, unitPrice: null })
+  items.value.push({ productId: '', qty: 1, unitPrice: null })
 }
 function removeItem(index) {
   items.value.splice(index, 1)
   if (items.value.length === 0) addItem()
 }
 
-// When a product is picked, auto-fill its SKU and unit price (still editable).
+// When a product is picked, auto-fill its unit price.
 function onProductSelect(item) {
-  const product = findProduct(item.productId)
+  const product = catalog.value.find((p) => p.id === item.productId)
   if (product) {
-    item.sku = product.sku
     item.unitPrice = product.price
-  }
-}
-
-// Single customer per order — selecting one fills the contact details below.
-function onCustomerSelect() {
-  const found = findCustomer(customer.value.id)
-  if (found) {
-    customer.value = { ...found }
   }
 }
 
@@ -61,19 +132,74 @@ function cancel() {
   router.push({ name: 'orders' })
 }
 
-function createOrder() {
-  // No backend yet — assemble the payload and return to the list.
+/* ---------------------------------------------------------------------------
+ * Submit — POST /admin/orders
+ * ------------------------------------------------------------------------- */
+const saving = ref(false)
+const submitError = ref('')
+// Field-level messages keyed the way the API returns them, e.g. items.0.qty.
+const fieldErrors = ref({})
+
+const completeItems = computed(() =>
+  items.value.filter((i) => i.productId && (Number(i.qty) || 0) > 0),
+)
+// A customer, a payment method and at least one line item are all required
+// before the order can be saved.
+const isComplete = computed(
+  () =>
+    Boolean(customerId.value) && Boolean(payment.value.method) && completeItems.value.length > 0,
+)
+const canSubmit = computed(() => isComplete.value && !saving.value)
+
+function errorFor(path) {
+  const messages = fieldErrors.value[path]
+  return Array.isArray(messages) ? messages[0] : messages
+}
+
+async function createOrder() {
+  if (!canSubmit.value) return
+
+  saving.value = true
+  submitError.value = ''
+  fieldErrors.value = {}
+
+  // Only send what the API accepts; blank optional fields are omitted.
   const payload = {
-    items: items.value,
-    fees: fees.value,
-    customer: customer.value,
-    payment: payment.value,
-    note: note.value,
-    total: total.value,
+    customer_id: customerId.value,
+    items: completeItems.value.map((i) => ({
+      product_id: i.productId,
+      qty: Number(i.qty),
+      unit_price: Number(i.unitPrice) || 0,
+    })),
   }
-  console.log('Create order payload:', payload)
-  window.alert(`Order created — Total ${money(total.value)}`)
-  router.push({ name: 'orders' })
+  if (Number(fees.value.tax)) payload.tax_total = Number(fees.value.tax)
+  if (Number(fees.value.shipping)) payload.shipping_total = Number(fees.value.shipping)
+  if (payment.value.method) payload.payment_method = payment.value.method
+  if (note.value.trim()) payload.notes = note.value.trim()
+
+  try {
+    const response = await apiFetch('/admin/orders', {
+      method: 'POST',
+      body: payload,
+      token: auth.accessToken,
+    })
+
+    // Back to the list, which is sorted newest-first, so the new order is the
+    // top row. The id is passed along so that row can be highlighted.
+    const created = response?.data
+    router.push({
+      name: 'orders',
+      query: created?.id ? { created: created.id } : undefined,
+    })
+  } catch (err) {
+    fieldErrors.value = err.errors ?? {}
+    submitError.value =
+      err.status === 422
+        ? 'Please correct the highlighted fields and try again.'
+        : err.message || 'Could not create this order. Please try again.'
+  } finally {
+    saving.value = false
+  }
 }
 </script>
 
@@ -94,6 +220,12 @@ function createOrder() {
           </div>
         </div>
       </section>
+
+      <!-- Without products and customers the form cannot be completed. -->
+      <p v-if="refsError" class="load-error">
+        {{ refsError }}
+        <button type="button" class="retry-btn" @click="loadReferenceData">Retry</button>
+      </p>
 
       <div class="grid">
         <!-- Main column -->
@@ -126,14 +258,27 @@ function createOrder() {
                     <select
                       v-model.number="item.productId"
                       class="field"
+                      :class="{ 'field--invalid': errorFor(`items.${i}.product_id`) }"
+                      :disabled="loadingRefs"
                       @change="onProductSelect(item)"
                     >
-                      <option value="" disabled>Select a product</option>
+                      <option value="" disabled>
+                        {{ loadingRefs ? 'Loading products…' : 'Select a product' }}
+                      </option>
                       <option v-for="p in catalog" :key="p.id" :value="p.id">{{ p.name }}</option>
                     </select>
+                    <span v-if="errorFor(`items.${i}.product_id`)" class="field-error">
+                      {{ errorFor(`items.${i}.product_id`) }}
+                    </span>
                   </td>
                   <td class="items__qty">
-                    <input v-model.number="item.qty" class="field field--center" type="number" min="1" />
+                    <input
+                      v-model.number="item.qty"
+                      class="field field--center"
+                      :class="{ 'field--invalid': errorFor(`items.${i}.qty`) }"
+                      type="number"
+                      min="1"
+                    />
                   </td>
                   <td class="items__price items__num items__muted">
                     {{ money(item.unitPrice) }}
@@ -155,15 +300,18 @@ function createOrder() {
               Add Item
             </button>
 
+            <!-- These map to the tax_total / shipping_total columns the API
+                 persists. Discount is not set here; the API still supports it
+                 and the detail page shows it for orders that have one. -->
             <dl class="summary">
               <div class="summary__row"><dt>Subtotal</dt><dd>{{ money(subtotal) }}</dd></div>
               <div class="summary__row">
-                <dt>Assembly Fee</dt>
-                <dd><input v-model.number="fees.assembly" class="field field--right field--inline" type="number" min="0" step="0.01" placeholder="0.00" /></dd>
+                <dt>Tax</dt>
+                <dd><input v-model.number="fees.tax" class="field field--right field--inline" type="number" min="0" step="0.01" placeholder="0.00" /></dd>
               </div>
               <div class="summary__row">
-                <dt>Delivery</dt>
-                <dd><input v-model.number="fees.delivery" class="field field--right field--inline" type="number" min="0" step="0.01" placeholder="0.00" /></dd>
+                <dt>Shipping</dt>
+                <dd><input v-model.number="fees.shipping" class="field field--right field--inline" type="number" min="0" step="0.01" placeholder="0.00" /></dd>
               </div>
               <div class="summary__row summary__row--total"><dt>Total</dt><dd>{{ money(total) }}</dd></div>
             </dl>
@@ -186,28 +334,36 @@ function createOrder() {
             </header>
             <div class="form-stack">
               <label class="field-group">
-                <span class="field-group__label">Select Customer</span>
-                <select v-model.number="customer.id" class="field" @change="onCustomerSelect">
-                  <option value="" disabled>Choose a customer</option>
+                <span class="field-group__label">Select Customer *</span>
+                <select
+                  v-model.number="customerId"
+                  class="field"
+                  :class="{ 'field--invalid': errorFor('customer_id') }"
+                  :disabled="loadingRefs"
+                >
+                  <option value="" disabled>
+                    {{ loadingRefs ? 'Loading customers…' : 'Choose a customer' }}
+                  </option>
                   <option v-for="c in customerList" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
+                <span v-if="errorFor('customer_id')" class="field-error">
+                  {{ errorFor('customer_id') }}
+                </span>
               </label>
-              <label class="field-group">
-                <span class="field-group__label">Full Name</span>
-                <input v-model="customer.name" class="field" type="text" placeholder="e.g. Mike Robertson" />
-              </label>
-              <label class="field-group">
-                <span class="field-group__label">Email</span>
-                <input v-model="customer.email" class="field" type="email" placeholder="name@example.com" />
-              </label>
-              <label class="field-group">
-                <span class="field-group__label">Phone</span>
-                <input v-model="customer.phone" class="field" type="tel" placeholder="+1 (555) 000-0000" />
-              </label>
-              <label class="field-group">
-                <span class="field-group__label">Address</span>
-                <textarea v-model="customer.address" class="field" rows="2" placeholder="Street, City, State ZIP"></textarea>
-              </label>
+
+              <!-- Contact details come from the chosen customer record; the
+                   order stores only customer_id, so these are not editable. -->
+              <dl v-if="selectedCustomer" class="picked">
+                <div class="picked__row"><dt>Email</dt><dd>{{ selectedCustomer.email || '—' }}</dd></div>
+                <div class="picked__row"><dt>Phone</dt><dd>{{ selectedCustomer.phone || '—' }}</dd></div>
+                <div class="picked__row picked__row--stack">
+                  <dt>Address</dt>
+                  <dd>
+                    {{ selectedCustomer.address || 'No address on file' }}
+                  </dd>
+                </div>
+              </dl>
+              <p v-else class="picked__hint">Pick a customer to see their contact details.</p>
             </div>
           </section>
 
@@ -224,16 +380,18 @@ function createOrder() {
             </header>
             <div class="form-stack">
               <label class="field-group">
-                <span class="field-group__label">Method</span>
+                <span class="field-group__label">Method *</span>
                 <select v-model="payment.method" class="field">
                   <option value="" disabled>Select method</option>
-                  <option v-for="m in paymentMethods" :key="m" :value="m">{{ m }}</option>
+                  <option v-for="m in PAYMENT_METHODS" :key="m.value" :value="m.value">
+                    {{ m.label }}
+                  </option>
                 </select>
               </label>
-              <label class="field-group">
-                <span class="field-group__label">Transaction ID</span>
-                <input v-model="payment.transactionId" class="field" type="text" placeholder="e.g. #TXN-8842-CC" />
-              </label>
+              <!-- No Payment Status or Transaction ID here. A new order is
+                   always payment-pending: cash is collected on delivery, and a
+                   transaction id is issued by the gateway. Payment is recorded
+                   later with "Mark as paid" on the order detail page. -->
             </div>
           </section>
 
@@ -252,12 +410,18 @@ function createOrder() {
           </section>
 
           <div class="form-actions">
-            <BaseButton variant="ghost" type="button" block @click="cancel">Cancel</BaseButton>
-            <BaseButton variant="primary" type="submit" block>
+            <p v-if="submitError" class="submit-error">{{ submitError }}</p>
+            <p v-else-if="!isComplete" class="submit-hint">
+              Choose a customer, a payment method and at least one product to save.
+            </p>
+            <BaseButton variant="ghost" type="button" block :disabled="saving" @click="cancel">
+              Cancel
+            </BaseButton>
+            <BaseButton variant="primary" type="submit" block :disabled="!canSubmit">
               <template #icon>
                 <svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </template>
-              Save Order
+              {{ saving ? 'Saving…' : 'Save Order' }}
             </BaseButton>
           </div>
         </div>
@@ -267,9 +431,6 @@ function createOrder() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -290,15 +451,15 @@ $divider: #eef0f3;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1rem 1.25rem;
   flex-wrap: wrap;
 
   &__lead { display: flex; align-items: center; gap: 0.85rem; }
-  &__id { margin: 0; font-size: 1.15rem; font-weight: 700; color: $color-text; }
-  &__meta { margin: 0.2rem 0 0; font-size: 0.78rem; color: $muted; }
+  &__id { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--text-strong); }
+  &__meta { margin: 0.2rem 0 0; font-size: 0.78rem; color: var(--text-subtle); }
 }
 
 .back-btn {
@@ -309,12 +470,12 @@ $divider: #eef0f3;
   height: 36px;
   padding: 0;
   flex-shrink: 0;
-  background: #f4f5f7;
+  background: var(--bg);
   border: none;
   border-radius: 9px;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
-  &:hover { background: #eceef1; }
+  &:hover { background: var(--surface-hover); }
   svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.9; }
 }
 
@@ -337,8 +498,8 @@ $divider: #eef0f3;
 
 /* Card */
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
 
@@ -359,8 +520,8 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: #6b7280;
-    svg { width: 16px; height: 16px; stroke: $muted; stroke-width: 1.8; }
+    color: var(--text-muted);
+    svg { width: 16px; height: 16px; stroke: var(--text-subtle); stroke-width: 1.8; }
   }
 }
 
@@ -370,21 +531,107 @@ $divider: #eef0f3;
   padding: 0.5rem 0.65rem;
   font-size: 0.85rem;
   font-family: inherit;
-  color: $color-text;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  color: var(--text-strong);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
 
-  &::placeholder { color: #b3b8c2; }
-  &:focus { outline: none; border-color: $accent; box-shadow: 0 0 0 3px rgba($accent, 0.18); }
+  &::placeholder { color: var(--text-faint); }
+  &:focus { outline: none; border-color: rgb(var(--accent-rgb)); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18); }
 
   &--sub { margin-top: 0.35rem; font-size: 0.78rem; }
   &--center { text-align: center; }
   &--right { text-align: right; }
   &--inline { width: 110px; }
+
+  /* Server-side validation failure on this field. */
+  &--invalid {
+    border-color: var(--danger-border);
+    background: var(--danger-bg);
+    &:focus { border-color: var(--danger); box-shadow: 0 0 0 3px rgb(var(--danger-rgb) / 0.15); }
+  }
+
+  &:disabled { background: var(--surface-alt); color: var(--text-subtle); cursor: not-allowed; }
 }
 
 textarea.field { resize: vertical; }
+
+.field-error {
+  font-size: 0.72rem;
+  color: var(--danger);
+}
+
+/* Selected customer's read-only contact details */
+.picked {
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+
+  &__row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.78rem;
+
+    dt { color: var(--text-subtle); }
+    dd { margin: 0; color: var(--text-strong); }
+
+    /* An address is too long to sit opposite its label. */
+    &--stack {
+      flex-direction: column;
+      gap: 0.15rem;
+      margin-top: 0.35rem;
+      padding-top: 0.35rem;
+      border-top: 1px solid var(--border-subtle);
+
+      dd { line-height: 1.45; }
+    }
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-subtle);
+  }
+}
+
+.load-error {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.7rem 1rem;
+  font-size: 0.82rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+}
+
+.retry-btn {
+  padding: 0.3rem 0.65rem;
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+
+  &:hover { background: var(--surface-alt); }
+}
+
+.submit-error,
+.submit-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.76rem;
+}
+.submit-error { color: var(--danger); }
+.submit-hint { color: var(--text-subtle); }
 
 .field-group {
   display: flex;
@@ -394,7 +641,7 @@ textarea.field { resize: vertical; }
   &__label {
     font-size: 0.74rem;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 }
 
@@ -418,8 +665,8 @@ textarea.field { resize: vertical; }
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   tbody td { vertical-align: middle; }
@@ -427,8 +674,8 @@ textarea.field { resize: vertical; }
   &__qty { width: 70px; }
   &__price { width: 120px; }
   &__num { text-align: right; white-space: nowrap; }
-  &__muted { color: $muted; }
-  &__strong { font-weight: 700; color: $color-text; }
+  &__muted { color: var(--text-subtle); }
+  &__strong { font-weight: 700; color: var(--text-strong); }
   &__remove { width: 44px; text-align: right; }
 }
 
@@ -441,19 +688,19 @@ textarea.field { resize: vertical; }
   font-size: 0.82rem;
   font-weight: 600;
   font-family: inherit;
-  color: #a8850a;
-  background: rgba($accent, 0.12);
-  border: 1px dashed rgba($accent, 0.6);
+  color: var(--accent-ink);
+  background: rgb(var(--accent-rgb) / 0.12);
+  border: 1px dashed rgb(var(--accent-rgb) / 0.6);
   border-radius: 9px;
   cursor: pointer;
-  &:hover { background: rgba($accent, 0.2); }
+  &:hover { background: rgb(var(--accent-rgb) / 0.2); }
   svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2; }
 }
 
 .summary {
   margin: 1rem 0 0;
   padding-top: 0.5rem;
-  border-top: 1px solid $divider;
+  border-top: 1px solid var(--border-subtle);
 
   &__row {
     display: flex;
@@ -462,15 +709,15 @@ textarea.field { resize: vertical; }
     padding: 0.35rem 0.4rem;
     font-size: 0.86rem;
 
-    dt { margin: 0; color: $muted; }
-    dd { margin: 0; font-weight: 600; color: $color-text; }
+    dt { margin: 0; color: var(--text-subtle); }
+    dd { margin: 0; font-weight: 600; color: var(--text-strong); }
 
     &--total {
       margin-top: 0.3rem;
-      border-top: 1px solid $divider;
+      border-top: 1px solid var(--border-subtle);
       padding-top: 0.7rem;
-      dt { font-weight: 700; color: $color-text; font-size: 0.95rem; }
-      dd { font-weight: 800; font-size: 1.1rem; color: #a8850a; }
+      dt { font-weight: 700; color: var(--text-strong); font-size: 0.95rem; }
+      dd { font-weight: 800; font-size: 1.1rem; color: var(--accent-ink); }
     }
   }
 }
@@ -483,14 +730,14 @@ textarea.field { resize: vertical; }
   width: 32px;
   height: 32px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: #6b7280;
+  color: var(--text-muted);
   cursor: pointer;
-  &:hover { background: #f6f7f9; color: $color-text; }
+  &:hover { background: var(--surface-alt); color: var(--text-strong); }
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
 
-  &--danger:hover { background: #fdf2f2; color: #d14343; border-color: #f0c9c9; }
+  &--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 }
 </style>

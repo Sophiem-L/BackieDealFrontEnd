@@ -1,11 +1,17 @@
 // Global styles entry point (imported in main.js)
 @use 'variables' as *;
+// Theme tokens — imported here and nowhere else, see the note in _tokens.scss.
+@use 'tokens';
 
+// Every view is now converted, so inherited defaults can safely theme. While
+// some views were still painting hardcoded #fff panels these had to stay
+// literal, or a themed inherited colour put near-white type on white cards.
+// If a new view is added with hardcoded surfaces, that hazard returns.
 :root {
   font-family: $font-family-base;
   line-height: 1.5;
-  color: $color-text;
-  background-color: $color-bg;
+  color: var(--text-strong);
+  background-color: var(--bg);
 }
 
 * {
@@ -15,10 +21,12 @@
 body {
   margin: 0;
   min-height: 100vh;
+  background-color: var(--bg);
+  color: var(--text-strong);
 }
 
 a {
-  color: $color-primary;
+  color: var(--primary);
   text-decoration: none;
 
   &:hover {
@@ -32,12 +40,20 @@ button {
   padding: 0.6em 1.2em;
   font-size: 1em;
   font-family: inherit;
-  background-color: $color-primary;
-  color: white;
+  background-color: var(--primary);
+  color: var(--ink-on-solid);
   cursor: pointer;
   transition: border-color 0.25s;
 
   &:hover {
-    border-color: $color-secondary;
+    border-color: var(--secondary);
   }
+}
+
+// Form controls otherwise render with the OS light palette, which puts white
+// fields on dark surfaces in converted views.
+input,
+textarea,
+select {
+  color-scheme: inherit;
 }

@@ -6,7 +6,8 @@ import { useAuthStore } from '@/stores/auth'
 // Admin dashboard statistics.
 // Contract: GET /admin/dashboard ->
 //   data: {
-//     total_orders, total_revenue, total_products, total_customers,
+//     total_orders, total_revenue, total_promotions, total_products,
+//     total_customers,
 //     today:      { orders, revenue },
 //     this_month: { orders, revenue },
 //     this_year:  { orders, revenue },

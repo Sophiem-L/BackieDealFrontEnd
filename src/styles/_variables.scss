@@ -1,4 +1,15 @@
 // Global design tokens — auto-injected into every component via vite.config.js
+//
+// COLOUR BELONGS IN _tokens.scss, NOT HERE. These four are kept only so any
+// stray `$color-*` reference still compiles; nothing in src/ uses them now.
+//
+// They stay LITERAL deliberately. Pointing them at the runtime tokens
+// (var(--text-strong) etc.) looks like a free win — one edit themes every
+// `$color-text` usage — but it themes *text* in any view whose *surfaces* are
+// still hardcoded #fff, which yields near-white type on white cards. That is
+// what broke when it was first tried here.
+//
+// New components should reference var(--*) from _tokens.scss directly.
 $color-primary: #42b883;
 $color-secondary: #35495e;
 $color-text: #2c3e50;

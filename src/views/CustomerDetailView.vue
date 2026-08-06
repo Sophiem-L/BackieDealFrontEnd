@@ -91,9 +91,6 @@ function goBack() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -114,7 +111,7 @@ $divider: #eef0f3;
   align-items: center;
   gap: 0.85rem;
 
-  &__title { margin: 0; font-size: 1.2rem; font-weight: 700; color: $color-text; }
+  &__title { margin: 0; font-size: 1.2rem; font-weight: 700; color: var(--text-strong); }
 }
 
 .back-btn {
@@ -125,12 +122,12 @@ $divider: #eef0f3;
   height: 36px;
   padding: 0;
   flex-shrink: 0;
-  background: #f4f5f7;
+  background: var(--bg);
   border: none;
   border-radius: 9px;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
-  &:hover { background: #eceef1; }
+  &:hover { background: var(--surface-hover); }
   svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.9; }
 }
 
@@ -160,8 +157,8 @@ $divider: #eef0f3;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -171,7 +168,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
   &--profile { text-align: center; }
@@ -187,23 +184,23 @@ $divider: #eef0f3;
   border-radius: 50%;
   font-size: 1.8rem;
   font-weight: 700;
-  color: #fff;
+  color: var(--ink-on-solid);
   overflow: hidden;
 
   img { width: 100%; height: 100%; object-fit: cover; }
 
-  &--photo { background: #eef0f3; }
-  &--blue { background: #4f73c4; }
-  &--green { background: #2f9d6b; }
-  &--violet { background: #8b5cf6; }
-  &--amber { background: #d99a2b; }
-  &--rose { background: #d4567a; }
-  &--slate { background: #5b6472; }
+  &--photo { background: var(--border-subtle); }
+  &--blue { background: var(--info); }
+  &--green { background: var(--success-solid); }
+  &--violet { background: var(--violet); }
+  &--amber { background: var(--accent-ink); }
+  &--rose { background: var(--rose); }
+  &--slate { background: var(--neutral-solid); }
 }
 
 .profile {
-  &__name { margin: 0.75rem 0 0; font-size: 1.05rem; font-weight: 700; color: $color-text; }
-  &__email { margin: 0.2rem 0 0.8rem; font-size: 0.82rem; color: $muted; }
+  &__name { margin: 0.75rem 0 0; font-size: 1.05rem; font-weight: 700; color: var(--text-strong); }
+  &__email { margin: 0.2rem 0 0.8rem; font-size: 0.82rem; color: var(--text-subtle); }
 }
 
 .badge {
@@ -216,9 +213,9 @@ $divider: #eef0f3;
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--active { background: #e6f7ee; color: #1f9d57; }
-  &--vip { background: #f1e9fe; color: #7c3aed; }
-  &--inactive { background: #f1f3f5; color: #6b7280; }
+  &--active { background: var(--success-bg); color: var(--success); }
+  &--vip { background: var(--violet-bg); color: var(--violet); }
+  &--inactive { background: var(--surface-track); color: var(--text-muted); }
 }
 
 /* Key/value */
@@ -232,10 +229,10 @@ $divider: #eef0f3;
     gap: 1rem;
     padding: 0.65rem 0;
 
-    & + & { border-top: 1px solid $divider; }
+    & + & { border-top: 1px solid var(--border-subtle); }
 
-    dt { margin: 0; font-size: 0.82rem; color: $muted; flex-shrink: 0; }
-    dd { margin: 0; font-size: 0.86rem; font-weight: 600; color: $color-text; text-align: right; }
+    dt { margin: 0; font-size: 0.82rem; color: var(--text-subtle); flex-shrink: 0; }
+    dd { margin: 0; font-size: 0.86rem; font-weight: 600; color: var(--text-strong); text-align: right; }
   }
 }
 
@@ -249,9 +246,9 @@ $divider: #eef0f3;
 
   &__item {
     padding: 1rem;
-    border: 1px solid $divider;
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
-    background: #fafbfc;
+    background: var(--surface-sunken);
   }
 
   &__label {
@@ -260,16 +257,16 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__value {
     margin: 0.35rem 0 0;
     font-size: 1.4rem;
     font-weight: 800;
-    color: $color-text;
+    color: var(--text-strong);
 
-    &--accent { color: #a8850a; }
+    &--accent { color: var(--accent-ink); }
   }
 }
 
@@ -280,10 +277,10 @@ $divider: #eef0f3;
   align-items: center;
   gap: 1rem;
   padding: 4rem 1.5rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
-  color: $muted;
+  color: var(--text-subtle);
   font-size: 0.9rem;
 }
 </style>

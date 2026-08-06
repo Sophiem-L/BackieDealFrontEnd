@@ -140,9 +140,6 @@ function deleteArticle(article) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -169,13 +166,13 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1.2rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__subtitle {
     margin: 0.3rem 0 0;
     font-size: 0.85rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -191,19 +188,19 @@ $divider: #eef0f3;
   font-family: inherit;
   font-size: 0.82rem;
   font-weight: 600;
-  color: #4a5160;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 
-  &:hover { background: #f6f7f9; }
+  &:hover { background: var(--surface-alt); }
 
   &--active {
-    background: rgba($accent, 0.16);
+    background: rgb(var(--accent-rgb) / 0.16);
     border-color: transparent;
-    color: #1f242d;
+    color: var(--nav-active-ink);
   }
 }
 
@@ -216,11 +213,11 @@ $divider: #eef0f3;
   &__empty {
     margin: 0;
     text-align: center;
-    color: $muted;
+    color: var(--text-subtle);
     font-size: 0.88rem;
     padding: 2.5rem 1rem;
-    background: #fff;
-    border: 1px solid $divider;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 14px;
   }
 }
@@ -229,14 +226,14 @@ $divider: #eef0f3;
   display: flex;
   align-items: flex-start;
   gap: 1rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
   &:hover {
-    border-color: #e1e4e9;
+    border-color: var(--border);
     box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
   }
 
@@ -255,20 +252,20 @@ $divider: #eef0f3;
   &__category {
     font-size: 0.74rem;
     font-weight: 600;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__title {
     margin: 0.5rem 0 0.3rem;
     font-size: 1.02rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__excerpt {
     margin: 0;
     font-size: 0.85rem;
-    color: #4a5160;
+    color: var(--text-body);
     line-height: 1.45;
   }
 
@@ -278,7 +275,7 @@ $divider: #eef0f3;
     gap: 0.5rem;
     margin-top: 0.7rem;
     font-size: 0.78rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__byline {
@@ -286,12 +283,12 @@ $divider: #eef0f3;
     align-items: center;
     gap: 0.35rem;
     font-weight: 600;
-    color: #4a5160;
+    color: var(--text-body);
 
     svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 1.8; }
   }
 
-  &__dot { color: #c4c9d1; }
+  &__dot { color: var(--text-faint); }
 
   &__actions {
     flex-shrink: 0;
@@ -313,9 +310,9 @@ $divider: #eef0f3;
   border-radius: 6px;
   white-space: nowrap;
 
-  &--published { color: #1c8c4a; background: #e7f6ed; }
-  &--scheduled { color: #2563c9; background: #eaf1fd; }
-  &--draft { color: #6b7280; background: #f1f3f5; }
+  &--published { color: var(--success); background: var(--success-bg); }
+  &--scheduled { color: var(--info); background: var(--info-bg); }
+  &--draft { color: var(--text-muted); background: var(--surface-track); }
 }
 
 .icon-btn {
@@ -325,20 +322,20 @@ $divider: #eef0f3;
   width: 38px;
   height: 38px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 
-  &:hover { background: #f6f7f9; }
+  &:hover { background: var(--surface-alt); }
 
   svg { width: 17px; height: 17px; stroke: currentColor; stroke-width: 1.7; }
 
   &--danger {
-    color: #d14343;
-    &:hover { background: #fff5f5; border-color: #f0c9c9; }
+    color: var(--danger);
+    &:hover { background: var(--danger-bg); border-color: var(--danger-border); }
   }
 }
 </style>

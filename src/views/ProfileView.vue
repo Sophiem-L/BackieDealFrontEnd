@@ -1,11 +1,9 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
-const router = useRouter()
 const auth = useAuthStore()
 
 const profile = reactive({
@@ -174,11 +172,6 @@ async function updatePassword() {
   }
 }
 
-async function logout() {
-  await auth.logout()
-  router.push('/login')
-}
-
 onMounted(loadProfile)
 </script>
 
@@ -194,23 +187,8 @@ onMounted(loadProfile)
           <h2>{{ displayName }}</h2>
           <p>{{ profile.email }}</p>
         </div>
-        <div class="identity__actions">
-          <button type="button" class="btn btn--ghost" @click="logout">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M10 8l-4 4 4 4M6 12h11" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            Logout
-          </button>
-          <button
-            type="button"
-            class="btn btn--primary"
-            :disabled="savingProfile || loadingProfile || !isProfileDirty"
-            @click="saveProfile"
-          >
-            {{ savingProfile ? 'Updating…' : 'Update Profile' }}
-          </button>
-        </div>
+        <!-- No actions here: Logout belongs to the sidebar, and Update Profile
+             sits at the bottom of the last card. -->
       </section>
 
       <!-- Personal information -->
@@ -262,6 +240,19 @@ onMounted(loadProfile)
           </button>
         </div>
       </section>
+
+      <!-- Page-level action, outside the cards: it saves the Personal
+           Information fields, not anything in the Security card. -->
+      <div class="page-actions">
+        <button
+          type="button"
+          class="btn btn--primary"
+          :disabled="savingProfile || loadingProfile || !isProfileDirty"
+          @click="saveProfile"
+        >
+          {{ savingProfile ? 'Updating…' : 'Update Profile' }}
+        </button>
+      </div>
     </div>
 
     <!-- Change password modal -->
@@ -340,9 +331,6 @@ onMounted(loadProfile)
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -370,8 +358,8 @@ $divider: #eef0f3;
     width: 60px;
     height: 60px;
     border-radius: $radius;
-    background: #35495e;
-    color: #fff;
+    background: var(--secondary);
+    color: var(--surface);
     font-size: 1.1rem;
     font-weight: 700;
     flex-shrink: 0;
@@ -385,27 +373,30 @@ $divider: #eef0f3;
       margin: 0;
       font-size: 1.2rem;
       font-weight: 700;
-      color: $color-text;
+      color: var(--text-strong);
     }
 
     p {
       margin: 0.2rem 0 0;
       font-size: 0.85rem;
-      color: $muted;
+      color: var(--text-subtle);
     }
   }
 
-  &__actions {
-    display: flex;
-    gap: 0.6rem;
-  }
+}
+
+/* Page-level save action, below the cards. */
+.page-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.5rem;
+
 
   &__title {
     margin: 0 0 1.25rem;
@@ -413,7 +404,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
 
     &--lock {
       display: flex;
@@ -423,7 +414,7 @@ $divider: #eef0f3;
       svg {
         width: 16px;
         height: 16px;
-        stroke: $accent;
+        stroke: rgb(var(--accent-rgb));
         stroke-width: 1.8;
       }
     }
@@ -438,15 +429,15 @@ $divider: #eef0f3;
   border: 1px solid transparent;
 
   &--success {
-    color: #067647;
-    background: #ecfdf3;
-    border-color: #abefc6;
+    color: var(--success-ink);
+    background: var(--success-bg);
+    border-color: var(--success-border);
   }
 
   &--error {
-    color: #b42318;
-    background: #fef3f2;
-    border-color: #fecdca;
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-color: var(--danger-border);
   }
 }
 
@@ -482,33 +473,33 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   input {
     width: 100%;
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.65rem 0.8rem;
     font-size: 0.9rem;
     font-family: inherit;
-    color: $color-text;
-    background: #fff;
+    color: var(--text-strong);
+    background: var(--surface);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
     &::placeholder {
-      color: #b4b9c2;
+      color: var(--text-faint);
     }
 
     &:focus {
       outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
 
     &:disabled {
-      background: #f4f5f7;
-      color: $muted;
+      background: var(--bg);
+      color: var(--text-subtle);
       cursor: not-allowed;
     }
   }
@@ -517,13 +508,13 @@ $divider: #eef0f3;
     position: relative;
     display: flex;
     align-items: center;
-    background: #f4f5f7;
-    border: 1px solid #e6e8ec;
+    background: var(--bg);
+    border: 1px solid var(--border);
     border-radius: 10px;
 
     &:focus-within {
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
 
     input {
@@ -543,11 +534,11 @@ $divider: #eef0f3;
     padding: 0 0.8rem;
     background: transparent;
     border: none;
-    color: $muted;
+    color: var(--text-subtle);
     cursor: pointer;
 
     &:hover {
-      color: $color-text;
+      color: var(--text-strong);
       border-color: transparent;
     }
 
@@ -588,8 +579,8 @@ $divider: #eef0f3;
   }
 
   &--primary {
-    background: $accent;
-    color: #1f242d;
+    background: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
 
     &:hover {
       filter: brightness(0.96);
@@ -598,33 +589,33 @@ $divider: #eef0f3;
   }
 
   &--ghost {
-    background: #fff;
-    border-color: #e6e8ec;
-    color: #d14343;
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--danger);
 
     &:hover {
-      background: #fff5f5;
-      border-color: #f0c9c9;
+      background: var(--danger-bg);
+      border-color: var(--danger-border);
     }
   }
 
   &--outline {
-    background: #fff;
-    border-color: $accent;
-    color: #a8850a;
+    background: var(--surface);
+    border-color: rgb(var(--accent-rgb));
+    color: var(--accent-ink);
 
     &:hover {
-      background: rgba($accent, 0.12);
-      border-color: $accent;
+      background: rgb(var(--accent-rgb) / 0.12);
+      border-color: rgb(var(--accent-rgb));
     }
   }
 
   &--neutral {
-    color: #4a5160;
+    color: var(--text-body);
 
     &:hover {
-      background: #f4f5f7;
-      border-color: #e6e8ec;
+      background: var(--bg);
+      border-color: var(--border);
     }
   }
 }
@@ -644,13 +635,13 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 0.95rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__hint {
     margin: 0.25rem 0 0;
     font-size: 0.82rem;
-    color: $muted;
+    color: var(--text-subtle);
     max-width: 40ch;
   }
 }
@@ -663,13 +654,13 @@ $divider: #eef0f3;
   align-items: center;
   justify-content: center;
   padding: 1.25rem;
-  background: rgba(17, 22, 30, 0.5);
+  background: var(--backdrop);
   backdrop-filter: blur(2px);
 
   &__dialog {
     width: 100%;
     max-width: 460px;
-    background: #fff;
+    background: var(--surface);
     border-radius: 16px;
     box-shadow: 0 20px 50px rgba(15, 20, 30, 0.25);
     display: flex;
@@ -684,7 +675,7 @@ $divider: #eef0f3;
     justify-content: space-between;
     gap: 1rem;
     padding: 1.25rem 1.5rem;
-    border-bottom: 1px solid $divider;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   &__title {
@@ -694,12 +685,12 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
 
     svg {
       width: 18px;
       height: 18px;
-      stroke: $accent;
+      stroke: rgb(var(--accent-rgb));
       stroke-width: 1.8;
     }
   }
@@ -714,12 +705,12 @@ $divider: #eef0f3;
     background: transparent;
     border: none;
     border-radius: 8px;
-    color: $muted;
+    color: var(--text-subtle);
     cursor: pointer;
 
     &:hover {
-      background: #f4f5f7;
-      color: $color-text;
+      background: var(--bg);
+      color: var(--text-strong);
     }
 
     svg {
@@ -740,7 +731,7 @@ $divider: #eef0f3;
     justify-content: flex-end;
     gap: 0.6rem;
     padding: 1rem 1.5rem;
-    border-top: 1px solid $divider;
+    border-top: 1px solid var(--border-subtle);
   }
 }
 </style>

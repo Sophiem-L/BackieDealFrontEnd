@@ -1,43 +1,135 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import CategoryIcon from '@/components/CategoryIcon.vue'
+import { apiFetch } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
+
 const search = ref('')
+const categories = ref([])
+const loading = ref(false)
+const error = ref('')
+// Delete failures are shown separately so a 409 doesn't wipe the loaded grid.
+const actionError = ref('')
+const deletingId = ref(null)
+
+// GET /admin/categories hard-codes paginate(20) and ignores per_page, so walk
+// the pages (guarded at 10 = 200 categories).
+const MAX_PAGES = 10
+
+// Cover gradients, picked by id so a category keeps the same cover on reload.
+const TONES = ['slate', 'blue', 'green', 'violet', 'cyan', 'amber', 'neutral', 'teal', 'warm']
+
+// The API returns no icon, so match one off the slug/name. CategoryIcon falls
+// back to a generic glyph, so an unmatched category still renders.
+const ICON_RULES = [
+  [/graphic|gpu|vga/, 'gpu'],
+  [/processor|cpu/, 'cpu'],
+  [/motherboard|mainboard|mobo/, 'mobo'],
+  [/memory|ram/, 'ram'],
+  [/storage|ssd|hdd|disk/, 'storage'],
+  [/power|psu|supply/, 'psu'],
+  [/case|chassis/, 'case'],
+  [/cool|fan|thermal/, 'cooling'],
+]
+
+function iconFor(slug, name) {
+  const haystack = `${slug ?? ''} ${name ?? ''}`.toLowerCase()
+  const hit = ICON_RULES.find(([pattern]) => pattern.test(haystack))
+  return hit ? hit[1] : 'other'
+}
+
+function relativeTime(value) {
+  if (!value) return 'never'
+  const then = new Date(value)
+  if (Number.isNaN(then.getTime())) return 'never'
+
+  const minutes = Math.round((Date.now() - then.getTime()) / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+
+  const days = Math.round(hours / 24)
+  if (days <= 30) return `${days} day${days === 1 ? '' : 's'} ago`
+
+  return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function mapCategory(row) {
+  return {
+    id: row.id,
+    name: row.name ?? `Category ${row.id}`,
+    slug: row.slug ?? '',
+    icon: iconFor(row.slug, row.name),
+    tone: TONES[Math.abs(Number(row.id) || 0) % TONES.length],
+    updated: relativeTime(row.updated_at),
+  }
+}
+
+async function loadCategories() {
+  loading.value = true
+  error.value = ''
+  actionError.value = ''
+  try {
+    const collected = []
+    let current = 1
+    let last = 1
+    do {
+      const response = await apiFetch(`/admin/categories?page=${current}`, {
+        token: auth.accessToken,
+      })
+      // The endpoint wraps a paginator, so `data` may be the array itself or {data: [...]}.
+      const payload = response?.data
+      const rows = Array.isArray(payload) ? payload : (payload?.data ?? [])
+      collected.push(...rows)
+      last = payload?.meta?.last_page ?? 1
+      current += 1
+    } while (current <= last && current <= MAX_PAGES)
+
+    categories.value = collected.filter((row) => row?.id != null).map(mapCategory)
+  } catch (err) {
+    error.value = err.message || 'Unable to load categories. Please try again.'
+    categories.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadCategories)
 
 function openCategory(cat) {
-  router.push({ name: 'category-detail', params: { id: cat.key }, query: { name: cat.name } })
+  router.push({ name: 'category-detail', params: { id: cat.id }, query: { name: cat.name } })
 }
 
 function editCategory(cat) {
   router.push({
     name: 'category-detail',
-    params: { id: cat.key },
+    params: { id: cat.id },
     query: { name: cat.name, edit: '1' },
   })
 }
 
-function deleteCategory(cat) {
+async function deleteCategory(cat) {
   if (!window.confirm(`Delete category "${cat.name}"? This action cannot be undone.`)) return
-  categories.value = categories.value.filter((c) => c.key !== cat.key)
+  actionError.value = ''
+  deletingId.value = cat.id
+  try {
+    await apiFetch(`/admin/categories/${cat.id}`, { method: 'DELETE', token: auth.accessToken })
+    categories.value = categories.value.filter((c) => c.id !== cat.id)
+  } catch (err) {
+    // 409 means the category still has products; the API message says as much.
+    actionError.value = err.message || `Unable to delete "${cat.name}".`
+  } finally {
+    deletingId.value = null
+  }
 }
-
-// Catalogue categories. `tone` selects the cover gradient; drop an `image`
-// field (URL) on any entry to use a real photo as the cover instead.
-const categories = ref([
-  { key: 'graphics-cards', name: 'Graphics Cards', icon: 'gpu', tone: 'slate', products: 42, updated: '2h ago' },
-  { key: 'processors', name: 'Processors', icon: 'cpu', tone: 'blue', products: 28, updated: '2h ago' },
-  { key: 'motherboards', name: 'Motherboards', icon: 'mobo', tone: 'green', products: 35, updated: '2h ago' },
-  { key: 'memory', name: 'Memory & RAM', icon: 'ram', tone: 'violet', products: 112, updated: '2h ago' },
-  { key: 'storage', name: 'Storage (SSD/HDD)', icon: 'storage', tone: 'cyan', products: 85, updated: '2h ago' },
-  { key: 'power-supplies', name: 'Power Supplies', icon: 'psu', tone: 'amber', products: 18, updated: '2h ago' },
-  { key: 'cases', name: 'PC Cases', icon: 'case', tone: 'neutral', products: 22, updated: '2h ago' },
-  { key: 'cooling', name: 'Cooling Systems', icon: 'cooling', tone: 'teal', products: 45, updated: '2h ago' },
-  { key: 'peripherals', name: 'Peripherals', icon: 'peripherals', tone: 'warm', products: 156, updated: '2h ago' },
-])
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -73,11 +165,18 @@ const filtered = computed(() => {
         </BaseButton>
       </section>
 
+      <p v-if="actionError" class="notice notice--error">{{ actionError }}</p>
+
       <!-- Category grid -->
-      <section class="grid">
+      <p v-if="loading" class="state">Loading categories…</p>
+      <p v-else-if="error" class="state state--error">
+        {{ error }}
+        <button type="button" class="state__retry" @click="loadCategories">Retry</button>
+      </p>
+      <section v-else class="grid">
         <article
           v-for="cat in filtered"
-          :key="cat.key"
+          :key="cat.id"
           class="cat"
           tabindex="0"
           @click="openCategory(cat)"
@@ -103,7 +202,6 @@ const filtered = computed(() => {
 
           <div class="cat__body">
             <div class="cat__info">
-              <p class="cat__count">{{ cat.products }} Products</p>
               <p class="cat__updated">Updated {{ cat.updated }}</p>
             </div>
             <div class="cat__actions">
@@ -124,6 +222,7 @@ const filtered = computed(() => {
                 class="icon-btn icon-btn--danger"
                 title="Delete category"
                 aria-label="Delete category"
+                :disabled="deletingId === cat.id"
                 @click.stop="deleteCategory(cat)"
               >
                 <svg viewBox="0 0 24 24" fill="none">
@@ -134,16 +233,15 @@ const filtered = computed(() => {
           </div>
         </article>
 
-        <p v-if="filtered.length === 0" class="empty">No categories match "{{ search }}".</p>
+        <p v-if="filtered.length === 0" class="empty">
+          {{ search ? `No categories match "${search}".` : 'No categories yet.' }}
+        </p>
       </section>
     </div>
   </div>
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -163,8 +261,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -174,17 +272,17 @@ $divider: #eef0f3;
     min-width: 240px;
     display: flex;
     align-items: center;
-    background: #f4f5f7;
+    background: var(--bg);
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 0 0.75rem;
 
-    &:focus-within { background: #fff; border-color: #e6e8ec; }
+    &:focus-within { background: var(--surface); border-color: var(--border); }
   }
 
   &__search-icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -198,7 +296,7 @@ $divider: #eef0f3;
     padding: 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
@@ -216,8 +314,8 @@ $divider: #eef0f3;
 
 /* Category card */
 .cat {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   overflow: hidden;
   cursor: pointer;
@@ -226,7 +324,7 @@ $divider: #eef0f3;
   &:hover, &:focus-visible {
     transform: translateY(-3px);
     box-shadow: 0 14px 30px rgba(20, 23, 28, 0.1);
-    border-color: #e2e5ea;
+    border-color: var(--border);
     outline: none;
   }
 
@@ -244,7 +342,7 @@ $divider: #eef0f3;
       content: '';
       position: absolute;
       inset: 0;
-      background: linear-gradient(to top, rgba(15, 17, 21, 0.82) 0%, rgba(15, 17, 21, 0.15) 55%, rgba(15, 17, 21, 0.05) 100%);
+      background: linear-gradient(to top, var(--backdrop) 0%, rgba(15, 17, 21, 0.15) 55%, rgba(15, 17, 21, 0.05) 100%);
     }
 
     // Tone gradients (used when no cover image is set).
@@ -264,7 +362,7 @@ $divider: #eef0f3;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -60%);
-    color: #fff;
+    color: var(--ink-on-solid);
     opacity: 0.12;
 
     svg { width: 76px; height: 76px; stroke: currentColor; stroke-width: 1.4; }
@@ -281,7 +379,7 @@ $divider: #eef0f3;
 
   &__icon {
     display: inline-flex;
-    color: $accent;
+    color: rgb(var(--accent-rgb));
     svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -289,8 +387,8 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1rem;
     font-weight: 700;
-    color: #fff;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    color: var(--ink-on-solid);
+    text-shadow: 0 1px 4px var(--backdrop);
   }
 
   &__body {
@@ -309,20 +407,53 @@ $divider: #eef0f3;
     flex-shrink: 0;
   }
 
-  &__count {
-    margin: 0;
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: $color-text;
-  }
-
   &__updated {
-    margin: 0.3rem 0 0;
+    margin: 0;
     font-size: 0.68rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
+  }
+}
+
+/* Inline banner for delete failures (the API 409s on a category with products) */
+.notice {
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+
+  &--error {
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    color: var(--danger);
+  }
+}
+
+/* Grid-level load states */
+.state {
+  margin: 0;
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--text-subtle);
+  font-size: 0.9rem;
+
+  &--error { color: var(--danger); }
+
+  &__retry {
+    margin-left: 0.6rem;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--text-body);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+
+    &:hover { background: var(--surface-alt); }
   }
 }
 
@@ -333,15 +464,17 @@ $divider: #eef0f3;
   width: 32px;
   height: 32px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: #6b7280;
+  color: var(--text-muted);
   cursor: pointer;
 
-  &:hover { background: #f6f7f9; color: $color-text; border-color: #dfe2e7; }
+  &:hover { background: var(--surface-alt); color: var(--text-strong); border-color: var(--border); }
 
-  &--danger:hover { background: #fdf2f2; color: #d14343; border-color: #f0c9c9; }
+  &--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
 
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
 }
@@ -351,7 +484,7 @@ $divider: #eef0f3;
   margin: 0;
   padding: 3rem 1rem;
   text-align: center;
-  color: $muted;
+  color: var(--text-subtle);
   font-size: 0.9rem;
 }
 </style>

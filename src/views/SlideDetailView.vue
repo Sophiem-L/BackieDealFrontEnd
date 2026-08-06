@@ -107,9 +107,6 @@ function deleteSlide() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -139,7 +136,7 @@ $divider: #eef0f3;
 
     &:hover { text-decoration: none; }
 
-    svg { width: 22px; height: 22px; stroke: #6b7280; stroke-width: 1.8; }
+    svg { width: 22px; height: 22px; stroke: var(--text-muted); stroke-width: 1.8; }
     span { display: flex; flex-direction: column; line-height: 1.2; }
   }
 
@@ -148,10 +145,10 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
-  &__title { font-size: 1.1rem; font-weight: 700; color: $color-text; }
+  &__title { font-size: 1.1rem; font-weight: 700; color: var(--text-strong); }
   &__actions { display: flex; gap: 0.6rem; }
 }
 
@@ -165,8 +162,8 @@ $divider: #eef0f3;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -176,7 +173,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 }
 
@@ -187,7 +184,7 @@ $divider: #eef0f3;
   aspect-ratio: 16 / 7;
   border-radius: 12px;
   overflow: hidden;
-  background: #eef0f3;
+  background: var(--border-subtle);
 
   &__img {
     position: absolute;
@@ -206,8 +203,8 @@ $divider: #eef0f3;
     justify-content: center;
     gap: 0.6rem;
     padding: 2rem;
-    background: linear-gradient(90deg, rgba(10, 12, 18, 0.55) 0%, rgba(10, 12, 18, 0.1) 100%);
-    color: #fff;
+    background: linear-gradient(90deg, var(--backdrop) 0%, rgba(10, 12, 18, 0.1) 100%);
+    color: var(--ink-on-solid);
   }
 
   &__title { margin: 0; font-size: 1.6rem; font-weight: 800; }
@@ -220,8 +217,8 @@ $divider: #eef0f3;
     padding: 0.55rem 1.1rem;
     font-size: 0.85rem;
     font-weight: 700;
-    color: #1f242d;
-    background: $accent;
+    color: var(--ink-on-accent);
+    background: rgb(var(--accent-rgb));
     border-radius: 8px;
   }
 }
@@ -237,14 +234,14 @@ $divider: #eef0f3;
     gap: 1rem;
     padding: 0.7rem 0;
 
-    & + & { border-top: 1px solid $divider; }
+    & + & { border-top: 1px solid var(--border-subtle); }
 
-    dt { font-size: 0.82rem; color: $muted; flex-shrink: 0; }
+    dt { font-size: 0.82rem; color: var(--text-subtle); flex-shrink: 0; }
     dd {
       margin: 0;
       font-size: 0.85rem;
       font-weight: 600;
-      color: $color-text;
+      color: var(--text-strong);
       text-align: right;
     }
   }
@@ -261,9 +258,9 @@ $divider: #eef0f3;
   border-radius: 6px;
   white-space: nowrap;
 
-  &--active { color: #1c8c4a; background: #e7f6ed; }
-  &--scheduled { color: #2563c9; background: #eaf1fd; }
-  &--draft { color: #6b7280; background: #f1f3f5; }
+  &--active { color: var(--success); background: var(--success-bg); }
+  &--scheduled { color: var(--info); background: var(--info-bg); }
+  &--draft { color: var(--text-muted); background: var(--surface-track); }
 }
 
 .missing {
@@ -272,10 +269,10 @@ $divider: #eef0f3;
   align-items: center;
   gap: 1rem;
   padding: 3rem 1.5rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
 
-  &__text { margin: 0; font-size: 0.9rem; color: $muted; }
+  &__text { margin: 0; font-size: 0.9rem; color: var(--text-subtle); }
 }
 </style>

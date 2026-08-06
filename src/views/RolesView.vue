@@ -78,9 +78,6 @@ function editPermissions(role) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -107,20 +104,20 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1.2rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__subtitle {
     margin: 0.3rem 0 0;
     font-size: 0.85rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
 /* Table */
 .table-card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
 }
 
@@ -135,29 +132,29 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
-  tbody tr + tr td { border-top: 1px solid $divider; }
-  tbody tr:hover { background: #fafbfc; }
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
 
   &__actions-head { text-align: right; }
 
-  &__empty { text-align: center; color: $muted; font-size: 0.88rem; padding: 2.5rem 1rem; }
+  &__empty { text-align: center; color: var(--text-subtle); font-size: 0.88rem; padding: 2.5rem 1rem; }
 }
 
 .role-name {
   font-size: 0.9rem;
   font-weight: 700;
-  color: $color-text;
+  color: var(--text-strong);
 }
 
 .admins {
   font-size: 0.85rem;
-  color: #4a5160;
+  color: var(--text-body);
 
-  &__count { font-weight: 700; color: $color-text; }
+  &__count { font-weight: 700; color: var(--text-strong); }
 }
 
 .perms {
@@ -172,8 +169,8 @@ $divider: #eef0f3;
   padding: 0.28rem 0.65rem;
   font-size: 0.72rem;
   font-weight: 600;
-  color: #6b7280;
-  background: #f1f3f5;
+  color: var(--text-muted);
+  background: var(--surface-track);
   border-radius: 999px;
   white-space: nowrap;
 }
@@ -191,9 +188,9 @@ $divider: #eef0f3;
   font-family: inherit;
   font-size: 0.84rem;
   font-weight: 600;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
 
-  &:hover { color: #a8850a; text-decoration: underline; }
+  &:hover { color: var(--accent-ink); text-decoration: underline; }
 }
 </style>

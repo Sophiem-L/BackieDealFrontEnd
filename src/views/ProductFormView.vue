@@ -375,9 +375,6 @@ function cancel() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -407,7 +404,7 @@ $divider: #eef0f3;
 
     &:hover { text-decoration: none; }
 
-    svg { width: 22px; height: 22px; stroke: #6b7280; stroke-width: 1.8; }
+    svg { width: 22px; height: 22px; stroke: var(--text-muted); stroke-width: 1.8; }
 
     span { display: flex; flex-direction: column; line-height: 1.2; }
   }
@@ -417,7 +414,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -425,9 +422,9 @@ $divider: #eef0f3;
   margin: 0;
   padding: 0.75rem 1rem;
   font-size: 0.85rem;
-  color: #d14343;
-  background: #fdf2f2;
-  border: 1px solid #f0c9c9;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
   border-radius: 10px;
 }
 
@@ -436,7 +433,7 @@ $divider: #eef0f3;
   padding: 2.5rem 1rem;
   text-align: center;
   font-size: 0.88rem;
-  color: $muted;
+  color: var(--text-subtle);
 }
 
 .grid {
@@ -481,8 +478,8 @@ $divider: #eef0f3;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -492,13 +489,13 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
   &__hint {
     margin: 0.75rem 0 0;
     font-size: 0.72rem;
-    color: $muted;
+    color: var(--text-subtle);
     text-align: center;
   }
 }
@@ -509,20 +506,20 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px dashed #d3d7dd;
+  border: 1px dashed var(--switch-track);
   border-radius: 12px;
-  background: #fafbfc;
+  background: var(--surface-sunken);
   overflow: hidden;
   cursor: pointer;
   padding: 0;
 
-  &:hover { border-color: $accent; }
+  &:hover { border-color: rgb(var(--accent-rgb)); }
 
   // View mode: solid border, no pointer/hover affordance.
   &--view {
     border-style: solid;
     cursor: default;
-    &:hover { border-color: #d3d7dd; }
+    &:hover { border-color: var(--switch-track); }
   }
 
   img { width: 100%; height: 100%; object-fit: cover; }
@@ -532,7 +529,7 @@ $divider: #eef0f3;
     flex-direction: column;
     align-items: center;
     gap: 0.5rem;
-    color: $muted;
+    color: var(--text-subtle);
     font-size: 0.8rem;
 
     svg { width: 34px; height: 34px; stroke: currentColor; stroke-width: 1.5; }
@@ -553,28 +550,28 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   input,
   textarea,
   select {
     width: 100%;
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.65rem 0.8rem;
     font-size: 0.9rem;
     font-family: inherit;
-    color: $color-text;
-    background: #fff;
+    color: var(--text-strong);
+    background: var(--surface);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
-    &::placeholder { color: #b4b9c2; }
+    &::placeholder { color: var(--text-faint); }
 
     &:focus {
       outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
   }
 
@@ -608,7 +605,7 @@ $divider: #eef0f3;
     transform: translateY(-50%);
     width: 16px;
     height: 16px;
-    stroke: $muted;
+    stroke: var(--text-subtle);
     stroke-width: 1.8;
     pointer-events: none;
   }
@@ -617,16 +614,16 @@ $divider: #eef0f3;
 .money {
   display: flex;
   align-items: center;
-  border: 1px solid #e6e8ec;
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding-left: 0.8rem;
 
   &:focus-within {
-    border-color: $accent;
-    box-shadow: 0 0 0 3px rgba($accent, 0.18);
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
   }
 
-  span { color: $muted; font-size: 0.9rem; }
+  span { color: var(--text-subtle); font-size: 0.9rem; }
 
   input {
     border: none;
@@ -643,27 +640,27 @@ $divider: #eef0f3;
   margin-top: 1rem;
   padding: 0.7rem 0.85rem;
   border-radius: 10px;
-  background: #f4f5f7;
+  background: var(--bg);
   transition: background-color 0.15s ease;
 
-  &--on { background: #e9f7ef; }
+  &--on { background: var(--success-bg); }
 
   &__dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #c2c7ce;
+    background: var(--text-faint);
     order: -1;
   }
-  &--on &__dot { background: #2f9d57; }
+  &--on &__dot { background: var(--success); }
 
   &__status {
     flex: 1;
     font-size: 0.85rem;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--text-muted);
   }
-  &--on &__status { color: #2f7d52; }
+  &--on &__status { color: var(--success-ink); }
 }
 
 .promo-preview {
@@ -672,8 +669,8 @@ $divider: #eef0f3;
   gap: 0.75rem;
   margin-top: 1rem;
   padding: 0.7rem 0.85rem;
-  border: 1px solid #f2e3ad;
-  background: rgba($accent, 0.1);
+  border: 1px solid rgb(var(--accent-rgb) / 0.4);
+  background: rgb(var(--accent-rgb) / 0.1);
   border-radius: 10px;
 
   &__badge {
@@ -682,15 +679,15 @@ $divider: #eef0f3;
     padding: 0.28rem 0.6rem;
     font-size: 0.72rem;
     font-weight: 700;
-    color: #a8780a;
-    background: rgba($accent, 0.28);
+    color: var(--accent-ink);
+    background: rgb(var(--accent-rgb) / 0.28);
     border-radius: 999px;
     white-space: nowrap;
   }
 
   &__meta { min-width: 0; }
-  &__name { margin: 0; font-size: 0.86rem; font-weight: 600; color: $color-text; }
-  &__period { margin: 0.15rem 0 0; font-size: 0.76rem; color: $muted; }
+  &__name { margin: 0; font-size: 0.86rem; font-weight: 600; color: var(--text-strong); }
+  &__period { margin: 0.15rem 0 0; font-size: 0.76rem; color: var(--text-subtle); }
 }
 
 .specs {
@@ -708,7 +705,7 @@ $divider: #eef0f3;
       font-weight: 700;
       letter-spacing: 0.04em;
       text-transform: uppercase;
-      color: #4a5160;
+      color: var(--text-body);
     }
   }
 
@@ -719,12 +716,12 @@ $divider: #eef0f3;
     padding: 0.3rem 0.5rem;
     font-size: 0.78rem;
     font-weight: 600;
-    color: #a8850a;
+    color: var(--accent-ink);
     background: transparent;
     border: none;
     cursor: pointer;
 
-    &:hover { color: #8a6c08; border-color: transparent; }
+    &:hover { color: var(--accent-ink); border-color: transparent; }
 
     svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; }
   }
@@ -740,21 +737,21 @@ $divider: #eef0f3;
 
   &__key,
   &__value {
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 0.55rem 0.7rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
 
     &:focus {
       outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
   }
 
-  &__key { background: #fafbfc; }
+  &__key { background: var(--surface-sunken); }
 
   &__remove {
     display: inline-flex;
@@ -766,10 +763,10 @@ $divider: #eef0f3;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 8px;
-    color: $muted;
+    color: var(--text-subtle);
     cursor: pointer;
 
-    &:hover { background: #fdf2f2; color: #d14343; border-color: transparent; }
+    &:hover { background: var(--danger-bg); color: var(--danger); border-color: transparent; }
 
     svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.9; }
   }
