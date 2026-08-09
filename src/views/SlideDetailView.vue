@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import SlideSequence from '@/components/slides/SlideSequence.vue'
 import { findSlide, removeSlide } from '@/data/slides'
 
 const route = useRoute()
@@ -15,6 +16,15 @@ const statusLabels = {
   scheduled: 'Scheduled',
   draft: 'Draft',
 }
+
+// Describes how the slide renders, which follows from the image count alone.
+const mediaSummary = computed(() => {
+  if (!slide.value) return ''
+  const { images, durationMs, transition } = slide.value
+  if (!images.length) return 'Gradient background'
+  if (images.length === 1) return '1 image'
+  return `${images.length} images · ${durationMs / 1000}s each · ${transition}`
+})
 
 function editSlide() {
   router.push(`/slides/${route.params.id}/edit`)
@@ -70,8 +80,13 @@ function deleteSlide() {
         <!-- Preview -->
         <section class="card card--preview">
           <h3 class="card__title">Preview</h3>
-          <div class="preview" :style="!slide.image ? { background: slide.gradient } : null">
-            <img v-if="slide.image" :src="slide.image" :alt="slide.title" class="preview__img" />
+          <div class="preview" :style="!slide.images.length ? { background: slide.gradient } : null">
+            <SlideSequence
+              :images="slide.images"
+              :duration-ms="slide.durationMs"
+              :transition="slide.transition"
+              :alt="slide.title"
+            />
             <div class="preview__overlay">
               <span class="badge" :class="`badge--${slide.status}`">{{ statusLabels[slide.status] }}</span>
               <h4 class="preview__title">{{ slide.title }}</h4>
@@ -92,6 +107,7 @@ function deleteSlide() {
               <dd><span class="badge" :class="`badge--${slide.status}`">{{ statusLabels[slide.status] }}</span></dd>
             </div>
             <div class="info__row"><dt>CTA Button</dt><dd>{{ slide.cta }}</dd></div>
+            <div class="info__row"><dt>Media</dt><dd>{{ mediaSummary }}</dd></div>
             <div class="info__row"><dt>Slide ID</dt><dd>#{{ slide.id }}</dd></div>
           </dl>
         </section>
@@ -185,14 +201,6 @@ function deleteSlide() {
   border-radius: 12px;
   overflow: hidden;
   background: var(--border-subtle);
-
-  &__img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
 
   &__overlay {
     position: absolute;

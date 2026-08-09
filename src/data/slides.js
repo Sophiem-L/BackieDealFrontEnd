@@ -3,8 +3,13 @@ import { reactive } from 'vue'
 // Homepage carousel slides for the "Content: Homepage Slides" screen.
 // Reactive, mock data (session-only — no backend slides endpoint yet).
 // `status` is one of active | scheduled | draft and drives the badge colour.
-// `cta` is the call-to-action button label. `image` is an optional thumbnail
-// URL; when empty the card falls back to the `gradient` placeholder.
+// `cta` is the call-to-action button label.
+//
+// `images` is an ordered list and decides how the slide renders, with no
+// separate mode flag: empty falls back to the `gradient` placeholder, one
+// image is static, and two or more play as a looping sequence. `durationMs`
+// (per image) and `transition` ('fade' | 'cut') drive that playback; they are
+// kept even below two images so settings survive removing and re-adding one.
 export const slides = reactive([
   {
     id: 1,
@@ -12,7 +17,9 @@ export const slides = reactive([
     subtitle: 'Build your dream PC with RTX 40-series',
     status: 'active',
     cta: 'Shop Now',
-    image: '',
+    images: [],
+    durationMs: 3000,
+    transition: 'fade',
     gradient: 'linear-gradient(135deg, #1b2a4a 0%, #6d28d9 100%)',
   },
   {
@@ -21,7 +28,9 @@ export const slides = reactive([
     subtitle: 'Up to 20% off on MacBooks and ThinkPads',
     status: 'active',
     cta: 'View Deals',
-    image: '',
+    images: [],
+    durationMs: 3000,
+    transition: 'fade',
     gradient: 'linear-gradient(135deg, #d9c7a8 0%, #8a6f4d 100%)',
   },
   {
@@ -30,7 +39,9 @@ export const slides = reactive([
     subtitle: 'Take your thermal performance to the next level',
     status: 'scheduled',
     cta: 'Learn More',
-    image: '',
+    images: [],
+    durationMs: 3000,
+    transition: 'fade',
     gradient: 'linear-gradient(135deg, #7c1f9e 0%, #e0218a 100%)',
   },
   {
@@ -39,7 +50,9 @@ export const slides = reactive([
     subtitle: 'Everything must go - 50% off last gen parts',
     status: 'draft',
     cta: 'Clearance',
-    image: '',
+    images: [],
+    durationMs: 3000,
+    transition: 'fade',
     gradient: 'linear-gradient(135deg, #b08968 0%, #7f5539 100%)',
   },
 ])
@@ -60,7 +73,9 @@ export function createSlide(data) {
     subtitle: '',
     status: 'draft',
     cta: '',
-    image: '',
+    images: [],
+    durationMs: 3000,
+    transition: 'fade',
     gradient: 'linear-gradient(135deg, #1b2a4a 0%, #6d28d9 100%)',
     ...data,
   }

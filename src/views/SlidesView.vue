@@ -68,12 +68,18 @@ function deleteSlide(slide) {
 
           <span
             class="slide__thumb"
-            :style="!slide.image ? { background: slide.gradient } : null"
+            :style="!slide.images.length ? { background: slide.gradient } : null"
             role="button"
             :aria-label="`View ${slide.title}`"
             @click="viewSlide(slide)"
           >
-            <img v-if="slide.image" :src="slide.image" :alt="slide.title" />
+            <img v-if="slide.images.length" :src="slide.images[0]" :alt="slide.title" />
+            <span v-if="slide.images.length > 1" class="slide__frames">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />
+              </svg>
+              {{ slide.images.length }}
+            </span>
           </span>
 
           <div class="slide__body" role="button" @click="viewSlide(slide)">
@@ -201,6 +207,7 @@ function deleteSlide(slide) {
   }
 
   &__thumb {
+    position: relative;
     flex-shrink: 0;
     width: 132px;
     height: 74px;
@@ -210,6 +217,25 @@ function deleteSlide(slide) {
     cursor: pointer;
 
     img { width: 100%; height: 100%; object-fit: cover; }
+  }
+
+  /* Frame count: the list stays static, so this is the only cue that a
+     slide plays as a sequence. */
+  &__frames {
+    position: absolute;
+    right: 0.3rem;
+    bottom: 0.3rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.1rem 0.35rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    border-radius: 5px;
+    color: var(--ink-on-solid);
+    background: var(--backdrop);
+
+    svg { width: 10px; height: 10px; }
   }
 
   &__body {

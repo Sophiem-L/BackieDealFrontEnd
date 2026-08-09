@@ -1,8 +1,10 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import SlideImagesField from '@/components/slides/SlideImagesField.vue'
+import SlideSequence from '@/components/slides/SlideSequence.vue'
 import { createSlide, findSlide, removeSlide } from '@/data/slides'
 
 const route = useRoute()
@@ -16,25 +18,23 @@ const statuses = [
   { value: 'draft', label: 'Draft' },
 ]
 
-const gradients = [
-  'linear-gradient(135deg, #1b2a4a 0%, #6d28d9 100%)',
-  'linear-gradient(135deg, #d9c7a8 0%, #8a6f4d 100%)',
-  'linear-gradient(135deg, #7c1f9e 0%, #e0218a 100%)',
-  'linear-gradient(135deg, #b08968 0%, #7f5539 100%)',
-  'linear-gradient(135deg, #0f766e 0%, #14b8a6 100%)',
-  'linear-gradient(135deg, #be123c 0%, #fb7185 100%)',
-]
+// Backdrop for a slide with no images. Not editable here — it only shows
+// through until the first image is added.
+const DEFAULT_GRADIENT = 'linear-gradient(135deg, #1b2a4a 0%, #6d28d9 100%)'
 
 const form = reactive({
   title: '',
   subtitle: '',
   cta: '',
   status: 'draft',
-  image: '',
-  gradient: gradients[0],
+  images: [],
+  durationMs: 3000,
+  transition: 'fade',
+  gradient: DEFAULT_GRADIENT,
 })
 
-// Prefill when editing.
+// Prefill when editing. `images` is copied so edits don't reach the stored
+// slide until save.
 if (isEdit.value) {
   const existing = findSlide(route.params.id)
   if (existing) {
@@ -43,7 +43,9 @@ if (isEdit.value) {
       subtitle: existing.subtitle,
       cta: existing.cta,
       status: existing.status,
-      image: existing.image,
+      images: [...existing.images],
+      durationMs: existing.durationMs,
+      transition: existing.transition,
       gradient: existing.gradient,
     })
   }
@@ -55,27 +57,15 @@ const pageTitle = computed(() =>
 
 const statusLabels = { active: 'Active', scheduled: 'Scheduled', draft: 'Draft' }
 
-const imageInput = ref(null)
-function pickImage() {
-  imageInput.value?.click()
-}
-function onImageChange(event) {
-  const file = event.target.files?.[0]
-  if (file) form.image = URL.createObjectURL(file)
-}
-function clearImage(event) {
-  event.stopPropagation()
-  form.image = ''
-  if (imageInput.value) imageInput.value.value = ''
-}
-
 function save() {
   const payload = {
     title: form.title.trim() || 'Untitled Slide',
     subtitle: form.subtitle.trim(),
     cta: form.cta.trim() || 'Learn More',
     status: form.status,
-    image: form.image,
+    images: [...form.images],
+    durationMs: form.durationMs,
+    transition: form.transition,
     gradient: form.gradient,
   }
 
@@ -149,8 +139,13 @@ function remove() {
           <!-- Live preview -->
           <section class="card">
             <h3 class="card__title">Preview</h3>
-            <div class="preview" :style="!form.image ? { background: form.gradient } : null">
-              <img v-if="form.image" :src="form.image" :alt="form.title" class="preview__img" />
+            <div class="preview" :style="!form.images.length ? { background: form.gradient } : null">
+              <SlideSequence
+                :images="form.images"
+                :duration-ms="form.durationMs"
+                :transition="form.transition"
+                :alt="form.title"
+              />
               <div class="preview__overlay">
                 <span class="badge" :class="`badge--${form.status}`">{{ statusLabels[form.status] }}</span>
                 <h4 class="preview__title">{{ form.title || 'Slide title' }}</h4>
@@ -177,49 +172,16 @@ function remove() {
           </section>
 
           <section class="card">
-            <h3 class="card__title">Slide Image</h3>
-            <button
-              type="button"
-              class="cover"
-              :class="{ 'cover--image': form.image }"
-              :style="form.image ? null : { background: form.gradient }"
-              @click="pickImage"
-            >
-              <img v-if="form.image" :src="form.image" alt="Slide preview" class="cover__img" />
-              <span class="cover__upload">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M12 15V4m0 0L8 8m4-4 4 4" stroke-linecap="round" stroke-linejoin="round" />
-                  <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
-                </svg>
-                {{ form.image ? 'Change image' : 'Upload image' }}
-              </span>
-              <span
-                v-if="form.image"
-                class="cover__remove"
-                role="button"
-                aria-label="Remove image"
-                @click="clearImage"
-              >
-                <svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" /></svg>
-              </span>
-            </button>
-            <p class="card__hint">No image? Pick a gradient background below. Recommended: 1600x700px.</p>
-          </section>
-
-          <section class="card">
-            <h3 class="card__title">Gradient Background</h3>
-            <div class="swatches">
-              <button
-                v-for="(g, i) in gradients"
-                :key="i"
-                type="button"
-                class="swatch"
-                :class="{ 'swatch--active': form.gradient === g && !form.image }"
-                :style="{ background: g }"
-                :aria-label="`Gradient ${i + 1}`"
-                @click="form.gradient = g"
-              ></button>
-            </div>
+            <h3 class="card__title">Slide Images</h3>
+            <SlideImagesField
+              v-model:images="form.images"
+              v-model:duration-ms="form.durationMs"
+              v-model:transition="form.transition"
+            />
+            <p class="card__hint">
+              Add two or more images and the slide plays them as a looping sequence. Recommended:
+              1600x700px.
+            </p>
           </section>
         </div>
       </div>
@@ -379,14 +341,6 @@ function remove() {
   overflow: hidden;
   background: var(--border-subtle);
 
-  &__img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
   &__overlay {
     position: absolute;
     inset: 0;
@@ -413,91 +367,6 @@ function remove() {
     color: var(--ink-on-accent);
     background: rgb(var(--accent-rgb));
     border-radius: 8px;
-  }
-}
-
-/* Image upload */
-.cover {
-  position: relative;
-  width: 100%;
-  height: 130px;
-  padding: 0;
-  border: none;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  cursor: pointer;
-
-  &:hover .cover__upload { opacity: 1; }
-
-  &__img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  &__upload {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--ink-on-solid);
-    background: var(--backdrop);
-    opacity: 0;
-    transition: opacity 0.15s ease;
-
-    svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
-  }
-
-  &__remove {
-    position: absolute;
-    top: 0.45rem;
-    right: 0.45rem;
-    z-index: 3;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    background: var(--backdrop);
-    color: var(--ink-on-solid);
-    cursor: pointer;
-
-    &:hover { background: var(--danger); }
-
-    svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; }
-  }
-}
-
-/* Gradient swatches */
-.swatches {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.6rem;
-}
-
-.swatch {
-  height: 46px;
-  border-radius: 10px;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
-
-  &:hover { transform: translateY(-1px); }
-
-  &--active {
-    border-color: var(--text-strong);
-    box-shadow: 0 0 0 2px var(--surface) inset;
   }
 }
 
