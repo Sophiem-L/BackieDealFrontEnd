@@ -4,13 +4,27 @@ import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { FORM_SELECT } from '@/lib/selectPresets'
 
 const route = useRoute()
 const router = useRouter()
 
 const isEdit = computed(() => Boolean(route.params.id))
 
-const promotionTypes = ['Percentage Discount', 'Fixed Amount', 'Free Gift', 'Free Shipping']
+const promotionTypes = [
+  'Percentage Discount',
+  'Fixed Amount',
+  'Free Gift',
+  'Free Shipping',
+  'Flash Sale',
+]
 
 const form = reactive({
   name: '',
@@ -112,12 +126,18 @@ function save() {
               </div>
               <div class="field">
                 <label for="type">Promotion Type</label>
-                <div class="select-wrap">
-                  <select id="type" v-model="form.type">
-                    <option v-for="t in promotionTypes" :key="t" :value="t">{{ t }}</option>
-                  </select>
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                </div>
+                <Select v-model="form.type">
+                  <!-- id keeps the <label for="type"> association: a <button>
+                       is a labelable element, so the label still focuses it. -->
+                  <SelectTrigger id="type" :class="FORM_SELECT.trigger">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent :class="FORM_SELECT.content">
+                    <SelectItem v-for="t in promotionTypes" :key="t" :value="t" :class="FORM_SELECT.item">
+                      {{ t }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div class="field">
@@ -386,24 +406,6 @@ function save() {
   .field + .field { margin-top: 0; }
 
   @media (max-width: 560px) { grid-template-columns: 1fr; }
-}
-
-.select-wrap {
-  position: relative;
-
-  select { appearance: none; padding-right: 2.2rem; cursor: pointer; }
-
-  svg {
-    position: absolute;
-    top: 50%;
-    right: 0.8rem;
-    transform: translateY(-50%);
-    width: 16px;
-    height: 16px;
-    stroke: var(--text-subtle);
-    stroke-width: 1.8;
-    pointer-events: none;
-  }
 }
 
 .affix {

@@ -3,7 +3,16 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
+import { downloadCsv, downloadJson } from '@/services/tableExport'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -527,12 +536,33 @@ function toExcelDate(date) {
 
 // e.g. orders-pending-daily-2026-08-04.xlsx — the range is in the name because
 // two exports of the same period taken on different days differ in content.
-function exportFileName() {
+function exportFileName(extension) {
   const { from } = periodRange(periodFilter.value)
-  return `orders-${activeTab.value}-${periodFilter.value}-${from}.xlsx`
+  return `orders-${activeTab.value}-${periodFilter.value}-${from}.${extension}`
 }
 
 const exporting = ref(false)
+
+/* ---------------------------------------------------------------------------
+ * Export format menu
+ *
+ * All three formats export the same rows and the same eight columns; only the
+ * writer differs, so the menu picks a writer rather than a different query.
+ * ------------------------------------------------------------------------- */
+const EXPORT_FORMATS = [
+  { value: 'xlsx', label: 'Excel (.xlsx)' },
+  { value: 'csv', label: 'CSV (.csv)' },
+  { value: 'json', label: 'JSON (.json)' },
+]
+
+const exportMenuOpen = ref(false)
+
+function closeExportMenu() {
+  exportMenuOpen.value = false
+}
+
+onMounted(() => document.addEventListener('click', closeExportMenu))
+onBeforeUnmount(() => document.removeEventListener('click', closeExportMenu))
 
 // Shared by every body cell: thin grid, centred vertically, roomy row height.
 function bodyCellBase(zebra) {
@@ -630,6 +660,39 @@ function buildSheetData(rows) {
   return [header, ...body, totalRow]
 }
 
+/* ---------------------------------------------------------------------------
+ * CSV / JSON rows
+ *
+ * The same eight columns as the workbook, but carrying values a parser can use:
+ * a formatted '$4,299.00' and a localised 'Aug 4, 2026 10:30 AM' do not survive
+ * being read back by another tool. No totals row — that is a reading aid.
+ * ------------------------------------------------------------------------- */
+
+// 'YYYY-MM-DDTHH:MM:SS' from the date's local fields, matching the wall-clock
+// time the table shows. Deliberately not toISOString(), which would shift it.
+function toIsoDateTime(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null
+  const pad = (n) => String(n).padStart(2, '0')
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return `${toIsoDate(date)}T${time}`
+}
+
+function toPlainRow(order) {
+  return {
+    reference: order.reference,
+    // Falls back to the display string if the date failed to parse, so the
+    // cell is never silently empty.
+    placedAt: toIsoDateTime(order.placedAtDate) ?? order.placedAt ?? null,
+    customer: order.customer,
+    item: order.item,
+    spec: order.spec,
+    payment: order.payment,
+    // null rather than 0 for a missing amount — the two must not look alike.
+    amount: amountValue(order.amount),
+    status: statusLabel(order.status),
+  }
+}
+
 // The table only holds the current page, so the export refetches every row
 // matching the active filters. last_page makes this an exact loop rather than a
 // guess — usually a single request.
@@ -653,10 +716,29 @@ async function fetchAllMatchingOrders() {
   return rows.map(mapOrder)
 }
 
-// Export every order matching the current filters as a styled .xlsx workbook.
-// The sheet writer is loaded on demand so it stays out of the main bundle.
-async function exportOrders() {
+// Writes the fetched rows as a styled workbook. The sheet writer is loaded on
+// demand so it stays out of the main bundle.
+async function writeXlsxExport(rows) {
+  const { default: writeXlsxFile } = await import('write-excel-file/browser')
+  // v4 API: sheet options are the 2nd argument, font defaults the 3rd, and the
+  // destination comes from the returned builder's toFile().
+  await writeXlsxFile(
+    buildSheetData(rows),
+    {
+      sheet: 'Orders',
+      columns: EXPORT_COLUMNS.map((c) => ({ width: c.width })),
+      // Keep the header band visible while scrolling long exports.
+      stickyRowsCount: 1,
+    },
+    { fontFamily: 'Calibri', fontSize: 11 },
+  ).toFile(exportFileName('xlsx'))
+}
+
+// Export every order matching the current filters in the chosen format. The
+// fetch is shared; only the writer differs.
+async function exportOrders(format) {
   if (exporting.value) return
+  exportMenuOpen.value = false
   exporting.value = true
   try {
     const rows = await fetchAllMatchingOrders()
@@ -665,19 +747,13 @@ async function exportOrders() {
       return
     }
 
-    const { default: writeXlsxFile } = await import('write-excel-file/browser')
-    // v4 API: sheet options are the 2nd argument, font defaults the 3rd, and the
-    // destination comes from the returned builder's toFile().
-    await writeXlsxFile(
-      buildSheetData(rows),
-      {
-        sheet: 'Orders',
-        columns: EXPORT_COLUMNS.map((c) => ({ width: c.width })),
-        // Keep the header band visible while scrolling long exports.
-        stickyRowsCount: 1,
-      },
-      { fontFamily: 'Calibri', fontSize: 11 },
-    ).toFile(exportFileName())
+    if (format === 'csv') {
+      downloadCsv(rows.map(toPlainRow), EXPORT_COLUMNS, exportFileName('csv'))
+    } else if (format === 'json') {
+      downloadJson(rows.map(toPlainRow), exportFileName('json'))
+    } else {
+      await writeXlsxExport(rows)
+    }
 
     if (exportTruncated.value) {
       window.alert(
@@ -714,48 +790,78 @@ async function exportOrders() {
           />
         </label>
 
-        <label class="select">
-          <span class="select__icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
+        <Select v-model="activeTab">
+          <SelectTrigger :class="TOOLBAR_SELECT.trigger" aria-label="Filter status">
+            <svg :class="TOOLBAR_SELECT.icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" stroke-linejoin="round" />
             </svg>
-          </span>
-          <span class="select__sr">Filter status</span>
-          <select v-model="activeTab">
-            <option v-for="tab in tabs" :key="tab.key" :value="tab.key">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent :class="TOOLBAR_SELECT.content">
+            <SelectItem
+              v-for="tab in tabs"
+              :key="tab.key"
+              :value="tab.key"
+              :class="TOOLBAR_SELECT.item"
+            >
               {{ tab.key === 'all' ? 'All Statuses' : tab.label }} ({{ tab.count }})
-            </option>
-          </select>
-        </label>
+            </SelectItem>
+          </SelectContent>
+        </Select>
 
-        <label class="select">
-          <span class="select__icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
+        <Select v-model="periodFilter">
+          <SelectTrigger :class="TOOLBAR_SELECT.trigger" aria-label="Filter by period">
+            <svg :class="TOOLBAR_SELECT.icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <rect x="3" y="4" width="18" height="17" rx="2" />
               <path d="M3 9h18M8 2v4M16 2v4" stroke-linecap="round" />
             </svg>
-          </span>
-          <span class="select__sr">Filter by period</span>
-          <select v-model="periodFilter">
-            <option v-for="opt in PERIODS" :key="opt.value" :value="opt.value">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent :class="TOOLBAR_SELECT.content">
+            <SelectItem
+              v-for="opt in PERIODS"
+              :key="opt.value"
+              :value="opt.value"
+              :class="TOOLBAR_SELECT.item"
+            >
               {{ opt.label }}
-            </option>
-          </select>
-        </label>
+            </SelectItem>
+          </SelectContent>
+        </Select>
 
-        <BaseButton
-          variant="ghost"
-          :disabled="total === 0 || loading || exporting"
-          @click="exportOrders"
-        >
-          <template #icon>
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" />
+        <div class="export" @click.stop @keydown.esc="closeExportMenu">
+          <BaseButton
+            variant="ghost"
+            :disabled="total === 0 || loading || exporting"
+            aria-haspopup="menu"
+            :aria-expanded="exportMenuOpen"
+            @click="exportMenuOpen = !exportMenuOpen"
+          >
+            <template #icon>
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </template>
+            {{ exporting ? 'Exporting…' : 'Export' }}
+            <svg class="export__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
-          </template>
-          {{ exporting ? 'Exporting…' : 'Export Excel' }}
-        </BaseButton>
+          </BaseButton>
+
+          <div v-if="exportMenuOpen" class="export__popup" role="menu">
+            <button
+              v-for="format in EXPORT_FORMATS"
+              :key="format.value"
+              type="button"
+              class="export__item"
+              role="menuitem"
+              @click="exportOrders(format.value)"
+            >
+              {{ format.label }}
+            </button>
+          </div>
+        </div>
 
         <BaseButton variant="primary" :to="{ name: 'order-create' }">
           <template #icon>
@@ -1043,45 +1149,50 @@ async function exportOrders() {
   }
 }
 
-.select {
+/* Export format menu — anchored to the trigger so it drops directly beneath it. */
+.export {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0 0.7rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  white-space: nowrap;
 
-  &:focus-within { border-color: var(--border); }
-
-  &__icon {
-    display: inline-flex;
-    color: var(--text-subtle);
-    svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 1.8; }
+  &__caret {
+    width: 14px;
+    height: 14px;
+    margin-left: 0.1rem;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    opacity: 0.7;
   }
 
-  /* Label text for assistive tech; the icon carries the meaning visually. */
-  &__sr {
+  &__popup {
     position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
+    top: calc(100% + 6px);
+    /* Right-aligned: the trigger sits at the end of the toolbar, so a
+       left-anchored popup would hang off the edge on narrow screens. */
+    right: 0;
+    z-index: 20;
+    min-width: 168px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(20, 23, 28, 0.12);
+    padding: 0.35rem;
+    display: flex;
+    flex-direction: column;
   }
 
-  select {
-    border: none;
-    background: transparent;
-    padding: 0.55rem 0.4rem 0.55rem 0;
+  &__item {
+    width: 100%;
+    padding: 0.55rem 0.6rem;
+    font-size: 0.84rem;
+    font-weight: 500;
     font-family: inherit;
-    font-size: 0.82rem;
-    font-weight: 600;
+    text-align: left;
     color: var(--text-body);
+    background: transparent;
+    border: none;
+    border-radius: 7px;
     cursor: pointer;
-    &:focus { outline: none; }
+    white-space: nowrap;
+    &:hover { background: var(--surface-alt); }
   }
 }
 

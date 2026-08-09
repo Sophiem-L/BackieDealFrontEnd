@@ -34,7 +34,12 @@ a {
   }
 }
 
-button {
+// The :not() excludes the vendored shadcn-vue components in src/components/ui,
+// which carry data-slot and paint themselves with Tailwind utilities. Those
+// utilities live in @layer utilities, and unlayered CSS beats any layer
+// regardless of specificity — so without this exclusion the rule below would
+// win and every shadcn trigger would render as a green pill.
+button:not([data-slot]) {
   border-radius: $radius;
   border: 1px solid transparent;
   padding: 0.6em 1.2em;

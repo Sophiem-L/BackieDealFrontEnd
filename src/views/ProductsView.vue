@@ -3,6 +3,14 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
@@ -35,6 +43,41 @@ const categoryId = ref('')
 const stockLevel = ref('') // '' | 'in-stock' | 'low-stock' | 'out-of-stock'
 const categories = ref([])
 const hasFilters = computed(() => Boolean(search.value.trim() || categoryId.value || stockLevel.value))
+
+/* ---------------------------------------------------------------------------
+ * Select bindings
+ *
+ * reka-ui reserves the empty string for "no selection" and throws if an item
+ * carries it, but '' is exactly how this page spells "no filter" — the query
+ * builder, the watchers and hasFilters all read it. These proxies give the
+ * unfiltered choice a real value for the widget while leaving categoryId and
+ * stockLevel on their existing contract, so nothing downstream changes.
+ * ------------------------------------------------------------------------- */
+const ALL_CATEGORIES = 'all'
+const ANY_STOCK = 'any'
+
+const STOCK_LEVELS = [
+  { value: ANY_STOCK, label: 'Stock Level: Any' },
+  { value: 'in-stock', label: 'In Stock' },
+  { value: 'low-stock', label: 'Low Stock' },
+  { value: 'out-of-stock', label: 'Out of Stock' },
+]
+
+const categorySelection = computed({
+  // The raw id is passed through rather than stringified, so a numeric id still
+  // matches its SelectItem and still reaches the query as the type it had.
+  get: () => (categoryId.value === '' ? ALL_CATEGORIES : categoryId.value),
+  set: (value) => {
+    categoryId.value = value === ALL_CATEGORIES ? '' : value
+  },
+})
+
+const stockSelection = computed({
+  get: () => (stockLevel.value === '' ? ANY_STOCK : stockLevel.value),
+  set: (value) => {
+    stockLevel.value = value === ANY_STOCK ? '' : value
+  },
+})
 // True when the client-side stock filter stopped at EXPORT_MAX_PAGES.
 const filterTruncated = ref(false)
 
@@ -778,24 +821,43 @@ async function runImport() {
         </label>
 
         <div class="toolbar__actions">
-          <label class="select">
-            <select v-model="categoryId" aria-label="Filter by category">
-              <option value="">All Categories</option>
-              <option v-for="category in categories" :key="category.id" :value="category.id">
+          <Select v-model="categorySelection">
+            <SelectTrigger
+              :class="[TOOLBAR_SELECT.trigger, 'max-w-[190px]']"
+              aria-label="Filter by category"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent :class="TOOLBAR_SELECT.content">
+              <SelectItem :value="ALL_CATEGORIES" :class="TOOLBAR_SELECT.item">
+                All Categories
+              </SelectItem>
+              <SelectItem
+                v-for="category in categories"
+                :key="category.id"
+                :value="category.id"
+                :class="TOOLBAR_SELECT.item"
+              >
                 {{ category.name }}
-              </option>
-            </select>
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          </label>
-          <label class="select">
-            <select v-model="stockLevel" aria-label="Filter by stock level">
-              <option value="">Stock Level: Any</option>
-              <option value="in-stock">In Stock</option>
-              <option value="low-stock">Low Stock</option>
-              <option value="out-of-stock">Out of Stock</option>
-            </select>
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          </label>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select v-model="stockSelection">
+            <SelectTrigger :class="TOOLBAR_SELECT.trigger" aria-label="Filter by stock level">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent :class="TOOLBAR_SELECT.content">
+              <SelectItem
+                v-for="level in STOCK_LEVELS"
+                :key="level.value"
+                :value="level.value"
+                :class="TOOLBAR_SELECT.item"
+              >
+                {{ level.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
 
           <input
             ref="importInput"
@@ -1255,44 +1317,6 @@ async function runImport() {
     font-family: inherit;
     color: var(--text-strong);
     &:focus { outline: none; }
-  }
-}
-
-.select {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-
-  &:focus-within { border-color: var(--border); }
-
-  select {
-    appearance: none;
-    -webkit-appearance: none;
-    max-width: 190px;
-    padding: 0.55rem 2rem 0.55rem 0.8rem;
-    font-size: 0.82rem;
-    font-weight: 500;
-    font-family: inherit;
-    color: var(--text-body);
-    background: transparent;
-    border: none;
-    border-radius: inherit;
-    cursor: pointer;
-
-    &:focus { outline: none; }
-  }
-
-  svg {
-    position: absolute;
-    right: 0.65rem;
-    width: 14px;
-    height: 14px;
-    stroke: var(--text-subtle);
-    stroke-width: 1.8;
-    pointer-events: none;
   }
 }
 
