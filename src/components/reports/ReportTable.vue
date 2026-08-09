@@ -57,6 +57,14 @@ defineProps({
     white-space: nowrap;
   }
 
+  /* An expanded row's detail cell holds its own sub-table. The nowrap and the
+     cell padding above are for summary cells; both fight a nested table, so the
+     detail cell opts out of them and lets its contents set the spacing. */
+  :deep(td.detailcell) {
+    padding: 0;
+    white-space: normal;
+  }
+
   thead th {
     font-size: 0.72rem;
     font-weight: 700;
@@ -66,11 +74,15 @@ defineProps({
     border-bottom: 1px solid var(--border-subtle);
   }
 
-  :deep(tbody tr + tr td) {
+  /* A detail row belongs to the summary row above it, so no rule between the
+     two — the pair should read as one block. */
+  :deep(tbody tr + tr:not(.detailrow) td) {
     border-top: 1px solid var(--border-subtle);
   }
 
-  :deep(tbody tr:hover) {
+  /* Hover is a row-picking affordance; the detail row isn't pickable, and
+     highlighting it would suggest it is. */
+  :deep(tbody tr:not(.detailrow):hover) {
     background: var(--surface-sunken);
   }
 

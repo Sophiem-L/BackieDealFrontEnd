@@ -31,6 +31,11 @@ const plotted = computed(() => {
     ...point,
     nx: span === 0 ? 50 : (index / span) * 100,
     ny: PLOT_TOP + (1 - point.value / peak.value) * (PLOT_BOTTOM - PLOT_TOP),
+    // Tooltips are centred on their dot, so the first and last would hang half
+    // their width outside the plot. The end dot sits at x=100%, which pushed the
+    // whole PAGE into a horizontal scroll — the tip is laid out even at
+    // opacity 0. These two anchor to their dot's edge instead of its centre.
+    edge: span === 0 ? null : index === 0 ? 'start' : index === span ? 'end' : null,
   }))
 })
 
@@ -69,7 +74,7 @@ const areaPath = computed(() => `${linePath.value} L 100 100 L 0 100 Z`)
           tabindex="0"
           :style="{ left: p.nx + '%', top: p.ny + '%', borderColor: color }"
         >
-          <span class="trend__tip">
+          <span class="trend__tip" :class="p.edge ? `trend__tip--${p.edge}` : null">
             {{ p.label }} · {{ p.value.toLocaleString() }}{{ unit ? ` ${unit}` : '' }}
           </span>
         </span>
@@ -124,6 +129,15 @@ const areaPath = computed(() => `${linePath.value} L 100 100 L 0 100 Z`)
       opacity: 1;
       transform: translate(-50%, -8px);
     }
+
+    /* The edge variants drop the -50%, so their lift has to be restated or the
+       hover rule above would re-centre them. */
+    &:hover .trend__tip--start,
+    &:focus-visible .trend__tip--start,
+    &:hover .trend__tip--end,
+    &:focus-visible .trend__tip--end {
+      transform: translate(0, -8px);
+    }
   }
 
   &__tip {
@@ -141,6 +155,17 @@ const areaPath = computed(() => `${linePath.value} L 100 100 L 0 100 Z`)
     background: var(--tooltip-bg);
     border-radius: 7px;
     transition: opacity 0.15s ease, transform 0.15s ease;
+
+    &--start {
+      left: 0;
+      transform: translate(0, 0);
+    }
+
+    &--end {
+      left: auto;
+      right: 0;
+      transform: translate(0, 0);
+    }
   }
 
   &__axis {

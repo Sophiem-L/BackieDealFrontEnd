@@ -4,8 +4,8 @@ import ReportPanel from './ReportPanel.vue'
 import ReportTable from './ReportTable.vue'
 import GranularityTabs from './GranularityTabs.vue'
 import TrendChart from './TrendChart.vue'
+import ReportExportMenu from './ReportExportMenu.vue'
 import { customerOrders } from '@/data/reports'
-import { exportReport, reportFileName } from '@/services/reportExport'
 
 const granularity = ref('monthly')
 
@@ -35,32 +35,14 @@ function newPct(row) {
   return unique ? (row.newCustomers / unique) * 100 : 0
 }
 
-const exporting = ref(false)
-
-async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportReport({
-      sheet: 'Customer Orders',
-      filename: reportFileName('customer-orders', granularity.value),
-      rows: rows.value,
-      columns: [
-        { label: 'Period', width: 20, value: (r) => r.period },
-        { label: 'Orders', width: 12, align: 'right', format: '#,##0', total: true, value: (r) => r.orders },
-        { label: 'Unique Customers', width: 20, align: 'right', format: '#,##0', total: true, value: (r) => r.uniqueCustomers },
-        { label: 'New Customers', width: 18, align: 'right', format: '#,##0', total: true, value: (r) => r.newCustomers },
-        { label: 'Returning', width: 14, align: 'right', format: '#,##0', total: true, value: (r) => r.returningCustomers },
-        { label: 'Avg. Items / Order', width: 18, align: 'right', format: '0.0', value: (r) => r.avgItems },
-      ],
-    })
-  } catch (err) {
-    console.error('Customer orders export failed', err)
-    window.alert('Sorry, the export could not be generated. Please try again.')
-  } finally {
-    exporting.value = false
-  }
-}
+const EXPORT_COLUMNS = [
+  { key: 'period', label: 'Period', width: 20, value: (r) => r.period },
+  { key: 'orders', label: 'Orders', width: 12, align: 'right', format: '#,##0', total: true, value: (r) => r.orders },
+  { key: 'uniqueCustomers', label: 'Unique Customers', width: 20, align: 'right', format: '#,##0', total: true, value: (r) => r.uniqueCustomers },
+  { key: 'newCustomers', label: 'New Customers', width: 18, align: 'right', format: '#,##0', total: true, value: (r) => r.newCustomers },
+  { key: 'returningCustomers', label: 'Returning', width: 14, align: 'right', format: '#,##0', total: true, value: (r) => r.returningCustomers },
+  { key: 'avgItems', label: 'Avg. Items / Order', width: 18, align: 'right', format: '0.0', value: (r) => r.avgItems },
+]
 </script>
 
 <template>
@@ -80,13 +62,13 @@ async function onExport() {
 
     <ReportPanel title="Breakdown" subtitle="New versus returning customers per period.">
       <template #actions>
-        <button type="button" class="btn-export" :disabled="exporting" @click="onExport">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 3v12m0 0 4-4m-4 4-4-4" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
-          </svg>
-          {{ exporting ? 'Exporting…' : 'Export' }}
-        </button>
+        <ReportExportMenu
+          sheet="Customer Orders"
+          tab="customer-orders"
+          :suffix="granularity"
+          :rows="rows"
+          :columns="EXPORT_COLUMNS"
+        />
       </template>
 
       <ReportTable :columns="COLUMNS" :row-count="rows.length">

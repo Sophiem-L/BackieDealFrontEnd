@@ -55,47 +55,16 @@ defineProps({
 
   /* Toolbar controls are styled here rather than in each of the six tabs.
      Slot content carries the consumer's scope id, so :deep() is what lets these
-     rules reach it. */
+     rules reach it.
+
+     Selects and the export button are NOT here: the tabs use the shared
+     shadcn Select (styled by TOOLBAR_SELECT) and ReportExportMenu, both of
+     which bring their own styling. */
   &__actions {
     display: flex;
     align-items: center;
     gap: 0.6rem;
     flex-wrap: wrap;
-
-    :deep(.select) {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.45rem;
-      padding: 0 0.7rem 0 0.8rem;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      color: var(--text-body);
-
-      > svg {
-        width: 14px;
-        height: 14px;
-        stroke: var(--text-subtle);
-        stroke-width: 1.8;
-        flex-shrink: 0;
-      }
-
-      select {
-        appearance: none;
-        border: none;
-        background: transparent;
-        padding: 0.5rem 0;
-        font-family: inherit;
-        font-size: 0.8rem;
-        font-weight: 600;
-        color: var(--text-body);
-        cursor: pointer;
-
-        &:focus {
-          outline: none;
-        }
-      }
-    }
 
     :deep(.searchbox) {
       display: inline-flex;
@@ -129,43 +98,6 @@ defineProps({
       }
     }
 
-    :deep(.btn-export) {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      padding: 0.5rem 0.85rem;
-      font-family: inherit;
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: var(--text-body);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      cursor: pointer;
-      transition: background 0.15s ease;
-
-      svg {
-        width: 15px;
-        height: 15px;
-        stroke: currentColor;
-        stroke-width: 1.8;
-      }
-
-      &:hover:not(:disabled) {
-        background: var(--surface-sunken);
-      }
-
-      &:disabled {
-        opacity: 0.55;
-        cursor: default;
-      }
-    }
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .panel__actions :deep(.btn-export) {
-    transition: none;
   }
 }
 </style>

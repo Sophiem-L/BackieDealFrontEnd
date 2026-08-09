@@ -4,7 +4,8 @@
 // purchase history could be served by the API today (GET /admin/orders?customer_id=).
 // The rest have no endpoint, and `visitor_logs` / `team_activity_logs` are never
 // written to by the backend, so they would return empty even where a route exists.
-// See docs/superpowers/specs/2026-08-04-reports-page-design.md for the audit.
+// See docs/superpowers/specs/2026-08-09-reports-page-redesign-design.md for the
+// audit and the decision to ship on mock data.
 //
 // Everything here is derived from the catalogues the rest of the app already uses
 // (products, customers, the activity-log staff cast) so the admin tells one
@@ -27,28 +28,6 @@ const STAFF_ROLES = {
   'Support Emma': 'Support Agent',
   'Lead Tech Sarah': 'Lead Technician',
 }
-
-// ---------------------------------------------------------------------------
-// Overview trend — shared by the page header chart and the Customer Orders tab
-// ---------------------------------------------------------------------------
-
-// Orders per month for the current year. Exported so the overview chart and the
-// monthly bucket of the Customer Orders report cannot drift apart. Sums to 1,820,
-// which is the "Total Orders" figure in the KPI row.
-export const monthlyOrders = [
-  { label: 'Jan', value: 96 },
-  { label: 'Feb', value: 112 },
-  { label: 'Mar', value: 104 },
-  { label: 'Apr', value: 128 },
-  { label: 'May', value: 141 },
-  { label: 'Jun', value: 152 },
-  { label: 'Jul', value: 146 },
-  { label: 'Aug', value: 168 },
-  { label: 'Sep', value: 182 },
-  { label: 'Oct', value: 174 },
-  { label: 'Nov', value: 198 },
-  { label: 'Dec', value: 219 },
-]
 
 // ---------------------------------------------------------------------------
 // 1. Sold products
@@ -175,7 +154,8 @@ export const customerOrders = {
     orderRow('Jul 27 – Aug 2', 149, 108, 38, 2.6),
     orderRow('Aug 3 – 9', 37, 31, 11, 2.5),
   ],
-  // Order counts mirror `monthlyOrders` above — same series, more columns.
+  // Order counts sum to 1,820 across the year, the same total the yearly bucket
+  // records for 2026 — the two views of this year must not disagree.
   monthly: [
     orderRow('Jan', 96, 70, 22, 2.3),
     orderRow('Feb', 112, 81, 25, 2.5),

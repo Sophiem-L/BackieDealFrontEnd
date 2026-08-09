@@ -1,12 +1,19 @@
 <script setup>
 import { computed, ref } from 'vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import ReportPanel from './ReportPanel.vue'
 import ReportTable from './ReportTable.vue'
 import GranularityTabs from './GranularityTabs.vue'
+import ReportExportMenu from './ReportExportMenu.vue'
 import { soldProducts, soldProductsSummary, productCategories } from '@/data/reports'
-import { exportReport, reportFileName } from '@/services/reportExport'
-
-const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
+import { currency } from '@/lib/format'
 
 const granularity = ref('monthly')
 const category = ref('All Categories')
@@ -53,33 +60,15 @@ function sharePct(units) {
   return totalUnits.value ? Math.round((units / totalUnits.value) * 1000) / 10 : 0
 }
 
-const exporting = ref(false)
-
-async function onExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    await exportReport({
-      sheet: 'Sold Products',
-      filename: reportFileName('sold-products', granularity.value),
-      rows: rows.value,
-      columns: [
-        { label: '#', width: 6, align: 'right', value: (r) => r.rank },
-        { label: 'Product', width: 44, value: (r) => r.name },
-        { label: 'SKU', width: 18, value: (r) => r.sku },
-        { label: 'Category', width: 20, value: (r) => r.category },
-        { label: 'Units Sold', width: 14, align: 'right', format: '#,##0', total: true, value: (r) => r.units },
-        { label: 'Share %', width: 12, align: 'right', format: '0.0"%"', value: (r) => sharePct(r.units) },
-        { label: 'Revenue', width: 16, align: 'right', format: '$#,##0.00', total: true, value: (r) => r.revenue },
-      ],
-    })
-  } catch (err) {
-    console.error('Sold products export failed', err)
-    window.alert('Sorry, the export could not be generated. Please try again.')
-  } finally {
-    exporting.value = false
-  }
-}
+const EXPORT_COLUMNS = [
+  { key: 'rank', label: '#', width: 6, align: 'right', value: (r) => r.rank },
+  { key: 'name', label: 'Product', width: 44, value: (r) => r.name },
+  { key: 'sku', label: 'SKU', width: 18, value: (r) => r.sku },
+  { key: 'category', label: 'Category', width: 20, value: (r) => r.category },
+  { key: 'units', label: 'Units Sold', width: 14, align: 'right', format: '#,##0', total: true, value: (r) => r.units },
+  { key: 'share', label: 'Share %', width: 12, align: 'right', format: '0.0"%"', value: (r) => sharePct(r.units) },
+  { key: 'revenue', label: 'Revenue', width: 16, align: 'right', format: '$#,##0.00', total: true, value: (r) => r.revenue },
+]
 </script>
 
 <template>
@@ -90,24 +79,32 @@ async function onExport() {
     <template #actions>
       <GranularityTabs v-model="granularity" />
 
-      <label class="select">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" stroke-linejoin="round" />
-        </svg>
-        <select v-model="category" aria-label="Filter by category">
-          <option v-for="option in productCategories" :key="option" :value="option">
+      <Select v-model="category">
+        <SelectTrigger :class="TOOLBAR_SELECT.trigger" aria-label="Filter by category">
+          <svg :class="TOOLBAR_SELECT.icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" stroke-linejoin="round" />
+          </svg>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent :class="TOOLBAR_SELECT.content">
+          <SelectItem
+            v-for="option in productCategories"
+            :key="option"
+            :value="option"
+            :class="TOOLBAR_SELECT.item"
+          >
             {{ option }}
-          </option>
-        </select>
-      </label>
+          </SelectItem>
+        </SelectContent>
+      </Select>
 
-      <button type="button" class="btn-export" :disabled="exporting" @click="onExport">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 3v12m0 0 4-4m-4 4-4-4" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
-        </svg>
-        {{ exporting ? 'Exporting…' : 'Export' }}
-      </button>
+      <ReportExportMenu
+        sheet="Sold Products"
+        tab="sold-products"
+        :suffix="granularity"
+        :rows="rows"
+        :columns="EXPORT_COLUMNS"
+      />
     </template>
 
     <!-- Summary strip -->
