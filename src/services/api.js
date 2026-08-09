@@ -4,18 +4,22 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
 export async function apiFetch(path, { method = 'GET', body, token, headers = {} } = {}) {
+  // FormData bodies (file uploads) must pass through untouched: the browser has
+  // to set Content-Type itself so it can include the multipart boundary.
+  const isMultipart = typeof FormData !== 'undefined' && body instanceof FormData
+
   const options = {
     method,
     headers: {
       Accept: 'application/json',
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(body && !isMultipart ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
     },
   }
 
   if (body !== undefined) {
-    options.body = JSON.stringify(body)
+    options.body = isMultipart ? body : JSON.stringify(body)
   }
 
   const response = await fetch(`${BASE_URL}${path}`, options)

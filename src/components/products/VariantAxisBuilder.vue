@@ -13,13 +13,22 @@ const props = defineProps({
   axes: { type: Array, required: true },
 })
 
-const emit = defineEmits(['update:axes', 'generate'])
+const emit = defineEmits(['update:axes'])
 
 // One in-progress chip entry per axis, keyed by index.
 const drafts = ref({})
 
 const problems = computed(() => validateAxes(props.axes))
 const comboCount = computed(() => cartesian(props.axes).length)
+
+// Which axis to point at when nothing has been generated yet.
+const needsName = computed(() => props.axes.every((axis) => !String(axis?.name ?? '').trim()))
+const firstUnfilled = computed(() => {
+  const axis = props.axes.find(
+    (a) => String(a?.name ?? '').trim() && !(a.values ?? []).some((v) => String(v).trim()),
+  )
+  return axis ? String(axis.name).trim() : ''
+})
 
 function update(next) {
   emit('update:axes', next)
@@ -102,8 +111,8 @@ function onDraftKeydown(event, index) {
     </div>
 
     <p v-if="!axes.length" class="axes__empty">
-      Add an option like <strong>Color</strong> or <strong>Size</strong>, then list its values to
-      generate one variant per combination.
+      Add an option like <strong>Color</strong> or <strong>Size</strong> and list its values. One
+      variant appears per combination, each with its own image, SKU, price and stock.
     </p>
 
     <div v-for="(axis, i) in axes" :key="i" class="axis">
@@ -154,12 +163,22 @@ function onDraftKeydown(event, index) {
       <li v-for="problem in problems" :key="problem">{{ problem }}</li>
     </ul>
 
-    <div v-if="comboCount" class="axes__generate">
-      <button type="button" class="axes__generate-btn" :disabled="problems.length" @click="emit('generate')">
-        Generate {{ comboCount }} variant{{ comboCount === 1 ? '' : 's' }}
-      </button>
-      <p class="axes__generate-hint">Prices and stock you have already entered are kept.</p>
-    </div>
+    <p v-if="comboCount" class="axes__count">
+      {{ comboCount }} variant{{ comboCount === 1 ? '' : 's' }} from these options.
+    </p>
+
+    <!--
+      The state that trips people up: an option exists but has no values, so no
+      variant rows (and therefore no image slots) have appeared yet. Say what to
+      do next rather than showing nothing.
+    -->
+    <p v-else-if="axes.length && !problems.length" class="axes__nudge">
+      <template v-if="needsName">Name this option, then type a value and press Enter.</template>
+      <template v-else>
+        Type a value for <strong>{{ firstUnfilled }}</strong> and press Enter — such as
+        <strong>Red</strong>. Variant rows appear here, each with its own image.
+      </template>
+    </p>
   </div>
 </template>
 
@@ -217,33 +236,24 @@ function onDraftKeydown(event, index) {
     li + li { margin-top: 0.2rem; }
   }
 
-  &__generate {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    margin-top: 0.9rem;
-  }
-
-  &__generate-btn {
-    padding: 0.5rem 0.9rem;
-    font-size: 0.82rem;
-    font-weight: 600;
-    font-family: inherit;
-    color: var(--accent-ink);
-    background: rgb(var(--accent-rgb) / 0.12);
-    border: 1px solid rgb(var(--accent-rgb) / 0.4);
-    border-radius: 9px;
-    cursor: pointer;
-
-    &:hover:not(:disabled) { background: rgb(var(--accent-rgb) / 0.2); }
-    &:disabled { opacity: 0.5; cursor: not-allowed; }
-  }
-
-  &__generate-hint {
-    margin: 0;
+  &__count {
+    margin: 0.75rem 0 0;
     font-size: 0.74rem;
+    font-weight: 500;
     color: var(--text-subtle);
+  }
+
+  &__nudge {
+    margin: 0.75rem 0 0;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: var(--accent-ink);
+    background: rgb(var(--accent-rgb) / 0.1);
+    border: 1px solid rgb(var(--accent-rgb) / 0.3);
+    border-radius: 9px;
+
+    strong { font-weight: 700; }
   }
 }
 

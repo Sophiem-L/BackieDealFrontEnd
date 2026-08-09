@@ -6,6 +6,7 @@ import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
 import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
+import { ACCEPT_ATTR, uploadImage } from '@/services/media'
 import { fromApiVariant, toApiVariants } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
@@ -48,10 +49,6 @@ const form = reactive({
   basePrice: '',
   costPrice: '',
   promotionId: '',
-  // NOTE: Product has no specs/attributes field on the API (the `attributes`
-  // table is a global definition list with no product link; only ProductVariant
-  // carries an attributes JSON). Not persisted on save — flagged for the team.
-  specs: [{ key: '', value: '' }],
   // SKU-level variants. Sent nested on create only; see variantsSentOnSave.
   variants: [],
 })
@@ -129,20 +126,36 @@ const selectedPromotion = computed(
 )
 
 const fileInput = ref(null)
+const uploadingImage = ref(false)
+const imageError = ref('')
+
 function pickImage() {
   fileInput.value?.click()
 }
-function onFileChange(event) {
+
+/**
+ * Upload straight away and keep the stored URL, rather than holding a `blob:`
+ * preview that could never be saved.
+ */
+async function onFileChange(event) {
   const file = event.target.files?.[0]
-  if (file) form.imageUrl = URL.createObjectURL(file)
+  event.target.value = ''
+  if (!file) return
+
+  uploadingImage.value = true
+  imageError.value = ''
+  try {
+    const { url } = await uploadImage(file, { token: auth.accessToken, folder: 'products' })
+    form.imageUrl = url
+  } catch (err) {
+    imageError.value = err.message || 'Unable to upload that image.'
+  } finally {
+    uploadingImage.value = false
+  }
 }
 
-function addSpec() {
-  form.specs.push({ key: '', value: '' })
-}
-function removeSpec(index) {
-  form.specs.splice(index, 1)
-}
+// Offered for reuse on variant rows.
+const seedImages = computed(() => (form.imageUrl ? [form.imageUrl] : []))
 
 async function save() {
   saving.value = true
@@ -161,15 +174,22 @@ async function save() {
   }
 
   if (form.categoryId) body.category_id = Number(form.categoryId)
-  // Only send a real stored path — `blob:` previews from the file picker are
-  // local object URLs and would not resolve for anyone else.
+  // The picker now uploads before setting this, so it holds a stored URL. The
+  // `blob:` guard stays as a backstop — such a URL resolves for nobody else.
   if (form.imageUrl && !form.imageUrl.startsWith('blob:')) body.thumbnail = form.imageUrl
 
-  // Variants go out on create only. The update path soft-deletes variants and
-  // recreates them, which collides with the soft-delete-ignoring unique index
-  // on `sku`/`slug` and 500s — so PUT never carries `variants`.
-  if (!isEdit.value && form.variants.length) {
+  // Variants are NOT sent on create: the nested `variants[]` create API is not
+  // finished, so the product is created on its own for now. Editing an existing
+  // product's variants still works, because that path uses the additive
+  // `replace_variants: false` sync rather than the create path.
+  //
+  // `replace_variants: false` is load-bearing there. The default update path
+  // soft-deletes every variant then recreates it, which collides with the
+  // soft-delete-ignoring unique index on `sku`/`slug` and 500s. Opting out
+  // matches existing variants by SKU and updates them in place instead.
+  if (isEdit.value && form.variants.length) {
     body.variants = toApiVariants(form.variants)
+    body.replace_variants = false
   }
 
   try {
@@ -236,8 +256,12 @@ function cancel() {
 
             <!-- Edit/create mode: clickable upload -->
             <template v-else>
-              <button type="button" class="image" @click="pickImage">
-                <img v-if="form.imageUrl" :src="form.imageUrl" alt="Product preview" />
+              <button type="button" class="image" :disabled="uploadingImage" @click="pickImage">
+                <span v-if="uploadingImage" class="image__placeholder">
+                  <span class="image__spinner" aria-hidden="true"></span>
+                  <span>Uploading…</span>
+                </span>
+                <img v-else-if="form.imageUrl" :src="form.imageUrl" alt="Product preview" />
                 <span v-else class="image__placeholder">
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -247,14 +271,9 @@ function cancel() {
                   <span>Click to upload</span>
                 </span>
               </button>
-              <input
-                ref="fileInput"
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                hidden
-                @change="onFileChange"
-              />
-              <p class="card__hint">Recommended: 1000x1000px. PNG, JPG or WebP.</p>
+              <input ref="fileInput" type="file" :accept="ACCEPT_ATTR" hidden @change="onFileChange" />
+              <p v-if="imageError" class="image__error">{{ imageError }}</p>
+              <p v-else class="card__hint">Recommended: 1000x1000px. Up to 5MB.</p>
             </template>
           </section>
 
@@ -309,7 +328,7 @@ function cancel() {
           </section>
 
           <section class="card">
-            <h3 class="card__title">Pricing &amp; Technical Specs</h3>
+            <h3 class="card__title">Pricing</h3>
             <div class="row">
               <div class="field">
                 <label for="basePrice">Base Price</label>
@@ -327,38 +346,24 @@ function cancel() {
               </div>
             </div>
 
-            <div class="specs">
-              <div class="specs__head">
-                <h4>Technical Specifications</h4>
-                <button v-if="!isView" type="button" class="specs__add" @click="addSpec">
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-                  Add Attribute
-                </button>
-              </div>
-              <div v-for="(spec, i) in form.specs" :key="i" class="specs__row">
-                <input v-model="spec.key" type="text" class="specs__key" placeholder="Attribute" />
-                <input v-model="spec.value" type="text" class="specs__value" placeholder="Value" />
-                <button
-                  v-if="!isView"
-                  type="button"
-                  class="specs__remove"
-                  aria-label="Remove attribute"
-                  @click="removeSpec(i)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" /></svg>
-                </button>
-              </div>
-            </div>
           </section>
 
-          <section class="card">
+          <!--
+            Edit and view only. The nested `variants[]` create API is not
+            finished, so offering a variant builder while creating a product
+            would collect rows that are never saved. Variants are added to a
+            product after it exists, and this section returns to the create
+            page when that API lands.
+          -->
+          <section v-if="isEdit" class="card">
             <h3 class="card__title">Variants</h3>
             <VariantEditor
               v-model="form.variants"
               v-model:valid="variantsValid"
               :base-sku="form.sku"
               :base-price="form.basePrice"
-              :readonly="isEdit"
+              :seed-images="seedImages"
+              :mode="isView ? 'view' : 'edit'"
             />
           </section>
 
@@ -572,6 +577,32 @@ function cancel() {
 
     svg { width: 34px; height: 34px; stroke: currentColor; stroke-width: 1.5; }
   }
+
+  &__spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgb(var(--accent-rgb) / 0.3);
+    border-top-color: rgb(var(--accent-rgb));
+    border-radius: 50%;
+    animation: image-spin 0.7s linear infinite;
+  }
+
+  &__error {
+    margin: 0.75rem 0 0;
+    font-size: 0.75rem;
+    color: var(--danger);
+    text-align: center;
+  }
+
+  &:disabled { cursor: progress; }
+}
+
+@keyframes image-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image__spinner { animation-duration: 2s; }
 }
 
 .field {
@@ -728,85 +759,4 @@ function cancel() {
   &__period { margin: 0.15rem 0 0; font-size: 0.76rem; color: var(--text-subtle); }
 }
 
-.specs {
-  margin-top: 1.5rem;
-
-  &__head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
-
-    h4 {
-      margin: 0;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--text-body);
-    }
-  }
-
-  &__add {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.3rem 0.5rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--accent-ink);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-
-    &:hover { color: var(--accent-ink); border-color: transparent; }
-
-    svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; }
-  }
-
-  &__row {
-    display: grid;
-    grid-template-columns: 1fr 1.4fr auto;
-    gap: 0.5rem;
-    align-items: center;
-
-    & + & { margin-top: 0.5rem; }
-  }
-
-  &__key,
-  &__value {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.55rem 0.7rem;
-    font-size: 0.85rem;
-    font-family: inherit;
-    color: var(--text-strong);
-
-    &:focus {
-      outline: none;
-      border-color: rgb(var(--accent-rgb));
-      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
-    }
-  }
-
-  &__key { background: var(--surface-sunken); }
-
-  &__remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    color: var(--text-subtle);
-    cursor: pointer;
-
-    &:hover { background: var(--danger-bg); color: var(--danger); border-color: transparent; }
-
-    svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.9; }
-  }
-}
 </style>

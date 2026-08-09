@@ -80,12 +80,18 @@ export function makeVariantSlug(baseSku, combo) {
   return [slugifyPart(baseSku), ...(combo ?? []).map((part) => slugifyPart(part.value))].filter(Boolean).join('-')
 }
 
-/** Order-independent identity for a row's attributes, used to match on regenerate. */
-export function attributeSignature(attributes) {
-  return Object.keys(attributes ?? {})
-    .sort()
-    .map((key) => `${key}=${attributes[key]}`)
-    .join('|')
+// Unit separator: safe inside a tuple key because axis values are trimmed text.
+const TUPLE_SEP = ''
+
+/**
+ * A row's identity for carry-over purposes: its ordered axis VALUES.
+ *
+ * Keyed on values rather than `axis=value` pairs on purpose. Rows are rebuilt on
+ * every keystroke, so renaming an axis from "Color" to "Colour" must not look
+ * like a different row and discard the prices already entered.
+ */
+export function valueTuple(values) {
+  return (values ?? []).join(TUPLE_SEP)
 }
 
 function blankRow() {
@@ -97,9 +103,14 @@ function blankRow() {
     costPrice: '',
     stock: 0,
     minStockAlert: 5,
+    // Public URL of an uploaded image, or '' for none.
+    image: '',
     attributes: {},
     isDefault: false,
     isActive: true,
+    // Set once the admin edits the SKU by hand, which stops it tracking the
+    // product's base SKU. Never sent to the API.
+    skuTouched: false,
   }
 }
 
@@ -119,29 +130,42 @@ export function normalizeDefault(rows) {
 
 /**
  * Rebuild the row list from the axes, carrying over anything the admin already
- * typed. Rows are matched by attribute signature, so adding a new size doesn't
- * wipe the prices entered for the existing ones — including a SKU that was
- * hand-overridden away from the generated default.
+ * typed.
+ *
+ * Called on every axis edit, so carry-over has to be generous. A prior row is
+ * matched by its ordered axis values, and failing that by the longest prefix —
+ * so adding a whole new option turns the "Red" row into "Red / S" and keeps its
+ * price, rather than starting over.
  */
 export function buildVariants(axes, baseSku, existingRows = []) {
   const previous = new Map()
   for (const row of existingRows) {
-    previous.set(attributeSignature(row.attributes), row)
+    previous.set(valueTuple(Object.values(row.attributes ?? {})), row)
+  }
+
+  function findPrior(combo) {
+    const values = combo.map((part) => part.value)
+    // Longest match first: exact tuple, then progressively shorter prefixes.
+    for (let length = values.length; length > 0; length -= 1) {
+      const prior = previous.get(valueTuple(values.slice(0, length)))
+      if (prior) return prior
+    }
+    return undefined
   }
 
   const rows = cartesian(axes).map((combo) => {
     const attributes = Object.fromEntries(combo.map((part) => [part.name, part.value]))
-    const prior = previous.get(attributeSignature(attributes))
+    const prior = findPrior(combo)
 
     return {
       ...blankRow(),
       ...prior,
-      // Name and attributes always follow the axes; they are derived, not typed.
+      // Name, attributes and slug always follow the axes; they are derived.
       name: makeVariantName(combo),
       attributes,
-      // An empty SKU means "never touched", so regenerate it.
-      sku: prior?.sku ? prior.sku : makeVariantSku(baseSku, combo),
       slug: makeVariantSlug(baseSku, combo),
+      // Keep tracking the base SKU until the admin edits this field by hand.
+      sku: prior?.skuTouched ? prior.sku : makeVariantSku(baseSku, combo),
     }
   })
 
@@ -194,7 +218,13 @@ export function validateVariants(rows) {
   return { valid: Object.keys(errors).length === 0, errors }
 }
 
-/** Axis-level problems, surfaced above the table rather than per row. */
+/**
+ * Axis-level conflicts, surfaced above the table rather than per row.
+ *
+ * Only genuine conflicts belong here. An option with no values yet is merely
+ * unfinished — `cartesian` ignores it, and the editor nudges the admin toward
+ * the next step instead of colouring normal typing as an error.
+ */
 export function validateAxes(axes) {
   const problems = []
   const named = (axes ?? []).filter((axis) => String(axis?.name ?? '').trim())
@@ -206,10 +236,6 @@ export function validateAxes(axes) {
 
   for (const axis of named) {
     const values = (axis.values ?? []).map((v) => String(v ?? '').trim()).filter(Boolean)
-    if (!values.length) {
-      problems.push(`"${String(axis.name).trim()}" needs at least one value.`)
-      continue
-    }
     const lowered = values.map((v) => v.toLowerCase())
     if (new Set(lowered).size !== lowered.length) {
       problems.push(`"${String(axis.name).trim()}" has duplicate values.`)
@@ -248,6 +274,9 @@ export function toApiVariants(rows) {
     cost_price: toNumberOrNull(row.costPrice),
     stock_quantity: toIntOrNull(row.stock) ?? 0,
     min_stock_alert: toIntOrNull(row.minStockAlert) ?? 0,
+    // Only a stored URL is worth sending; a blob: preview would not resolve for
+    // anyone else, and the column caps at 255 characters.
+    image: row.image && !row.image.startsWith('blob:') ? row.image.slice(0, 255) : null,
     attributes: row.attributes ?? {},
     is_default: Boolean(row.isDefault),
     is_active: Boolean(row.isActive),
@@ -255,13 +284,118 @@ export function toApiVariants(rows) {
   }))
 }
 
-/** Map a variant off `GET /admin/products/{uuid}` into a read-only display row. */
+/**
+ * Option names in the order the rows carry them.
+ *
+ * Read off the rows rather than the axis builder so the grouped table works on
+ * the edit page too, where variants are loaded from the API and there is no
+ * builder to consult.
+ */
+export function deriveAxisNames(rows = []) {
+  const names = []
+  for (const row of rows) {
+    for (const key of Object.keys(row.attributes ?? {})) {
+      if (!names.includes(key)) names.push(key)
+    }
+  }
+  return names
+}
+
+/**
+ * Nest the flat row list under one option's values, the way Shopify's variant
+ * table groups by Color.
+ *
+ * Rows stay flat in form state — that is the shape the API wants — so a group
+ * carries each row's index alongside it, letting the editor patch the original
+ * array without rebuilding it.
+ */
+export function groupVariants(rows = [], axisName = '') {
+  if (!axisName) return []
+
+  const groups = new Map()
+  rows.forEach((row, index) => {
+    const value = row.attributes?.[axisName] ?? ''
+    if (!groups.has(value)) groups.set(value, { value, items: [] })
+    groups.get(value).items.push({ row, index })
+  })
+
+  return [...groups.values()]
+}
+
+/**
+ * What a nested row is called once its group already shows the shared value:
+ * "Red / S" under group "Red" reads simply as "S".
+ */
+export function childLabel(row, axisName = '') {
+  const rest = Object.entries(row.attributes ?? {})
+    .filter(([key]) => key !== axisName)
+    .map(([, value]) => value)
+
+  return rest.length ? rest.join(' / ') : row.name || ''
+}
+
+/** Total stock across a group, shown on its summary row. */
+export function sumStock(items = []) {
+  return items.reduce((total, { row }) => {
+    const n = Number(String(row.stock ?? '').trim())
+    return total + (Number.isFinite(n) ? n : 0)
+  }, 0)
+}
+
+/**
+ * The value a group's rows agree on for `field`, or `null` when they differ.
+ *
+ * Null and '' are deliberately distinct: rows that are all blank DO agree, and
+ * must not be labelled "Mixed" — only genuinely differing rows get that.
+ */
+export function sharedFieldValue(items = [], field) {
+  if (!items.length) return ''
+  const first = String(items[0].row?.[field] ?? '')
+  return items.every(({ row }) => String(row?.[field] ?? '') === first) ? first : null
+}
+
+/**
+ * Distinct images available to reuse across rows, newest-seeded first.
+ *
+ * The API has no reachable product media collection, so the "library" a row can
+ * pick from is just whatever URLs this form already knows about: the product
+ * thumbnail plus anything uploaded for another row. Assigning one photo to every
+ * size of a colour is then a matter of reusing the same string.
+ */
+export function collectImagePool(rows = [], seeds = []) {
+  const pool = []
+  const seen = new Set()
+
+  for (const url of [...seeds, ...rows.map((row) => row.image)]) {
+    if (!url || url.startsWith('blob:') || seen.has(url)) continue
+    seen.add(url)
+    pool.push(url)
+  }
+
+  return pool
+}
+
+/**
+ * Map a variant off `GET /admin/products/{uuid}` into an editor row.
+ *
+ * Every field `toApiVariants` sends back must be read here. `min_stock_alert`
+ * and `stock_quantity` especially: those are sent as `?? 0` rather than null,
+ * so the server's null-stripping filter would NOT protect them — a field missed
+ * here is silently zeroed on the next save.
+ */
 export function fromApiVariant(variant) {
   return {
     name: variant?.name ?? '',
     sku: variant?.sku ?? '',
-    price: variant?.price ?? null,
+    slug: variant?.slug ?? '',
+    price: variant?.price ?? '',
+    salePrice: variant?.sale_price ?? '',
+    costPrice: variant?.cost_price ?? '',
     stock: variant?.stock_quantity ?? 0,
+    minStockAlert: variant?.min_stock_alert ?? 0,
+    image: variant?.image ?? '',
+    // An existing variant's SKU is authoritative — never re-derive it.
+    skuTouched: true,
     attributes: variant?.attributes && !Array.isArray(variant.attributes) ? variant.attributes : {},
     isDefault: Boolean(variant?.is_default),
     isActive: Boolean(variant?.is_active),
