@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select'
 import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
+import { downloadCsv, downloadJson } from '@/services/tableExport'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -462,46 +463,253 @@ async function deleteProduct(product) {
   }
 }
 
-// CSV columns read straight off ProductResource.
-const EXPORT_COLUMNS = [
-  { label: 'Product Name', value: (p) => p.name },
-  { label: 'SKU', value: (p) => p.sku },
-  { label: 'Barcode', value: (p) => p.barcode },
-  { label: 'Category', value: (p) => p.category?.name },
-  { label: 'Brand', value: (p) => p.brand?.name },
-  { label: 'Stock', value: (p) => p.stock_quantity },
-  { label: 'Min Stock Alert', value: (p) => p.min_stock_alert },
-  { label: 'Status', value: (p) => statusLabels[deriveStatus(p)] },
-  { label: 'Price', value: (p) => p.price },
-  { label: 'Sale Price', value: (p) => p.sale_price },
-  { label: 'Cost Price', value: (p) => p.cost_price },
-  { label: 'Active', value: (p) => (p.is_active ? 'Yes' : 'No') },
-  { label: 'Created At', value: (p) => p.created_at },
-]
+/* ---------------------------------------------------------------------------
+ * Export
+ *
+ * All three formats export the same rows and the same columns; only the writer
+ * differs, so the format menu picks a writer rather than a different query.
+ * Columns read straight off ProductResource.
+ * ------------------------------------------------------------------------- */
 
-function downloadCsv(rows) {
-  const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`
-  const csv = [
-    EXPORT_COLUMNS.map((c) => escape(c.label)).join(','),
-    ...rows.map((row) => EXPORT_COLUMNS.map((c) => escape(c.value(row))).join(',')),
-  ].join('\r\n')
+// Palette lifted from the page's own tokens so the sheet reads as part of the
+// same product rather than a generic dump.
+const XL_HEADER_FILL = '#F4C10F'
+const XL_HEADER_TEXT = '#1F242D'
+const XL_ZEBRA_FILL = '#FAFBFC'
+const XL_TOTAL_FILL = '#F4F5F7'
+const XL_GRID = '#E6E8EC'
+const XL_RULE = '#C9CDD4'
 
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'products.csv'
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+// Mirrors the on-screen status badge colours.
+const XL_STATUS_TEXT = {
+  'in-stock': '#1F9D57',
+  'low-stock': '#A8850A',
+  'out-of-stock': '#D14343',
 }
 
-// Export every row matching the active filters, not just the visible page:
-// walk GET /admin/products at per_page=200 until the last page.
+// statusLabels inverted, so the sheet can colour a cell from its label.
+const STATUS_BY_LABEL = Object.fromEntries(
+  Object.entries(statusLabels).map(([status, label]) => [label, status]),
+)
+
+const MONEY_FORMAT = '$#,##0.00'
+const COUNT_FORMAT = '#,##0'
+
+// `type` is what the workbook writes; CSV and JSON carry the raw value either
+// way. `width`/`align`/`format` are workbook-only.
+const EXPORT_COLUMNS = [
+  { key: 'name', label: 'Product Name', width: 30 },
+  { key: 'sku', label: 'SKU', width: 16 },
+  { key: 'barcode', label: 'Barcode', width: 16 },
+  { key: 'category', label: 'Category', width: 18 },
+  { key: 'brand', label: 'Brand', width: 18 },
+  { key: 'stock', label: 'Stock', width: 10, align: 'right', type: Number, format: COUNT_FORMAT },
+  {
+    key: 'minStockAlert',
+    label: 'Min Stock Alert',
+    width: 16,
+    align: 'right',
+    type: Number,
+    format: COUNT_FORMAT,
+  },
+  { key: 'status', label: 'Status', width: 14, align: 'center' },
+  { key: 'price', label: 'Price', width: 13, align: 'right', type: Number, format: MONEY_FORMAT },
+  { key: 'salePrice', label: 'Sale Price', width: 13, align: 'right', type: Number, format: MONEY_FORMAT },
+  { key: 'costPrice', label: 'Cost Price', width: 13, align: 'right', type: Number, format: MONEY_FORMAT },
+  { key: 'active', label: 'Active', width: 9, align: 'center' },
+  { key: 'createdAt', label: 'Created At', width: 22, type: Date, format: 'mmm d, yyyy h:mm AM/PM' },
+]
+
+// 'YYYY-MM-DDTHH:MM:SS' from the date's local fields, so CSV and JSON carry the
+// same wall-clock time the sheet shows. Deliberately not toISOString(), which
+// would shift it back to UTC.
+function toLocalIsoDateTime(value) {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return null
+  const pad = (n) => String(n).padStart(2, '0')
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  )
+}
+
+// The writer derives the Excel serial from the date's UTC fields, so a local
+// 10:30 AM in UTC+7 would otherwise be written as 3:30 AM. Shifting by the
+// offset makes the UTC fields match the wall-clock time above.
+function toExcelDate(value) {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return null
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+}
+
+// One mapping feeding all three writers: a ProductResource item flattened to the
+// export columns. Missing figures stay null so they never read as a real 0.
+function toPlainRow(item) {
+  return {
+    name: item.name ?? '',
+    sku: item.sku ?? '',
+    barcode: item.barcode ?? null,
+    category: item.category?.name ?? null,
+    brand: item.brand?.name ?? null,
+    stock: toNumber(item.stock_quantity),
+    minStockAlert: toNumber(item.min_stock_alert),
+    status: statusLabels[deriveStatus(item)],
+    price: toNumber(item.price),
+    salePrice: toNumber(item.sale_price),
+    costPrice: toNumber(item.cost_price),
+    active: item.is_active ? 'Yes' : 'No',
+    createdAt: toLocalIsoDateTime(item.created_at),
+  }
+}
+
+// Shared by every body cell: thin grid, centred vertically, roomy row height.
+function bodyCellBase(zebra) {
+  return {
+    alignVertical: 'center',
+    height: 22,
+    backgroundColor: zebra,
+    borderColor: XL_GRID,
+    borderStyle: 'thin',
+  }
+}
+
+// Builds the styled sheet from the same plain rows CSV and JSON use: a filled
+// header band, zebra-striped rows and a bold totals row. Exported shape is
+// [row][cell] as write-excel-file expects.
+function buildSheetData(rows) {
+  const header = EXPORT_COLUMNS.map((c) => ({
+    value: c.label,
+    type: String,
+    fontWeight: 'bold',
+    fontSize: 11,
+    backgroundColor: XL_HEADER_FILL,
+    textColor: XL_HEADER_TEXT,
+    align: c.align ?? 'left',
+    alignVertical: 'center',
+    height: 30,
+    borderColor: XL_RULE,
+    borderStyle: 'thin',
+  }))
+
+  const body = rows.map((row, index) => {
+    // Stripe every other row so long rows stay easy to track across.
+    const base = bodyCellBase(index % 2 === 1 ? XL_ZEBRA_FILL : undefined)
+
+    return EXPORT_COLUMNS.map((c) => {
+      const cell = { ...base, align: c.align ?? 'left' }
+      const value = row[c.key]
+
+      if (c.type === Number) {
+        // A null value would still need a type; emit a blank string instead so
+        // an unset figure leaves the cell empty rather than showing $0.00.
+        return value == null
+          ? { ...cell, type: String, value: '' }
+          : { ...cell, type: Number, format: c.format, value }
+      }
+      if (c.type === Date) {
+        const date = toExcelDate(value)
+        return date
+          ? { ...cell, type: Date, format: c.format, value: date }
+          : { ...cell, type: String, value: '' }
+      }
+      if (c.key === 'status') {
+        return {
+          ...cell,
+          type: String,
+          value: value ?? '',
+          textColor: XL_STATUS_TEXT[STATUS_BY_LABEL[value]],
+          fontWeight: 'bold',
+        }
+      }
+      return { ...cell, type: String, value: value ?? '' }
+    })
+  })
+
+  // Stock is the only column worth summing — a total of unit prices would be
+  // meaningless.
+  const totalStock = rows.reduce((sum, row) => sum + (row.stock ?? 0), 0)
+  const totalBase = {
+    fontWeight: 'bold',
+    alignVertical: 'center',
+    height: 26,
+    backgroundColor: XL_TOTAL_FILL,
+    borderColor: XL_GRID,
+    borderStyle: 'thin',
+    topBorderColor: XL_RULE,
+    topBorderStyle: 'medium',
+  }
+
+  // The label spans two columns so it has room without overflowing into
+  // neighbouring cells (Excel only spills text over genuinely empty cells).
+  const totalRow = [
+    {
+      ...totalBase,
+      type: String,
+      value: `Total — ${rows.length} product${rows.length === 1 ? '' : 's'}`,
+      align: 'left',
+      columnSpan: 2,
+    },
+    null,
+    ...EXPORT_COLUMNS.slice(2).map((c) =>
+      c.key === 'stock'
+        ? { ...totalBase, type: Number, format: c.format, value: totalStock, align: 'right' }
+        : { ...totalBase, type: String, value: '' },
+    ),
+  ]
+
+  return [header, ...body, totalRow]
+}
+
+// e.g. products-low-stock-2026-08-12.csv — the filter is in the name because an
+// export of the whole catalog and one of a filtered set are different files.
+function exportFileName(extension) {
+  const now = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  return `products-${stockLevel.value || 'all'}-${today}.${extension}`
+}
+
+// Writes the fetched rows as a styled workbook. The sheet writer is loaded on
+// demand so it stays out of the main bundle.
+async function writeXlsxExport(rows) {
+  const { default: writeXlsxFile } = await import('write-excel-file/browser')
+  // v4 API: sheet options are the 2nd argument, font defaults the 3rd, and the
+  // destination comes from the returned builder's toFile().
+  await writeXlsxFile(
+    buildSheetData(rows),
+    {
+      sheet: 'Products',
+      columns: EXPORT_COLUMNS.map((c) => ({ width: c.width })),
+      // Keep the header band visible while scrolling long exports.
+      stickyRowsCount: 1,
+    },
+    { fontFamily: 'Calibri', fontSize: 11 },
+  ).toFile(exportFileName('xlsx'))
+}
+
+const EXPORT_FORMATS = [
+  { value: 'xlsx', label: 'Excel (.xlsx)' },
+  { value: 'csv', label: 'CSV (.csv)' },
+  { value: 'json', label: 'JSON (.json)' },
+]
+
 const exporting = ref(false)
-async function exportProducts() {
+const exportMenuOpen = ref(false)
+
+function closeExportMenu() {
+  exportMenuOpen.value = false
+}
+
+// Any click outside closes the menu; the wrapper stops its own clicks.
+onMounted(() => document.addEventListener('click', closeExportMenu))
+onBeforeUnmount(() => document.removeEventListener('click', closeExportMenu))
+
+// Export every row matching the active filters, not just the visible page:
+// walk GET /admin/products at per_page=200 until the last page. The fetch is
+// shared across formats; only the writer differs.
+async function exportProducts(format) {
   if (exporting.value) return
+  exportMenuOpen.value = false
   exporting.value = true
   try {
     const { rows, truncated } = await fetchAllFiltered()
@@ -516,7 +724,14 @@ async function exportProducts() {
       return
     }
 
-    downloadCsv(matched)
+    const plain = matched.map(toPlainRow)
+    if (format === 'csv') {
+      downloadCsv(plain, EXPORT_COLUMNS, exportFileName('csv'))
+    } else if (format === 'json') {
+      downloadJson(plain, exportFileName('json'))
+    } else {
+      await writeXlsxExport(plain)
+    }
 
     if (truncated) {
       window.alert(
@@ -525,6 +740,7 @@ async function exportProducts() {
       )
     }
   } catch (err) {
+    console.error('Product export failed', err)
     window.alert(err.message || 'Unable to export products.')
   } finally {
     exporting.value = false
@@ -749,22 +965,33 @@ function closeImport() {
   importResult.value = null
 }
 
-function downloadImportTemplate() {
-  const sample = categories.value[0]?.name ?? 'Category Name'
-  const csv = [
-    'Product Name,SKU,Category,Stock,Min Stock Alert,Price,Cost Price,Barcode,Description',
-    `"Example Product","EXAMPLE-001","${sample}",25,5,199.00,150.00,,"Optional description"`,
-  ].join('\r\n')
+// Header spellings the importer accepts, in the order the template writes them.
+const IMPORT_TEMPLATE_COLUMNS = [
+  { key: 'name', label: 'Product Name' },
+  { key: 'sku', label: 'SKU' },
+  { key: 'category', label: 'Category' },
+  { key: 'stock', label: 'Stock' },
+  { key: 'minStockAlert', label: 'Min Stock Alert' },
+  { key: 'price', label: 'Price' },
+  { key: 'costPrice', label: 'Cost Price' },
+  { key: 'barcode', label: 'Barcode' },
+  { key: 'description', label: 'Description' },
+]
 
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'products-import-template.csv'
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+function downloadImportTemplate() {
+  // A real category name where one is loaded, so the sample row imports as-is.
+  const sample = {
+    name: 'Example Product',
+    sku: 'EXAMPLE-001',
+    category: categories.value[0]?.name ?? 'Category Name',
+    stock: 25,
+    minStockAlert: 5,
+    price: '199.00',
+    costPrice: '150.00',
+    barcode: null,
+    description: 'Optional description',
+  }
+  downloadCsv([sample], IMPORT_TEMPLATE_COLUMNS, 'products-import-template.csv')
 }
 
 // One POST per accepted row — there is no bulk create endpoint. Rows are sent
@@ -875,19 +1102,39 @@ async function runImport() {
             </template>
             Import
           </BaseButton>
-          <BaseButton
-            variant="ghost"
-            :disabled="exporting || loading || total === 0"
-            @click="exportProducts"
-          >
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" />
+          <div class="export" @click.stop @keydown.esc="closeExportMenu">
+            <BaseButton
+              variant="ghost"
+              :disabled="exporting || loading || total === 0"
+              aria-haspopup="menu"
+              :aria-expanded="exportMenuOpen"
+              @click="exportMenuOpen = !exportMenuOpen"
+            >
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </template>
+              {{ exporting ? 'Exporting…' : 'Export' }}
+              <svg class="export__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-            </template>
-            {{ exporting ? 'Exporting…' : 'Export' }}
-          </BaseButton>
+            </BaseButton>
+
+            <div v-if="exportMenuOpen" class="export__popup" role="menu">
+              <button
+                v-for="format in EXPORT_FORMATS"
+                :key="format.value"
+                type="button"
+                class="export__item"
+                role="menuitem"
+                @click="exportProducts(format.value)"
+              >
+                {{ format.label }}
+              </button>
+            </div>
+          </div>
           <BaseButton variant="primary" :to="{ name: 'product-create' }">
             <template #icon>
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
@@ -1345,6 +1592,53 @@ async function runImport() {
     background: rgb(var(--accent-rgb));
     color: var(--ink-on-accent);
     &:hover { filter: brightness(0.96); border-color: transparent; }
+  }
+}
+
+/* Export format menu — anchored to the trigger so it drops directly beneath it. */
+.export {
+  position: relative;
+
+  &__caret {
+    width: 14px;
+    height: 14px;
+    margin-left: 0.1rem;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    opacity: 0.7;
+  }
+
+  &__popup {
+    position: absolute;
+    top: calc(100% + 6px);
+    /* Right-aligned: the trigger sits near the end of the toolbar, so a
+       left-anchored popup would hang off the edge on narrow screens. */
+    right: 0;
+    z-index: 20;
+    min-width: 168px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(20, 23, 28, 0.12);
+    padding: 0.35rem;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__item {
+    width: 100%;
+    padding: 0.55rem 0.6rem;
+    font-size: 0.84rem;
+    font-weight: 500;
+    font-family: inherit;
+    text-align: left;
+    color: var(--text-body);
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    cursor: pointer;
+    white-space: nowrap;
+    &:hover { background: var(--surface-alt); }
   }
 }
 

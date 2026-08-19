@@ -45,7 +45,9 @@ const sections = [
     title: 'Content',
     items: [
       { label: 'Slides', icon: 'slides', to: '/slides' },
-      { label: 'News', icon: 'news', to: '/news' },
+      // News is hidden from the nav. Its routes and views are untouched, so
+      // restoring it is putting this line back:
+      // { label: 'News', icon: 'news', to: '/news' },
     ],
   },
   {

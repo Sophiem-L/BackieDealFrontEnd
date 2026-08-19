@@ -49,7 +49,7 @@ const form = reactive({
   basePrice: '',
   costPrice: '',
   promotionId: '',
-  // SKU-level variants. Sent nested on create only; see variantsSentOnSave.
+  // SKU-level variants, sent nested under `variants[]` on both create and update.
   variants: [],
 })
 
@@ -121,6 +121,12 @@ const pageTitle = computed(() => {
   return isEdit.value ? `Edit Product: ${form.name || 'Product'}` : 'Add New Product'
 })
 
+// Create gets the axis builder; edit gets API-loaded rows with locked SKUs.
+const variantMode = computed(() => {
+  if (isView.value) return 'view'
+  return isEdit.value ? 'edit' : 'create'
+})
+
 const selectedPromotion = computed(
   () => promotions.find((p) => p.id === form.promotionId) || null,
 )
@@ -178,18 +184,17 @@ async function save() {
   // `blob:` guard stays as a backstop — such a URL resolves for nobody else.
   if (form.imageUrl && !form.imageUrl.startsWith('blob:')) body.thumbnail = form.imageUrl
 
-  // Variants are NOT sent on create: the nested `variants[]` create API is not
-  // finished, so the product is created on its own for now. Editing an existing
-  // product's variants still works, because that path uses the additive
-  // `replace_variants: false` sync rather than the create path.
+  // Both paths send the nested `variants[]` array; POST /admin/products creates
+  // the product and its variants in one transaction.
   //
-  // `replace_variants: false` is load-bearing there. The default update path
-  // soft-deletes every variant then recreates it, which collides with the
+  // On update, `replace_variants: false` is load-bearing. The default update
+  // path soft-deletes every variant then recreates it, which collides with the
   // soft-delete-ignoring unique index on `sku`/`slug` and 500s. Opting out
-  // matches existing variants by SKU and updates them in place instead.
-  if (isEdit.value && form.variants.length) {
+  // matches existing variants by SKU and updates them in place instead. Create
+  // has no such flag — there is nothing to replace yet.
+  if (form.variants.length) {
     body.variants = toApiVariants(form.variants)
-    body.replace_variants = false
+    if (isEdit.value) body.replace_variants = false
   }
 
   try {
@@ -349,13 +354,12 @@ function cancel() {
           </section>
 
           <!--
-            Edit and view only. The nested `variants[]` create API is not
-            finished, so offering a variant builder while creating a product
-            would collect rows that are never saved. Variants are added to a
-            product after it exists, and this section returns to the create
-            page when that API lands.
+            On create the editor offers its axis builder and generates a row per
+            combination; on edit the rows come from the API and the builder is
+            withheld, since regenerating would invent variants the product never
+            had. See VariantEditor for what each mode allows.
           -->
-          <section v-if="isEdit" class="card">
+          <section class="card">
             <h3 class="card__title">Variants</h3>
             <VariantEditor
               v-model="form.variants"
@@ -363,7 +367,7 @@ function cancel() {
               :base-sku="form.sku"
               :base-price="form.basePrice"
               :seed-images="seedImages"
-              :mode="isView ? 'view' : 'edit'"
+              :mode="variantMode"
             />
           </section>
 
