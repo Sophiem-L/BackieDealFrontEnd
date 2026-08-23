@@ -18,8 +18,18 @@ const filtered = computed(() => {
   )
 })
 
+function viewCustomer(customer) {
+  router.push({ name: 'customer-detail', params: { id: customer.id } })
+}
+
 function editCustomer(customer) {
   router.push({ name: 'customer-edit', params: { id: customer.id } })
+}
+
+function deleteCustomer(customer) {
+  if (!window.confirm(`Delete ${customer.name}? This cannot be undone.`)) return
+  const index = customerAccounts.indexOf(customer)
+  if (index !== -1) customerAccounts.splice(index, 1)
 }
 
 function initials(name) {
@@ -76,7 +86,12 @@ function initials(name) {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="customer in filtered" :key="customer.id">
+            <tr
+              v-for="customer in filtered"
+              :key="customer.id"
+              class="table__row"
+              @click="viewCustomer(customer)"
+            >
               <td>
                 <div class="customer">
                   <span class="customer__avatar" :class="customer.avatar ? 'customer__avatar--photo' : `customer__avatar--${customer.tone}`">
@@ -96,16 +111,15 @@ function initials(name) {
               </td>
               <td>
                 <div class="row-actions">
-                  <button type="button" class="icon-btn" title="Email customer" aria-label="Email customer">
-                    <svg viewBox="0 0 24 24" fill="none">
-                      <rect x="3" y="5" width="18" height="14" rx="2" />
-                      <path d="m4 7 8 6 8-6" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                  </button>
-                  <button type="button" class="icon-btn" title="Edit customer" aria-label="Edit customer" @click="editCustomer(customer)">
+                  <button type="button" class="icon-btn" title="Edit customer" aria-label="Edit customer" @click.stop="editCustomer(customer)">
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
                       <path d="M13.5 6.5l3 3" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                  <button type="button" class="icon-btn icon-btn--danger" title="Delete customer" aria-label="Delete customer" @click.stop="deleteCustomer(customer)">
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                   </button>
                 </div>
@@ -122,9 +136,6 @@ function initials(name) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -144,8 +155,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -155,17 +166,17 @@ $divider: #eef0f3;
     min-width: 240px;
     display: flex;
     align-items: center;
-    background: #f4f5f7;
+    background: var(--bg);
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 0 0.75rem;
 
-    &:focus-within { background: #fff; border-color: #e6e8ec; }
+    &:focus-within { background: var(--surface); border-color: var(--border); }
   }
 
   &__search-icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -179,15 +190,15 @@ $divider: #eef0f3;
     padding: 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
 
 /* Table */
 .table-card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
 }
 
@@ -202,16 +213,18 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
-  tbody tr + tr td { border-top: 1px solid $divider; }
-  tbody tr:hover { background: #fafbfc; }
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
 
-  &__actions-head { text-align: right; }
+  &__row { cursor: pointer; }
 
-  &__empty { text-align: center; color: $muted; font-size: 0.88rem; padding: 2.5rem 1rem; }
+  &__actions-head { text-align: left; }
+
+  &__empty { text-align: center; color: var(--text-subtle); font-size: 0.88rem; padding: 2.5rem 1rem; }
 }
 
 .customer {
@@ -228,27 +241,27 @@ $divider: #eef0f3;
     border-radius: 50%;
     font-size: 0.78rem;
     font-weight: 700;
-    color: #fff;
+    color: var(--ink-on-solid);
     flex-shrink: 0;
     overflow: hidden;
 
     img { width: 100%; height: 100%; object-fit: cover; }
 
-    &--photo { background: #eef0f3; }
-    &--blue { background: #4f73c4; }
-    &--green { background: #2f9d6b; }
-    &--violet { background: #8b5cf6; }
-    &--amber { background: #d99a2b; }
-    &--rose { background: #d4567a; }
-    &--slate { background: #5b6472; }
+    &--photo { background: var(--border-subtle); }
+    &--blue { background: var(--info); }
+    &--green { background: var(--success-solid); }
+    &--violet { background: var(--violet); }
+    &--amber { background: var(--accent-ink); }
+    &--rose { background: var(--rose); }
+    &--slate { background: var(--neutral-solid); }
   }
 
-  &__name { margin: 0; font-size: 0.88rem; font-weight: 700; color: $color-text; }
-  &__email { margin: 0.15rem 0 0; font-size: 0.76rem; color: $muted; }
+  &__name { margin: 0; font-size: 0.88rem; font-weight: 700; color: var(--text-strong); }
+  &__email { margin: 0.15rem 0 0; font-size: 0.76rem; color: var(--text-subtle); }
 }
 
-.spent { font-size: 0.9rem; font-weight: 700; color: $color-text; }
-.orders { font-size: 0.84rem; color: #4a5160; }
+.spent { font-size: 0.9rem; font-weight: 700; color: var(--text-strong); }
+.orders { font-size: 0.84rem; color: var(--text-body); }
 
 .badge {
   display: inline-flex;
@@ -260,15 +273,15 @@ $divider: #eef0f3;
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--active { background: #e6f7ee; color: #1f9d57; }
-  &--vip { background: #f1e9fe; color: #7c3aed; }
-  &--inactive { background: #f1f3f5; color: #6b7280; }
+  &--active { background: var(--success-bg); color: var(--success); }
+  &--vip { background: var(--violet-bg); color: var(--violet); }
+  &--inactive { background: var(--surface-track); color: var(--text-muted); }
 }
 
 .row-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0.4rem;
 }
 
@@ -279,14 +292,16 @@ $divider: #eef0f3;
   width: 32px;
   height: 32px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: #6b7280;
+  color: var(--text-muted);
   cursor: pointer;
 
-  &:hover { background: #f6f7f9; color: $color-text; border-color: #dfe2e7; }
+  &:hover { background: var(--surface-alt); color: var(--text-strong); border-color: var(--border); }
 
   svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
+
+  &--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 }
 </style>

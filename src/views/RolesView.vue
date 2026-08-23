@@ -1,13 +1,14 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { roles as initialRoles } from '@/data/roles'
 import RolePermissionModal from '@/components/RolePermissionModal.vue'
 
 const router = useRouter()
-const roles = ref(initialRoles)
+
+const roles = ref([])
+const loading = ref(false)
 
 // Track which row's action menu is currently open
 const activeDropdownId = ref(null)
@@ -15,6 +16,35 @@ const activeDropdownId = ref(null)
 // Permission modal state
 const isPermissionModalOpen = ref(false)
 const currentSelectedRole = ref(null)
+
+// Fetch roles from your Laravel backend API
+const fetchRoles = async () => {
+  loading.value = true
+  try {
+    const token = localStorage.getItem('accessToken') // Updated to use accessToken
+    console.log("Token:", localStorage.getItem('accessToken'));
+    const response = await fetch('http://127.0.0.1:8000/api/v1/admin/roles', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : ''
+      }
+    })
+    
+    const res = await response.json()
+    if (res && res.status === 'success' && res.data && res.data.items) {
+      roles.value = res.data.items
+    }
+  } catch (error) {
+    console.error('Failed to fetch roles:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchRoles()
+})
 
 function toggleMenu(id) {
   activeDropdownId.value = activeDropdownId.value === id ? null : id
@@ -36,10 +66,28 @@ function openPermissions(role) {
   isPermissionModalOpen.value = true
 }
 
-function deleteRole(role) {
+async function deleteRole(role) {
   activeDropdownId.value = null
-  // TODO: Trigger confirmation dialog and delete API request
-  roles.value = roles.value.filter(r => r.id !== role.id)
+  if (!confirm(`Are you sure you want to delete the role "${role.name}"?`)) return
+
+  try {
+    const token = localStorage.getItem('accessToken') // Updated to use accessToken
+    const response = await fetch(`http://127.0.0.1:8000/api/v1/admin/roles/${role.id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : ''
+      }
+    })
+
+    if (response.ok) {
+      roles.value = roles.value.filter(r => r.id !== role.id)
+    } else {
+      console.error('Failed to delete role')
+    }
+  } catch (error) {
+    console.error('Error deleting role:', error)
+  }
 }
 
 function saveRolePermissions({ roleId, permissionIds }) {
@@ -75,21 +123,21 @@ function saveRolePermissions({ roleId, permissionIds }) {
           <thead>
             <tr>
               <th>Role Name</th>
-              <th>Assigned Admins</th>
-              <th>Core Permissions</th>
+              <th>Description</th>
+              <th>Status</th>
               <th class="table__actions-head">Action</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="role in roles" :key="role.id">
               <td class="role-name">{{ role.name }}</td>
-              <td class="admins">
-                <span class="admins__count">{{ role.admins }}</span> Users
+              <td class="role-description">
+                {{ role.description || 'Guard name: ' + role.guard_name }}
               </td>
               <td>
-                <div class="perms">
-                  <span v-for="perm in role.permissions" :key="perm" class="chip">{{ perm }}</span>
-                </div>
+                <span :class="['status-badge', role.deleted_at ? 'inactive' : 'active']">
+                  {{ role.deleted_at ? 'Inactive' : 'Active' }}
+                </span>
               </td>
               <td class="table__actions-cell">
                 <!-- 3-dot Action Menu container -->
@@ -99,10 +147,10 @@ function saveRolePermissions({ roleId, permissionIds }) {
                     class="action-trigger-btn" 
                     @click="toggleMenu(role.id)"
                   >
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                      <circle cx="12" cy="5" r="2" />
-                      <circle cx="12" cy="12" r="2" />
-                      <circle cx="12" cy="19" r="2" />
+                    <svg class="dots-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                      <circle cx="12" cy="5" r="2.5" />
+                      <circle cx="12" cy="12" r="2.5" />
+                      <circle cx="12" cy="19" r="2.5" />
                     </svg>
                   </button>
 
@@ -137,7 +185,7 @@ function saveRolePermissions({ roleId, permissionIds }) {
                 </div>
               </td>
             </tr>
-            <tr v-if="roles.length === 0">
+            <tr v-if="roles.length === 0 && !loading">
               <td colspan="4" class="table__empty">No roles defined yet.</td>
             </tr>
           </tbody>
@@ -183,7 +231,7 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1.2rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong, #111827);
   }
 
   &__subtitle {
@@ -227,32 +275,33 @@ $divider: #eef0f3;
 .role-name {
   font-size: 0.9rem;
   font-weight: 700;
-  color: $color-text;
+  color: var(--text-strong, #111827);
+  text-transform: capitalize;
 }
 
-.admins {
+.role-description {
   font-size: 0.85rem;
   color: #4a5160;
-
-  &__count { font-weight: 700; color: $color-text; }
+  max-width: 350px;
 }
 
-.perms {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.chip {
+.status-badge {
   display: inline-flex;
   align-items: center;
   padding: 0.28rem 0.65rem;
   font-size: 0.72rem;
   font-weight: 600;
-  color: #6b7280;
-  background: #f1f3f5;
   border-radius: 999px;
-  white-space: nowrap;
+
+  &.active {
+    color: #065f46;
+    background: #d1fae5;
+  }
+
+  &.inactive {
+    color: #9f1239;
+    background: #ffe4e6;
+  }
 }
 
 .dropdown {
@@ -272,9 +321,15 @@ $divider: #eef0f3;
   color: #4a5160;
   cursor: pointer;
   transition: background 0.2s;
+  padding: 0;
 
   &:hover {
     background: #e2e8f0;
+  }
+
+  .dots-icon {
+    display: block;
+    fill: #4a5160;
   }
 }
 
@@ -329,29 +384,6 @@ $divider: #eef0f3;
   &.delete {
     color: #ef4444;
     &:hover { background: #fef2f2; }
-  }
-}
-.action-trigger-btn {
-  background: #f1f3f5;
-  border: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #4a5160;
-  cursor: pointer;
-  transition: background 0.2s;
-  padding: 0;
-
-  &:hover {
-    background: #e2e8f0;
-  }
-
-  .dots-icon {
-    display: block;
-    fill: #4a5160;
   }
 }
 </style>

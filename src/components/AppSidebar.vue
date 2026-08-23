@@ -1,15 +1,24 @@
 <script setup>
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 
 const ui = useUiStore()
 const auth = useAuthStore()
 const router = useRouter()
+const route = useRoute()
 
 async function handleLogout() {
   await auth.logout()
   router.push({ name: 'login' })
+}
+
+// Detail/form pages (e.g. /orders/:id, /slides/:id/edit) are declared as sibling
+// routes rather than children, so Vue Router's active-class won't highlight the
+// parent nav item. Match by path prefix so a section stays active on its subpages.
+function isActive(to) {
+  if (to === '/') return route.path === '/'
+  return route.path === to || route.path.startsWith(`${to}/`)
 }
 
 // Nav model — grouped to match the Admin Portal layout.
@@ -19,7 +28,6 @@ const sections = [
     title: 'Dashboard',
     items: [
       { label: 'Overview', icon: 'overview', to: '/' },
-      { label: 'Reports', icon: 'reports', to: '/reports' },
     ],
   },
   {
@@ -30,14 +38,16 @@ const sections = [
       { label: 'Categories', icon: 'categories', to: '/categories' },
       { label: 'Promotions', icon: 'promotions', to: '/promotions' },
       { label: 'Stock Management', icon: 'stock', to: '/stock' },
+      { label: 'Reports', icon: 'reports', to: '/reports' },
     ],
   },
   {
     title: 'Content',
     items: [
       { label: 'Slides', icon: 'slides', to: '/slides' },
-      { label: 'News', icon: 'news', to: '/news' },
-      { label: 'Pages', icon: 'pages', to: '/pages' },
+      // News is hidden from the nav. Its routes and views are untouched, so
+      // restoring it is putting this line back:
+      // { label: 'News', icon: 'news', to: '/news' },
     ],
   },
   {
@@ -69,7 +79,7 @@ const sections = [
             <RouterLink
               :to="item.to"
               class="nav__link"
-              active-class="is-active"
+              :class="{ 'is-active': isActive(item.to) }"
               :title="ui.sidebarCollapsed ? item.label : null"
             >
               <span class="nav__icon" aria-hidden="true">
@@ -173,11 +183,6 @@ const sections = [
 
 <style scoped lang="scss">
 $sidebar-width: 252px;
-$accent: #f4c10f;
-$muted: #8a909c;
-$heading: #aab0bb;
-$divider: #eef0f3;
-
 $sidebar-rail: 74px;
 
 .sidebar {
@@ -187,8 +192,8 @@ $sidebar-rail: 74px;
   top: 0;
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  border-right: 1px solid $divider;
+  background: var(--surface);
+  border-right: 1px solid var(--border-subtle);
   transition: width 0.2s ease, transform 0.2s ease;
 
   /* ---- Collapsed (icon rail) on desktop ---- */
@@ -222,7 +227,7 @@ $sidebar-rail: 74px;
     top: 0;
     left: 0;
     z-index: 50;
-    box-shadow: 0 0 40px rgba(20, 23, 28, 0.18);
+    box-shadow: var(--shadow-md);
 
     /* On mobile, "collapsed" hides it off-screen instead of showing a rail */
     &--collapsed {
@@ -253,7 +258,7 @@ $sidebar-rail: 74px;
   align-items: center;
   gap: 0.65rem;
   padding: 1.15rem 1.25rem;
-  border-bottom: 1px solid $divider;
+  border-bottom: 1px solid var(--border-subtle);
 
   &:hover {
     text-decoration: none;
@@ -269,7 +274,7 @@ $sidebar-rail: 74px;
   &__name {
     font-size: 1.05rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 }
 
@@ -288,7 +293,7 @@ $sidebar-rail: 74px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: $heading;
+    color: var(--text-faint);
   }
 
   &__list {
@@ -310,21 +315,21 @@ $sidebar-rail: 74px;
     font-size: 0.9rem;
     font-weight: 500;
     text-align: left;
-    color: #4a5160;
+    color: var(--text-body);
     background: transparent;
     border: none;
     cursor: pointer;
     transition: background-color 0.15s ease, color 0.15s ease;
 
     &:hover {
-      background: #f6f7f9;
+      background: var(--surface-alt);
       text-decoration: none;
-      color: $color-text;
+      color: var(--text-strong);
     }
 
     &.is-active {
-      background: rgba($accent, 0.16);
-      color: #1f242d;
+      background: rgb(var(--accent-rgb) / 0.16);
+      color: var(--nav-active-ink);
       font-weight: 600;
     }
   }
@@ -358,23 +363,24 @@ $sidebar-rail: 74px;
     justify-content: center;
     font-size: 0.7rem;
     font-weight: 700;
-    color: #6b4e00;
-    background: $accent;
+    // The badge sits on the accent, which stays yellow in both themes.
+    color: var(--ink-on-accent);
+    background: rgb(var(--accent-rgb));
     border-radius: 999px;
   }
 
   &__link--logout {
-    color: #d14343;
+    color: var(--danger);
 
     &:hover {
-      background: rgba(#d14343, 0.08);
-      color: #d14343;
+      background: var(--danger-bg);
+      color: var(--danger);
     }
   }
 }
 
 .sidebar__footer {
   padding: 0.75rem;
-  border-top: 1px solid $divider;
+  border-top: 1px solid var(--border-subtle);
 }
 </style>

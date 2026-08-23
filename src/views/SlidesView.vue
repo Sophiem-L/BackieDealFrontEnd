@@ -1,7 +1,10 @@
 <script setup>
+import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { slides } from '@/data/slides'
+import { slides, removeSlide } from '@/data/slides'
+
+const router = useRouter()
 
 const statusLabels = {
   active: 'Active',
@@ -9,20 +12,21 @@ const statusLabels = {
   draft: 'Draft',
 }
 
-// Placeholder handlers — wire to a real create/edit/delete flow when the slides
-// endpoint exists. For now they keep the UI interactive.
 function addSlide() {
-  // TODO: open create-slide flow
+  router.push('/slides/new')
+}
+
+function viewSlide(slide) {
+  router.push(`/slides/${slide.id}`)
 }
 
 function editSlide(slide) {
-  // TODO: open edit flow for `slide`
-  void slide
+  router.push(`/slides/${slide.id}/edit`)
 }
 
 function deleteSlide(slide) {
-  // TODO: confirm + delete `slide`
-  void slide
+  if (!window.confirm(`Delete slide "${slide.title}"? This cannot be undone.`)) return
+  removeSlide(slide.id)
 }
 </script>
 
@@ -62,11 +66,23 @@ function deleteSlide(slide) {
             </svg>
           </span>
 
-          <span class="slide__thumb" :style="!slide.image ? { background: slide.gradient } : null">
-            <img v-if="slide.image" :src="slide.image" :alt="slide.title" />
+          <span
+            class="slide__thumb"
+            :style="!slide.images.length ? { background: slide.gradient } : null"
+            role="button"
+            :aria-label="`View ${slide.title}`"
+            @click="viewSlide(slide)"
+          >
+            <img v-if="slide.images.length" :src="slide.images[0]" :alt="slide.title" />
+            <span v-if="slide.images.length > 1" class="slide__frames">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />
+              </svg>
+              {{ slide.images.length }}
+            </span>
           </span>
 
-          <div class="slide__body">
+          <div class="slide__body" role="button" @click="viewSlide(slide)">
             <span class="badge" :class="`badge--${slide.status}`">
               {{ statusLabels[slide.status] }}
             </span>
@@ -113,9 +129,6 @@ function deleteSlide(slide) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -142,13 +155,13 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1.2rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__subtitle {
     margin: 0.3rem 0 0;
     font-size: 0.85rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -161,11 +174,11 @@ $divider: #eef0f3;
   &__empty {
     margin: 0;
     text-align: center;
-    color: $muted;
+    color: var(--text-subtle);
     font-size: 0.88rem;
     padding: 2.5rem 1rem;
-    background: #fff;
-    border: 1px solid $divider;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 14px;
   }
 }
@@ -174,52 +187,74 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 1rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem 0.85rem 0.5rem;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
   &:hover {
-    border-color: #e1e4e9;
+    border-color: var(--border);
     box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
   }
 
   &__handle {
     flex-shrink: 0;
     display: inline-flex;
-    color: #c4c9d1;
+    color: var(--text-faint);
     cursor: grab;
     svg { width: 22px; height: 22px; }
   }
 
   &__thumb {
+    position: relative;
     flex-shrink: 0;
     width: 132px;
     height: 74px;
     border-radius: 10px;
     overflow: hidden;
-    background: #eef0f3;
+    background: var(--border-subtle);
+    cursor: pointer;
 
     img { width: 100%; height: 100%; object-fit: cover; }
+  }
+
+  /* Frame count: the list stays static, so this is the only cue that a
+     slide plays as a sequence. */
+  &__frames {
+    position: absolute;
+    right: 0.3rem;
+    bottom: 0.3rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.1rem 0.35rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    border-radius: 5px;
+    color: var(--ink-on-solid);
+    background: var(--backdrop);
+
+    svg { width: 10px; height: 10px; }
   }
 
   &__body {
     flex: 1;
     min-width: 0;
+    cursor: pointer;
   }
 
   &__title {
     margin: 0.4rem 0 0.2rem;
     font-size: 1rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__subtitle {
     margin: 0;
     font-size: 0.82rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__cta {
@@ -235,7 +270,7 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: #9099a6;
+    color: var(--text-subtle);
   }
 
   &__cta-pill {
@@ -244,9 +279,9 @@ $divider: #eef0f3;
     padding: 0.4rem 0.9rem;
     font-size: 0.8rem;
     font-weight: 600;
-    color: #1f242d;
-    background: #f1f3f5;
-    border: 1px solid #e6e8ec;
+    color: var(--text-strong);
+    background: var(--surface-track);
+    border: 1px solid var(--border);
     border-radius: 8px;
   }
 
@@ -277,9 +312,9 @@ $divider: #eef0f3;
   border-radius: 6px;
   white-space: nowrap;
 
-  &--active { color: #1c8c4a; background: #e7f6ed; }
-  &--scheduled { color: #2563c9; background: #eaf1fd; }
-  &--draft { color: #6b7280; background: #f1f3f5; }
+  &--active { color: var(--success); background: var(--success-bg); }
+  &--scheduled { color: var(--info); background: var(--info-bg); }
+  &--draft { color: var(--text-muted); background: var(--surface-track); }
 }
 
 .icon-btn {
@@ -289,20 +324,20 @@ $divider: #eef0f3;
   width: 38px;
   height: 38px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 
-  &:hover { background: #f6f7f9; }
+  &:hover { background: var(--surface-alt); }
 
   svg { width: 17px; height: 17px; stroke: currentColor; stroke-width: 1.7; }
 
   &--danger {
-    color: #d14343;
-    &:hover { background: #fff5f5; border-color: #f0c9c9; }
+    color: var(--danger);
+    &:hover { background: var(--danger-bg); border-color: var(--danger-border); }
   }
 }
 </style>

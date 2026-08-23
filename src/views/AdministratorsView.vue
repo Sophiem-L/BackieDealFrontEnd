@@ -1,8 +1,9 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { administrators } from '@/data/administrators'
+import { administrators, nextAdministratorId } from '@/data/administrators'
+import { roles } from '@/data/roles'
 
 const search = ref('')
 
@@ -28,9 +29,33 @@ function manageAdmin(admin) {
   void admin
 }
 
-function revokeAdmin(admin) {
-  // TODO: confirm + revoke access for `admin`
-  void admin
+/* Create-user modal */
+const showCreate = ref(false)
+const form = reactive({ name: '', role: '' })
+
+const canSubmit = computed(() => form.name.trim() && form.role)
+
+function addAdmin() {
+  form.name = ''
+  form.role = roles[0]?.name || ''
+  showCreate.value = true
+}
+
+function closeCreate() {
+  showCreate.value = false
+}
+
+function submitCreate() {
+  if (!canSubmit.value) return
+  administrators.push({
+    id: nextAdministratorId(),
+    name: form.name.trim(),
+    role: form.role,
+    lastSeen: 'Just added',
+    online: false,
+    avatar: '',
+  })
+  closeCreate()
 }
 </script>
 
@@ -51,6 +76,16 @@ function revokeAdmin(admin) {
           <input v-model="search" type="search" placeholder="Search administrators..." />
         </label>
 
+        <BaseButton variant="primary" @click="addAdmin">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" stroke-linecap="round" />
+              <circle cx="9.5" cy="7" r="4" />
+              <path d="M19 8v6M22 11h-6" stroke-linecap="round" />
+            </svg>
+          </template>
+          Add User
+        </BaseButton>
       </section>
 
       <!-- Administrator cards -->
@@ -91,18 +126,6 @@ function revokeAdmin(admin) {
                 />
               </svg>
             </button>
-
-            <button
-              type="button"
-              class="icon-btn icon-btn--danger"
-              :aria-label="`Revoke access for ${admin.name}`"
-              @click="revokeAdmin(admin)"
-            >
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M10 8l-4 4 4 4M6 12h11" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
           </div>
         </article>
 
@@ -111,13 +134,53 @@ function revokeAdmin(admin) {
         </p>
       </section>
     </div>
+
+    <!-- Create user modal -->
+    <Teleport to="body">
+      <div v-if="showCreate" class="modal" @click.self="closeCreate">
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
+          <header class="modal__head">
+            <h2 id="create-user-title" class="modal__title">Add User</h2>
+            <button type="button" class="modal__close" aria-label="Close" @click="closeCreate">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
+              </svg>
+            </button>
+          </header>
+
+          <form class="modal__body" @submit.prevent="submitCreate">
+            <label class="field">
+              <span class="field__label">Full name</span>
+              <input
+                v-model="form.name"
+                type="text"
+                class="field__input"
+                placeholder="e.g. Jane Doe"
+                autofocus
+              />
+            </label>
+
+            <label class="field">
+              <span class="field__label">Role</span>
+              <select v-model="form.role" class="field__input">
+                <option v-for="role in roles" :key="role.id" :value="role.name">
+                  {{ role.name }}
+                </option>
+              </select>
+            </label>
+
+            <footer class="modal__foot">
+              <BaseButton variant="ghost" type="button" @click="closeCreate">Cancel</BaseButton>
+              <BaseButton variant="primary" type="submit" :disabled="!canSubmit">Create User</BaseButton>
+            </footer>
+          </form>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -138,8 +201,8 @@ $divider: #eef0f3;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -151,20 +214,20 @@ $divider: #eef0f3;
   flex: 1;
   min-width: 220px;
   max-width: 420px;
-  background: #f4f5f7;
+  background: var(--bg);
   border: 1px solid transparent;
   border-radius: 999px;
   padding: 0 0.85rem;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 
   &:focus-within {
-    background: #fff;
-    border-color: #e6e8ec;
+    background: var(--surface);
+    border-color: var(--border);
   }
 
   &__icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -176,7 +239,7 @@ $divider: #eef0f3;
     padding: 0.5rem 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
@@ -184,23 +247,27 @@ $divider: #eef0f3;
 /* Cards grid */
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
 
   &__empty {
     grid-column: 1 / -1;
     margin: 0;
     text-align: center;
-    color: $muted;
+    color: var(--text-subtle);
     font-size: 0.88rem;
     padding: 2.5rem 1rem;
-    background: #fff;
-    border: 1px solid $divider;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 14px;
   }
 }
 
-@media (max-width: 880px) {
+@media (max-width: 1200px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
   .grid { grid-template-columns: 1fr; }
 }
 
@@ -208,14 +275,14 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.9rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
   &:hover {
-    border-color: #e1e4e9;
+    border-color: var(--border);
     box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
   }
 
@@ -228,8 +295,8 @@ $divider: #eef0f3;
     height: 48px;
     border-radius: 50%;
     overflow: hidden;
-    background: #eef0f3;
-    color: #6b7280;
+    background: var(--border-subtle);
+    color: var(--text-muted);
     font-size: 0.85rem;
     font-weight: 700;
 
@@ -245,7 +312,7 @@ $divider: #eef0f3;
     margin: 0 0 0.35rem;
     font-size: 0.98rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__meta {
@@ -260,16 +327,16 @@ $divider: #eef0f3;
     align-items: center;
     gap: 0.35rem;
     font-size: 0.78rem;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #c4c9d1;
+    background: var(--text-faint);
 
-    &--online { background: #34c759; }
+    &--online { background: var(--success); }
   }
 
   &__actions {
@@ -288,8 +355,8 @@ $divider: #eef0f3;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #2563c9;
-  background: #eaf1fd;
+  color: var(--info);
+  background: var(--info-bg);
   border-radius: 6px;
   white-space: nowrap;
 }
@@ -301,20 +368,114 @@ $divider: #eef0f3;
   width: 38px;
   height: 38px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 
-  &:hover { background: #f6f7f9; }
+  &:hover { background: var(--surface-alt); }
 
   svg { width: 17px; height: 17px; stroke: currentColor; stroke-width: 1.7; }
 
   &--danger {
-    color: #d14343;
-    &:hover { background: #fff5f5; border-color: #f0c9c9; }
+    color: var(--danger);
+    &:hover { background: var(--danger-bg); border-color: var(--danger-border); }
+  }
+}
+
+/* Create user modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: var(--backdrop);
+
+  &__dialog {
+    width: 100%;
+    max-width: 420px;
+    background: var(--surface);
+    border-radius: 16px;
+    box-shadow: 0 20px 50px rgba(20, 23, 28, 0.25);
+    overflow: hidden;
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-strong);
+  }
+
+  &__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-subtle);
+    cursor: pointer;
+
+    &:hover { background: var(--bg); color: var(--text-strong); }
+
+    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.25rem;
+  }
+
+  &__foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 0.25rem;
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+
+  &__label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-body);
+  }
+
+  &__input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.85rem;
+    font-family: inherit;
+    color: var(--text-strong);
+    background: var(--surface);
+
+    &:focus { outline: none; border-color: rgb(var(--accent-rgb)); }
   }
 }
 </style>

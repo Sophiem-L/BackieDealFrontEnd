@@ -33,7 +33,7 @@ const isBlank = computed(() => route.meta.layout === 'blank')
 .layout {
   display: flex;
   min-height: 100vh;
-  background: #f4f5f7;
+  background: var(--bg);
 
   &__main {
     flex: 1;
@@ -53,7 +53,7 @@ const isBlank = computed(() => route.meta.layout === 'blank')
       position: fixed;
       inset: 0;
       z-index: 40;
-      background: rgba(20, 23, 28, 0.4);
+      background: var(--backdrop);
     }
   }
 }

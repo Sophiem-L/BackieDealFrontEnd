@@ -18,6 +18,6 @@
 }
 
 h1 {
-  color: $color-primary;
+  color: var(--primary);
 }
 </style>

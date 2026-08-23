@@ -1,87 +1,222 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import VariantEditor from '@/components/products/VariantEditor.vue'
+import { apiFetch } from '@/services/api'
+import { ACCEPT_ATTR, uploadImage } from '@/services/media'
+import { fromApiVariant, toApiVariants } from '@/services/variants'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
-// Edit mode when the route carries a product id; otherwise we're creating.
+// Edit mode when the route carries a product key; otherwise we're creating.
+// The param holds the product `uuid` — the API's route key.
 const isEdit = computed(() => Boolean(route.params.id))
+const productUuid = computed(() => route.params.id)
+// Read-only view mode when opened with ?view=1 (the list's View icon).
+const isView = computed(() => Boolean(route.query.view))
 
-const categories = [
-  'Graphics Cards',
-  'Processors',
-  'Motherboards',
-  'Memory',
-  'Storage',
-  'Peripherals',
+const loading = ref(false)
+const saving = ref(false)
+const error = ref('')
+
+// Loaded from GET /admin/categories to populate the dropdown.
+const categories = ref([])
+
+// NOTE: there is no product↔promotion relation in the API (the promotions table
+// has no product link and Product exposes no promotion relationship), so this
+// list stays static and is NOT persisted on save. Flagged for the backend team.
+const promotions = [
+  { id: 1, name: 'Black Friday Sale', benefit: 'Up to 30% OFF', period: 'Nov 20 - Nov 30' },
+  { id: 2, name: 'Intel 14th Gen Launch', benefit: 'Flat $50 OFF', period: 'Oct 15 - Oct 31' },
+  { id: 3, name: 'Student Special', benefit: '10% OFF Storewide', period: 'Permanent' },
 ]
 
 const form = reactive({
   name: '',
   sku: '',
-  category: 'Graphics Cards',
+  categoryId: '',
   description: '',
   imageUrl: '',
   stock: 0,
   lowStockThreshold: 5,
   availableForOrder: true,
   basePrice: '',
-  salePrice: '',
   costPrice: '',
-  specs: [{ key: '', value: '' }],
+  promotionId: '',
+  // SKU-level variants, sent nested under `variants[]` on both create and update.
+  variants: [],
 })
 
-// Prefill with the sample product when editing (stands in for an API fetch).
-if (isEdit.value) {
-  Object.assign(form, {
-    name: 'NVIDIA GeForce RTX 4090 Founders Edition',
-    sku: 'NV-RTX4090-FE',
-    category: 'Graphics Cards',
-    description:
-      'The NVIDIA GeForce RTX 4090 is the ultimate GeForce GPU. It brings an enormous leap in performance, efficiency, and AI-powered graphics. Experience ultra-high performance gaming, incredibly detailed virtual worlds with ray tracing, unprecedented productivity, and new ways to create.',
-    stock: 8,
-    lowStockThreshold: 5,
-    availableForOrder: true,
-    basePrice: '1,599.00',
-    salePrice: '',
-    costPrice: '1,350.00',
-    specs: [
-      { key: 'Cuda Cores', value: '16384' },
-      { key: 'Memory Size', value: '24GB GDDR6X' },
-    ],
+// VariantEditor reports whether its rows would pass the API's rules. Duplicate
+// or malformed variant SKUs come back as a raw 500 rather than a 422, so the
+// Create button stays disabled until they're clean.
+const variantsValid = ref(true)
+
+// "1,599.00" <-> 1599.00
+function formatMoney(value) {
+  if (value == null) return ''
+  return Number(value).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   })
 }
+function parseMoney(value) {
+  const n = Number(String(value ?? '').replace(/,/g, '').trim())
+  return Number.isFinite(n) ? n : 0
+}
 
-const pageTitle = computed(() =>
-  isEdit.value ? `Edit Product: ${form.name || 'Product'}` : 'Add New Product',
+async function loadCategories() {
+  try {
+    const response = await apiFetch('/admin/categories?per_page=100', { token: auth.accessToken })
+    // The endpoint wraps a paginator, so `data` may be the array itself or {data: [...]}.
+    const payload = response?.data
+    categories.value = Array.isArray(payload) ? payload : (payload?.data ?? [])
+  } catch {
+    // A failed category load shouldn't block the form; the dropdown just stays empty.
+    categories.value = []
+  }
+}
+
+async function loadProduct() {
+  if (!isEdit.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    const response = await apiFetch(`/admin/products/${productUuid.value}`, {
+      token: auth.accessToken,
+    })
+    const p = response?.data ?? {}
+    Object.assign(form, {
+      name: p.name ?? '',
+      sku: p.sku ?? '',
+      categoryId: p.category_id ?? '',
+      description: p.description ?? '',
+      imageUrl: p.thumbnail ?? '',
+      stock: p.stock_quantity ?? 0,
+      lowStockThreshold: p.min_stock_alert ?? 5,
+      availableForOrder: Boolean(p.is_active),
+      basePrice: formatMoney(p.price),
+      costPrice: formatMoney(p.cost_price),
+      variants: (p.variants ?? []).map(fromApiVariant),
+    })
+  } catch (err) {
+    error.value = err.message || 'Unable to load this product.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([loadCategories(), loadProduct()])
+})
+
+const pageTitle = computed(() => {
+  if (isView.value) return `Product Details: ${form.name || 'Product'}`
+  return isEdit.value ? `Edit Product: ${form.name || 'Product'}` : 'Add New Product'
+})
+
+// Create gets the axis builder; edit gets API-loaded rows with locked SKUs.
+const variantMode = computed(() => {
+  if (isView.value) return 'view'
+  return isEdit.value ? 'edit' : 'create'
+})
+
+const selectedPromotion = computed(
+  () => promotions.find((p) => p.id === form.promotionId) || null,
 )
 
 const fileInput = ref(null)
+const uploadingImage = ref(false)
+const imageError = ref('')
+
 function pickImage() {
   fileInput.value?.click()
 }
-function onFileChange(event) {
+
+/**
+ * Upload straight away and keep the stored URL, rather than holding a `blob:`
+ * preview that could never be saved.
+ */
+async function onFileChange(event) {
   const file = event.target.files?.[0]
-  if (file) form.imageUrl = URL.createObjectURL(file)
+  event.target.value = ''
+  if (!file) return
+
+  uploadingImage.value = true
+  imageError.value = ''
+  try {
+    const { url } = await uploadImage(file, { token: auth.accessToken, folder: 'products' })
+    form.imageUrl = url
+  } catch (err) {
+    imageError.value = err.message || 'Unable to upload that image.'
+  } finally {
+    uploadingImage.value = false
+  }
 }
 
-function addSpec() {
-  form.specs.push({ key: '', value: '' })
-}
-function removeSpec(index) {
-  form.specs.splice(index, 1)
-}
+// Offered for reuse on variant rows.
+const seedImages = computed(() => (form.imageUrl ? [form.imageUrl] : []))
 
-function save() {
-  // TODO: POST/PUT to the products API.
-  router.push('/products')
+async function save() {
+  saving.value = true
+  error.value = ''
+
+  const body = {
+    name: form.name,
+    sku: form.sku,
+    description: form.description || null,
+    price: parseMoney(form.basePrice),
+    cost_price: parseMoney(form.costPrice),
+    stock_quantity: Number(form.stock) || 0,
+    min_stock_alert: Number(form.lowStockThreshold) || 0,
+    in_stock: Number(form.stock) > 0,
+    is_active: form.availableForOrder,
+  }
+
+  if (form.categoryId) body.category_id = Number(form.categoryId)
+  // The picker now uploads before setting this, so it holds a stored URL. The
+  // `blob:` guard stays as a backstop — such a URL resolves for nobody else.
+  if (form.imageUrl && !form.imageUrl.startsWith('blob:')) body.thumbnail = form.imageUrl
+
+  // Both paths send the nested `variants[]` array; POST /admin/products creates
+  // the product and its variants in one transaction.
+  //
+  // On update, `replace_variants: false` is load-bearing. The default update
+  // path soft-deletes every variant then recreates it, which collides with the
+  // soft-delete-ignoring unique index on `sku`/`slug` and 500s. Opting out
+  // matches existing variants by SKU and updates them in place instead. Create
+  // has no such flag — there is nothing to replace yet.
+  if (form.variants.length) {
+    body.variants = toApiVariants(form.variants)
+    if (isEdit.value) body.replace_variants = false
+  }
+
+  try {
+    if (isEdit.value) {
+      await apiFetch(`/admin/products/${productUuid.value}`, {
+        method: 'PUT',
+        body,
+        token: auth.accessToken,
+      })
+    } else {
+      await apiFetch('/admin/products', { method: 'POST', body, token: auth.accessToken })
+    }
+    router.push('/products')
+  } catch (err) {
+    // Surface the first field error from a 422 when there is one.
+    const fieldError = Object.values(err.errors ?? {})[0]
+    error.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to save this product.'
+  } finally {
+    saving.value = false
+  }
 }
-function remove() {
-  // TODO: DELETE via the products API.
+function cancel() {
   router.push('/products')
 }
 </script>
@@ -99,49 +234,52 @@ function remove() {
           </svg>
           <span>
             <span class="subhead__crumb">Back to Products</span>
-            <span class="subhead__title">Product Details</span>
           </span>
         </RouterLink>
-
-        <div class="subhead__actions">
-          <BaseButton v-if="isEdit" variant="danger" @click="remove">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </template>
-            Delete
-          </BaseButton>
-          <BaseButton variant="primary" @click="save">
-            {{ isEdit ? 'Save Changes' : 'Create Product' }}
-          </BaseButton>
-        </div>
       </div>
 
-      <div class="grid">
+      <p v-if="error" class="alert">{{ error }}</p>
+      <p v-if="loading" class="loading-note">Loading product…</p>
+
+      <fieldset v-else class="grid" :disabled="isView">
         <!-- Left column -->
         <div class="col col--side">
           <section class="card">
             <h3 class="card__title">Product Image</h3>
-            <button type="button" class="image" @click="pickImage">
-              <img v-if="form.imageUrl" :src="form.imageUrl" alt="Product preview" />
+            <!-- View mode: static preview, no upload affordance -->
+            <div v-if="isView" class="image image--view">
+              <img v-if="form.imageUrl" :src="form.imageUrl" alt="Product image" />
               <span v-else class="image__placeholder">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <rect x="3" y="4" width="18" height="16" rx="2" />
                   <circle cx="8.5" cy="9.5" r="1.5" />
                   <path d="m4 18 5-4 4 3 3-2 4 3" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
-                <span>Click to upload</span>
+                <span>No image</span>
               </span>
-            </button>
-            <input
-              ref="fileInput"
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              hidden
-              @change="onFileChange"
-            />
-            <p class="card__hint">Recommended: 1000x1000px. PNG, JPG or WebP.</p>
+            </div>
+
+            <!-- Edit/create mode: clickable upload -->
+            <template v-else>
+              <button type="button" class="image" :disabled="uploadingImage" @click="pickImage">
+                <span v-if="uploadingImage" class="image__placeholder">
+                  <span class="image__spinner" aria-hidden="true"></span>
+                  <span>Uploading…</span>
+                </span>
+                <img v-else-if="form.imageUrl" :src="form.imageUrl" alt="Product preview" />
+                <span v-else class="image__placeholder">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <circle cx="8.5" cy="9.5" r="1.5" />
+                    <path d="m4 18 5-4 4 3 3-2 4 3" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span>Click to upload</span>
+                </span>
+              </button>
+              <input ref="fileInput" type="file" :accept="ACCEPT_ATTR" hidden @change="onFileChange" />
+              <p v-if="imageError" class="image__error">{{ imageError }}</p>
+              <p v-else class="card__hint">Recommended: 1000x1000px. Up to 5MB.</p>
+            </template>
           </section>
 
           <section class="card">
@@ -156,7 +294,10 @@ function remove() {
             </div>
             <div class="availability" :class="{ 'availability--on': form.availableForOrder }">
               <span class="availability__dot"></span>
-              <ToggleSwitch v-model="form.availableForOrder" label="Available for Order" />
+              <ToggleSwitch v-if="!isView" v-model="form.availableForOrder" label="Available for Order" />
+              <span v-else class="availability__status">
+                {{ form.availableForOrder ? 'Available for Order' : 'Not Available for Order' }}
+              </span>
             </div>
           </section>
         </div>
@@ -177,34 +318,28 @@ function remove() {
               <div class="field">
                 <label for="category">Category</label>
                 <div class="select-wrap">
-                  <select id="category" v-model="form.category">
-                    <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+                  <select id="category" v-model="form.categoryId">
+                    <option value="">Select a category</option>
+                    <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
                   </select>
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
                 </div>
               </div>
             </div>
-            <div class="field">
+            <div class="field field--description">
               <label for="description">Description</label>
               <textarea id="description" v-model="form.description" rows="4" placeholder="Describe the product..."></textarea>
             </div>
           </section>
 
           <section class="card">
-            <h3 class="card__title">Pricing &amp; Technical Specs</h3>
-            <div class="row row--3">
+            <h3 class="card__title">Pricing</h3>
+            <div class="row">
               <div class="field">
                 <label for="basePrice">Base Price</label>
                 <div class="money">
                   <span>$</span>
                   <input id="basePrice" v-model="form.basePrice" type="text" placeholder="0.00" />
-                </div>
-              </div>
-              <div class="field">
-                <label for="salePrice">Sale Price (Optional)</label>
-                <div class="money">
-                  <span>$</span>
-                  <input id="salePrice" v-model="form.salePrice" type="text" placeholder="-" />
                 </div>
               </div>
               <div class="field">
@@ -216,38 +351,70 @@ function remove() {
               </div>
             </div>
 
-            <div class="specs">
-              <div class="specs__head">
-                <h4>Technical Specifications</h4>
-                <button type="button" class="specs__add" @click="addSpec">
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-                  Add Attribute
-                </button>
+          </section>
+
+          <!--
+            On create the editor offers its axis builder and generates a row per
+            combination; on edit the rows come from the API and the builder is
+            withheld, since regenerating would invent variants the product never
+            had. See VariantEditor for what each mode allows.
+          -->
+          <section class="card">
+            <h3 class="card__title">Variants</h3>
+            <VariantEditor
+              v-model="form.variants"
+              v-model:valid="variantsValid"
+              :base-sku="form.sku"
+              :base-price="form.basePrice"
+              :seed-images="seedImages"
+              :mode="variantMode"
+            />
+          </section>
+
+          <section class="card">
+            <h3 class="card__title">Promotion</h3>
+            <div v-if="!isView" class="field">
+              <label for="promotion">Applied Promotion</label>
+              <div class="select-wrap">
+                <select id="promotion" v-model="form.promotionId">
+                  <option value="">No promotion</option>
+                  <option v-for="promo in promotions" :key="promo.id" :value="promo.id">
+                    {{ promo.name }} — {{ promo.benefit }}
+                  </option>
+                </select>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </div>
-              <div v-for="(spec, i) in form.specs" :key="i" class="specs__row">
-                <input v-model="spec.key" type="text" class="specs__key" placeholder="Attribute" />
-                <input v-model="spec.value" type="text" class="specs__value" placeholder="Value" />
-                <button
-                  type="button"
-                  class="specs__remove"
-                  aria-label="Remove attribute"
-                  @click="removeSpec(i)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" /></svg>
-                </button>
+            </div>
+
+            <p v-if="isView && !selectedPromotion" class="card__hint">No promotion applied.</p>
+
+            <div v-if="selectedPromotion" class="promo-preview">
+              <span class="promo-preview__badge">{{ selectedPromotion.benefit }}</span>
+              <div class="promo-preview__meta">
+                <p class="promo-preview__name">{{ selectedPromotion.name }}</p>
+                <p class="promo-preview__period">{{ selectedPromotion.period }}</p>
               </div>
             </div>
           </section>
         </div>
+      </fieldset>
+
+      <!-- Form actions -->
+      <div v-if="!isView && !loading" class="form-footer">
+        <p v-if="!variantsValid" class="form-footer__blocked">
+          Fix the highlighted variant before saving.
+        </p>
+        <BaseButton variant="ghost" :disabled="saving" @click="cancel">Cancel</BaseButton>
+        <BaseButton variant="primary" :disabled="saving || !variantsValid" @click="save">
+          <template v-if="saving">Saving…</template>
+          <template v-else>{{ isEdit ? 'Update Product' : 'Create Product' }}</template>
+        </BaseButton>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -277,7 +444,7 @@ $divider: #eef0f3;
 
     &:hover { text-decoration: none; }
 
-    svg { width: 22px; height: 22px; stroke: #6b7280; stroke-width: 1.8; }
+    svg { width: 22px; height: 22px; stroke: var(--text-muted); stroke-width: 1.8; }
 
     span { display: flex; flex-direction: column; line-height: 1.2; }
   }
@@ -287,27 +454,53 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
+}
 
-  &__title {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: $color-text;
-  }
+.alert {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+}
 
-  &__actions { display: flex; gap: 0.6rem; }
+.loading-note {
+  margin: 0;
+  padding: 2.5rem 1rem;
+  text-align: center;
+  font-size: 0.88rem;
+  color: var(--text-subtle);
 }
 
 .grid {
+  // Rendered as a <fieldset> so view mode can disable every control at once —
+  // reset the element's default border/padding/margin.
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 1fr 320px;
   gap: 1.25rem;
   align-items: start;
 
   @media (max-width: 900px) {
     grid-template-columns: 1fr;
   }
+}
+
+// Main info on the left, image/stock on the right.
+.col--main { order: 1; }
+.col--side { order: 2; }
+
+@media (max-width: 900px) {
+  .col--side { order: 1; }
+  .col--main { order: 2; }
 }
 
 .col {
@@ -317,9 +510,23 @@ $divider: #eef0f3;
   min-width: 0;
 }
 
+.form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+
+  &__blocked {
+    margin: 0 auto 0 0;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--danger);
+  }
+}
+
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -329,13 +536,13 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
   &__hint {
     margin: 0.75rem 0 0;
     font-size: 0.72rem;
-    color: $muted;
+    color: var(--text-subtle);
     text-align: center;
   }
 }
@@ -346,14 +553,21 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px dashed #d3d7dd;
+  border: 1px dashed var(--switch-track);
   border-radius: 12px;
-  background: #fafbfc;
+  background: var(--surface-sunken);
   overflow: hidden;
   cursor: pointer;
   padding: 0;
 
-  &:hover { border-color: $accent; }
+  &:hover { border-color: rgb(var(--accent-rgb)); }
+
+  // View mode: solid border, no pointer/hover affordance.
+  &--view {
+    border-style: solid;
+    cursor: default;
+    &:hover { border-color: var(--switch-track); }
+  }
 
   img { width: 100%; height: 100%; object-fit: cover; }
 
@@ -362,17 +576,45 @@ $divider: #eef0f3;
     flex-direction: column;
     align-items: center;
     gap: 0.5rem;
-    color: $muted;
+    color: var(--text-subtle);
     font-size: 0.8rem;
 
     svg { width: 34px; height: 34px; stroke: currentColor; stroke-width: 1.5; }
   }
+
+  &__spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgb(var(--accent-rgb) / 0.3);
+    border-top-color: rgb(var(--accent-rgb));
+    border-radius: 50%;
+    animation: image-spin 0.7s linear infinite;
+  }
+
+  &__error {
+    margin: 0.75rem 0 0;
+    font-size: 0.75rem;
+    color: var(--danger);
+    text-align: center;
+  }
+
+  &:disabled { cursor: progress; }
+}
+
+@keyframes image-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image__spinner { animation-duration: 2s; }
 }
 
 .field {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+
+  &--description { gap: 0.7rem; }
 
   & + .field { margin-top: 1rem; }
 
@@ -381,28 +623,28 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   input,
   textarea,
   select {
     width: 100%;
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.65rem 0.8rem;
     font-size: 0.9rem;
     font-family: inherit;
-    color: $color-text;
-    background: #fff;
+    color: var(--text-strong);
+    background: var(--surface);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
-    &::placeholder { color: #b4b9c2; }
+    &::placeholder { color: var(--text-faint); }
 
     &:focus {
       outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
   }
 
@@ -436,7 +678,7 @@ $divider: #eef0f3;
     transform: translateY(-50%);
     width: 16px;
     height: 16px;
-    stroke: $muted;
+    stroke: var(--text-subtle);
     stroke-width: 1.8;
     pointer-events: none;
   }
@@ -445,16 +687,16 @@ $divider: #eef0f3;
 .money {
   display: flex;
   align-items: center;
-  border: 1px solid #e6e8ec;
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding-left: 0.8rem;
 
   &:focus-within {
-    border-color: $accent;
-    box-shadow: 0 0 0 3px rgba($accent, 0.18);
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
   }
 
-  span { color: $muted; font-size: 0.9rem; }
+  span { color: var(--text-subtle); font-size: 0.9rem; }
 
   input {
     border: none;
@@ -471,100 +713,54 @@ $divider: #eef0f3;
   margin-top: 1rem;
   padding: 0.7rem 0.85rem;
   border-radius: 10px;
-  background: #f4f5f7;
+  background: var(--bg);
   transition: background-color 0.15s ease;
 
-  &--on { background: #e9f7ef; }
+  &--on { background: var(--success-bg); }
 
   &__dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #c2c7ce;
+    background: var(--text-faint);
     order: -1;
   }
-  &--on &__dot { background: #2f9d57; }
-}
+  &--on &__dot { background: var(--success); }
 
-.specs {
-  margin-top: 1.5rem;
-
-  &__head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
-
-    h4 {
-      margin: 0;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: #4a5160;
-    }
-  }
-
-  &__add {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.3rem 0.5rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: #a8850a;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-
-    &:hover { color: #8a6c08; border-color: transparent; }
-
-    svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; }
-  }
-
-  &__row {
-    display: grid;
-    grid-template-columns: 1fr 1.4fr auto;
-    gap: 0.5rem;
-    align-items: center;
-
-    & + & { margin-top: 0.5rem; }
-  }
-
-  &__key,
-  &__value {
-    border: 1px solid #e6e8ec;
-    border-radius: 8px;
-    padding: 0.55rem 0.7rem;
+  &__status {
+    flex: 1;
     font-size: 0.85rem;
-    font-family: inherit;
-    color: $color-text;
-
-    &:focus {
-      outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
-    }
+    font-weight: 600;
+    color: var(--text-muted);
   }
+  &--on &__status { color: var(--success-ink); }
+}
 
-  &__key { background: #fafbfc; }
+.promo-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgb(var(--accent-rgb) / 0.4);
+  background: rgb(var(--accent-rgb) / 0.1);
+  border-radius: 10px;
 
-  &__remove {
+  &__badge {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    color: $muted;
-    cursor: pointer;
-
-    &:hover { background: #fdf2f2; color: #d14343; border-color: transparent; }
-
-    svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.9; }
+    padding: 0.28rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent-ink);
+    background: rgb(var(--accent-rgb) / 0.28);
+    border-radius: 999px;
+    white-space: nowrap;
   }
+
+  &__meta { min-width: 0; }
+  &__name { margin: 0; font-size: 0.86rem; font-weight: 600; color: var(--text-strong); }
+  &__period { margin: 0.15rem 0 0; font-size: 0.76rem; color: var(--text-subtle); }
 }
+
 </style>

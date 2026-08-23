@@ -1,90 +1,22 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { apiFetch } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
-// Order id comes from the route (/orders/:id); mock content below stands in
-// for what an API would return. 'new' (Create New Order) shows the sample.
-const rawId = route.params.id
-const orderId = !rawId || rawId === 'new' ? '#ORD-1041' : `#${String(rawId).replace(/^#/, '')}`
+// The list links here with the order uuid (routes bind on it server-side).
+const orderUuid = String(route.params.id ?? '')
 
-const order = ref({
-  id: orderId,
-  status: 'processing',
-  createdAt: 'Oct 15, 2024 @ 10:32 AM',
-  updatedAgo: '2 hours ago',
-})
+// The Orders list opens this page with ?edit=1 for editing; without it, it's read-only view.
+const isEditMode = computed(() => Boolean(route.query.edit))
 
-const items = ref([
-  { id: 1, name: 'NVIDIA RTX 4070 Founders Edition', sku: 'NV-4070-FE', qty: 1, unitPrice: 599.0 },
-  { id: 2, name: 'Intel Core i7-13700K', sku: 'INT-13700K', qty: 1, unitPrice: 399.0 },
-  { id: 3, name: 'Corsair Vengeance 32GB DDR5', sku: 'COR-32G5', qty: 2, unitPrice: 89.0 },
-  { id: 4, name: 'Samsung 990 Pro 1TB NVMe', sku: 'SAM-990-1T', qty: 1, unitPrice: 109.0 },
-])
-
-const totals = {
-  subtotal: '$1,285.00',
-  assemblyFee: '$50.00',
-  delivery: '$15.00',
-  total: '$1,350.00',
-}
-
-const build = {
-  stageLabel: 'Assembly',
-  stagePercent: 80,
-  overallPercent: 60,
-  steps: [
-    { label: 'Parts Gathered', state: 'done' },
-    { label: 'Assembly', state: 'done' },
-    { label: 'OS Install', state: 'upcoming' },
-    { label: 'QA Testing', state: 'upcoming' },
-    { label: 'Ready to Ship', state: 'upcoming' },
-  ],
-}
-
-const delivery = {
-  status: 'Awaiting Dispatch',
-  courier: 'DHL Express',
-  tracking: '88241502',
-  eta: 'Oct 27, 2024',
-  timeline: [
-    { label: 'Label Created', state: 'done', at: 'Oct 25, 10:32 AM' },
-    { label: 'Picked Up by Courier', state: 'pending', at: 'Pending' },
-    { label: 'In Transit', state: 'pending', at: 'Pending' },
-    { label: 'Out for Delivery', state: 'pending', at: 'Pending' },
-    { label: 'Delivered', state: 'pending', at: 'Pending' },
-  ],
-}
-
-const customer = {
-  name: 'Mike Robertson',
-  email: 'mike.r@example.com',
-  phone: '+1 (555) 204-8812',
-  address: '14 Elmwood Drive, Austin, TX 78701',
-}
-
-const technician = { name: 'Mike R.', role: 'Senior Technician' }
-
-const payment = {
-  method: 'QR Code (Paid)',
-  status: 'Confirmed',
-  transactionId: '#TXN-8842-CC',
-  totalPaid: '$1,350.00',
-}
-
-const notes = ref([
-  {
-    id: 1,
-    body: 'Customer requested cable management to be neat. Prefers white zip ties if available.',
-    author: 'Mike R.',
-    at: 'Oct 25, 11:08 AM',
-  },
-])
-
+// The canonical statuses, matching OrdersView's tabs and UpdateOrderRequest.
 const statusLabels = {
   pending: 'Pending',
   processing: 'Processing',
@@ -92,12 +24,182 @@ const statusLabels = {
   cancelled: 'Cancelled',
 }
 
-function money(value) {
-  return `$${value.toFixed(2)}`
+const PAYMENT_METHOD_LABELS = {
+  cod: 'Cash on Delivery',
+  bank_transfer: 'Bank Transfer',
+  stripe: 'Card (Stripe)',
+  paypal: 'PayPal',
 }
 
+const loading = ref(false)
+const saving = ref(false)
+const error = ref('')
+
+const order = ref({ id: '—', status: '', createdAt: '—', updatedAgo: '—' })
+const items = ref([])
+const totals = ref({ subtotal: '—', discount: '—', tax: '—', shipping: '—', total: '—' })
+const customer = ref({ name: '—', email: '—', phone: '—', address: '—' })
+const payment = ref({ method: '—', status: '—', transactionId: '—', totalPaid: '—' })
+// `notes` has no column on the orders table, so there is nothing to load yet.
+const notes = ref([])
+
+const dateTimeFormat = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: true,
+})
+
+function money(value) {
+  const n = Number(value)
+  return Number.isFinite(n) ? `$${n.toFixed(2)}` : '—'
+}
+
+// 'a few seconds/minutes/hours/days ago' from an ISO timestamp.
+function relativeTime(iso) {
+  const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return '—'
+  const seconds = Math.max(0, Math.round((Date.now() - then.getTime()) / 1000))
+  if (seconds < 60) return 'just now'
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.round(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'} ago`
+}
+
+// address_snapshot is a JSON blob; flatten whatever parts of it exist.
+function formatAddress(snapshot) {
+  if (!snapshot) return '—'
+  if (typeof snapshot === 'string') return snapshot
+  const parts = [
+    snapshot.line1 ?? snapshot.address_line_1 ?? snapshot.street,
+    snapshot.line2 ?? snapshot.address_line_2,
+    snapshot.city,
+    snapshot.state ?? snapshot.province,
+    snapshot.postal_code ?? snapshot.zip,
+    snapshot.country,
+  ].filter(Boolean)
+  return parts.length ? parts.join(', ') : '—'
+}
+
+// Kept so Print Order can render from the API payload rather than the
+// display-formatted refs.
+const rawOrder = ref(null)
+
+function applyOrder(data) {
+  rawOrder.value = data ?? null
+
+  const created = data?.created_at ? new Date(data.created_at) : null
+  const createdValid = created && !Number.isNaN(created.getTime())
+
+  order.value = {
+    id: data?.order_number || (data?.id ? `#${String(data.id).slice(0, 8).toUpperCase()}` : '—'),
+    uuid: data?.id ?? '',
+    status: data?.status ?? '',
+    createdAt: createdValid ? dateTimeFormat.format(created) : '—',
+    updatedAgo: data?.updated_at ? relativeTime(data.updated_at) : '—',
+  }
+
+  items.value = (Array.isArray(data?.items) ? data.items : []).map((item) => ({
+    id: item?.id,
+    name: item?.product?.name ?? 'Unknown product',
+    sku: item?.product?.sku ?? '—',
+    qty: Number(item?.qty ?? 0),
+    unitPrice: Number(item?.unit_price ?? 0),
+    lineTotal: Number(item?.line_total ?? 0),
+  }))
+
+  totals.value = {
+    subtotal: money(data?.subtotal),
+    discount: money(data?.discount_total),
+    tax: money(data?.tax_total),
+    shipping: money(data?.shipping_total),
+    total: money(data?.total),
+  }
+
+  customer.value = {
+    id: data?.customer?.id ?? null,
+    name: data?.customer?.name || data?.customer?.email || '—',
+    email: data?.customer?.email || '—',
+    phone: data?.customer?.phone || '—',
+    address: formatAddress(data?.shipping_address),
+  }
+
+  const method = data?.payment?.method
+  const paid = data?.payment?.status === 'paid'
+  payment.value = {
+    method: method ? (PAYMENT_METHOD_LABELS[method] ?? method) : '—',
+    status: data?.payment?.status ? statusLabel(data.payment.status) : '—',
+    isPaid: paid,
+    transactionId: data?.payment?.transaction_id || '—',
+    totalPaid: paid ? money(data?.total) : '—',
+  }
+
+  savedStatus.value = order.value.status
+}
+
+function statusLabel(value) {
+  if (!value) return '—'
+  return String(value)
+    .split(/[_\s-]+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+}
+
+async function loadOrder() {
+  if (!orderUuid) {
+    error.value = 'No order was specified.'
+    return
+  }
+
+  loading.value = true
+  error.value = ''
+  try {
+    const response = await apiFetch(`/admin/orders/${orderUuid}`, { token: auth.accessToken })
+    applyOrder(response?.data ?? {})
+  } catch (err) {
+    error.value =
+      err.status === 404
+        ? 'That order no longer exists.'
+        : err.message || 'Unable to load this order. Please try again.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadOrder)
+
+// A legacy row could still hold a status outside the four; show something
+// readable rather than a blank chip. The dropdown still only offers the four.
+const orderStatusLabel = computed(
+  () => statusLabels[order.value.status] ?? statusLabel(order.value.status),
+)
+
+// Snapshot of the loaded status; Save enables only when it changes.
+const savedStatus = ref('')
+const isDirty = computed(() => Boolean(order.value.status) && order.value.status !== savedStatus.value)
+
+// Custom status dropdown (edit mode).
+const statusOpen = ref(false)
+function selectStatus(value) {
+  order.value.status = value
+  statusOpen.value = false
+}
+function closeStatus() {
+  statusOpen.value = false
+}
+onMounted(() => document.addEventListener('click', closeStatus))
+onBeforeUnmount(() => document.removeEventListener('click', closeStatus))
+
 function thumbInitials(name) {
-  return name.replace(/[^A-Za-z0-9 ]/g, '').slice(0, 2).toUpperCase()
+  return name
+    .replace(/[^A-Za-z0-9 ]/g, '')
+    .slice(0, 2)
+    .toUpperCase()
 }
 
 function goBack() {
@@ -105,18 +207,81 @@ function goBack() {
   else router.push({ name: 'orders' })
 }
 
-function markComplete() {
-  order.value.status = 'completed'
+function viewCustomer() {
+  // Open the customer in the Customers section for full detail.
+  router.push({ name: 'customers' })
 }
 
-function printInvoice() {
-  window.print()
+/* ---------------------------------------------------------------------------
+ * Recording payment
+ *
+ * Payment state is set here rather than on the create form: a new order cannot
+ * already be paid (cash is collected on delivery, gateways confirm later).
+ * ------------------------------------------------------------------------- */
+const markingPaid = ref(false)
+const canMarkPaid = computed(
+  () => Boolean(rawOrder.value) && rawOrder.value?.payment?.status !== 'paid',
+)
+
+async function markAsPaid() {
+  if (!canMarkPaid.value || markingPaid.value) return
+  if (!window.confirm(`Mark ${order.value.id} as paid?`)) return
+
+  markingPaid.value = true
+  try {
+    const response = await apiFetch(`/admin/orders/${orderUuid}`, {
+      method: 'PATCH',
+      body: { payment_status: 'paid' },
+      token: auth.accessToken,
+    })
+    applyOrder(response?.data ?? {})
+  } catch (err) {
+    window.alert(err.message || 'Could not record the payment. Please try again.')
+  } finally {
+    markingPaid.value = false
+  }
+}
+
+const printing = ref(false)
+
+// Prints just this order, not the surrounding admin chrome.
+async function printOrder() {
+  if (!rawOrder.value || printing.value) return
+
+  printing.value = true
+  try {
+    const { printOrderDocument } = await import('@/services/printOrder')
+    await printOrderDocument(rawOrder.value)
+  } finally {
+    printing.value = false
+  }
+}
+
+// Persist the status change. Only `status` is editable here, and the API
+// accepts just the four canonical values.
+async function editOrder() {
+  if (!isDirty.value || saving.value) return
+
+  saving.value = true
+  try {
+    const response = await apiFetch(`/admin/orders/${orderUuid}`, {
+      method: 'PATCH',
+      body: { status: order.value.status },
+      token: auth.accessToken,
+    })
+    applyOrder(response?.data ?? {})
+    router.push({ name: 'orders' })
+  } catch (err) {
+    window.alert(err.message || 'Could not update this order. Please try again.')
+  } finally {
+    saving.value = false
+  }
 }
 </script>
 
 <template>
   <div class="page">
-    <AppHeader title="Order Detail" />
+    <AppHeader :title="isEditMode ? 'Edit Order' : 'Order Detail'" />
 
     <div class="page__body">
       <!-- Sub header -->
@@ -128,7 +293,7 @@ function printInvoice() {
           <div>
             <div class="subhead__title-row">
               <h2 class="subhead__id">{{ order.id }}</h2>
-              <span class="badge" :class="`badge--${order.status}`">{{ statusLabels[order.status] }}</span>
+              <span class="badge" :class="`badge--${order.status}`">{{ orderStatusLabel }}</span>
             </div>
             <p class="subhead__meta">
               Created on {{ order.createdAt }} · Last updated {{ order.updatedAgo }}
@@ -136,7 +301,7 @@ function printInvoice() {
           </div>
         </div>
         <div class="subhead__actions">
-          <BaseButton variant="ghost" @click="printInvoice">
+          <BaseButton variant="ghost" :disabled="!rawOrder || printing" @click="printOrder">
             <template #icon>
               <svg viewBox="0 0 24 24" fill="none">
                 <path d="M6 9V3h12v6" stroke-linejoin="round" />
@@ -144,17 +309,7 @@ function printInvoice() {
                 <rect x="6" y="14" width="12" height="7" rx="1" />
               </svg>
             </template>
-            Print Invoice
-          </BaseButton>
-          <BaseButton
-            variant="primary"
-            :disabled="order.status === 'completed'"
-            @click="markComplete"
-          >
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            </template>
-            {{ order.status === 'completed' ? 'Completed' : 'Mark as Complete' }}
+            {{ printing ? 'Preparing…' : 'Print Order' }}
           </BaseButton>
         </div>
       </section>
@@ -195,106 +350,96 @@ function printInvoice() {
                   </td>
                   <td class="items__num">{{ item.qty }}</td>
                   <td class="items__num items__muted">{{ money(item.unitPrice) }}</td>
-                  <td class="items__num items__strong">{{ money(item.unitPrice * item.qty) }}</td>
+                  <td class="items__num items__strong">{{ money(item.lineTotal) }}</td>
+                </tr>
+                <tr v-if="loading">
+                  <td colspan="4" class="items__empty">Loading order…</td>
+                </tr>
+                <tr v-else-if="error">
+                  <td colspan="4" class="items__empty items__empty--error">
+                    {{ error }}
+                    <button type="button" class="retry-btn" @click="loadOrder">Retry</button>
+                  </td>
+                </tr>
+                <tr v-else-if="items.length === 0">
+                  <td colspan="4" class="items__empty">This order has no line items.</td>
                 </tr>
               </tbody>
             </table>
 
             <dl class="summary">
               <div class="summary__row"><dt>Subtotal</dt><dd>{{ totals.subtotal }}</dd></div>
-              <div class="summary__row"><dt>Assembly Fee</dt><dd>{{ totals.assemblyFee }}</dd></div>
-              <div class="summary__row"><dt>Delivery</dt><dd>{{ totals.delivery }}</dd></div>
+              <div class="summary__row"><dt>Discount</dt><dd>{{ totals.discount }}</dd></div>
+              <div class="summary__row"><dt>Tax</dt><dd>{{ totals.tax }}</dd></div>
+              <div class="summary__row"><dt>Shipping</dt><dd>{{ totals.shipping }}</dd></div>
               <div class="summary__row summary__row--total"><dt>Total</dt><dd>{{ totals.total }}</dd></div>
             </dl>
           </section>
 
-          <!-- Build progress -->
-          <section class="card">
-            <header class="card__head">
-              <h3 class="card__title">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6V21h3.3l6-6a4 4 0 0 0 5.4-5.4l-2.3 2.3-2.6-.7-.7-2.6 2.3-2.3Z" stroke-linejoin="round" />
-                </svg>
-                Build Progress
-              </h3>
-              <span class="card__aside">{{ build.stageLabel }} — {{ build.stagePercent }}%</span>
-            </header>
-
-            <div class="progress">
-              <div class="progress__head">
-                <span>Overall Progress</span>
-                <span class="progress__pct">{{ build.overallPercent }}%</span>
-              </div>
-              <div class="progress__track">
-                <div class="progress__fill" :style="{ width: build.overallPercent + '%' }"></div>
-              </div>
-            </div>
-
-            <ol class="steps">
-              <li
-                v-for="(step, i) in build.steps"
-                :key="step.label"
-                class="step"
-                :class="`step--${step.state}`"
-              >
-                <span class="step__dot">
-                  <svg v-if="step.state === 'done'" viewBox="0 0 24 24" fill="none">
-                    <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  <span v-else>{{ i + 1 }}</span>
-                </span>
-                <span class="step__label">{{ step.label }}</span>
-              </li>
-            </ol>
-          </section>
-
-          <!-- Delivery & courier -->
-          <section class="card">
-            <header class="card__head">
-              <h3 class="card__title">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z" stroke-linejoin="round" />
-                  <circle cx="7" cy="18" r="1.6" />
-                  <circle cx="17.5" cy="18" r="1.6" />
-                </svg>
-                Delivery &amp; Courier
-              </h3>
-              <span class="pill pill--warning">{{ delivery.status }}</span>
-            </header>
-
-            <div class="ship-meta">
-              <div>
-                <p class="ship-meta__label">Courier</p>
-                <p class="ship-meta__value">{{ delivery.courier }}</p>
-              </div>
-              <div>
-                <p class="ship-meta__label">Tracking No.</p>
-                <p class="ship-meta__value">{{ delivery.tracking }}</p>
-              </div>
-              <div>
-                <p class="ship-meta__label">Est. Delivery</p>
-                <p class="ship-meta__value">{{ delivery.eta }}</p>
-              </div>
-            </div>
-
-            <p class="timeline__heading">Shipment Timeline</p>
-            <ul class="timeline">
-              <li
-                v-for="event in delivery.timeline"
-                :key="event.label"
-                class="timeline__item"
-                :class="{ 'is-done': event.state === 'done' }"
-              >
-                <span class="timeline__dot"></span>
-                <span class="timeline__label">{{ event.label }}</span>
-                <span class="timeline__at">{{ event.at }}</span>
-              </li>
-            </ul>
-          </section>
         </div>
 
         <!-- Side column -->
         <div class="col col--side">
+          <!-- Order status -->
+          <section class="card">
+            <header class="card__head">
+              <h3 class="card__title">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M9 11l3 3 8-8" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                Order Status
+              </h3>
+            </header>
+
+            <!-- View mode: read-only status text -->
+            <p v-if="!isEditMode" class="status-text" :class="`status-text--${order.status}`">
+              <span class="status-text__dot" aria-hidden="true"></span>
+              {{ orderStatusLabel }}
+            </p>
+
+            <!-- Edit mode: custom dropdown to update the status -->
+            <div v-else class="status-dd" :class="{ 'is-open': statusOpen }" @click.stop>
+              <button
+                type="button"
+                class="status-dd__trigger"
+                :class="`status-dd__trigger--${order.status}`"
+                :aria-expanded="statusOpen"
+                @click="statusOpen = !statusOpen"
+              >
+                <span class="status-dd__dot" aria-hidden="true"></span>
+                <span class="status-dd__value">{{ orderStatusLabel }}</span>
+                <svg class="status-dd__chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+
+              <ul v-if="statusOpen" class="status-dd__menu" role="listbox">
+                <li
+                  v-for="(label, value) in statusLabels"
+                  :key="value"
+                  class="status-dd__option"
+                  :class="[`status-dd__option--${value}`, { 'is-selected': order.status === value }]"
+                  role="option"
+                  :aria-selected="order.status === value"
+                  @click="selectStatus(value)"
+                >
+                  <span class="status-dd__dot" aria-hidden="true"></span>
+                  <span class="status-dd__label">{{ label }}</span>
+                  <svg
+                    v-if="order.status === value"
+                    class="status-dd__check"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </li>
+              </ul>
+            </div>
+          </section>
+
           <!-- Customer -->
           <section class="card">
             <header class="card__head">
@@ -306,13 +451,18 @@ function printInvoice() {
                 Customer
               </h3>
             </header>
-            <div class="customer">
+            <button
+              type="button"
+              class="customer customer--link"
+              title="View customer details"
+              @click="viewCustomer"
+            >
               <span class="customer__avatar">{{ thumbInitials(customer.name) }}</span>
               <div>
                 <p class="customer__name">{{ customer.name }}</p>
                 <p class="customer__email">{{ customer.email }}</p>
               </div>
-            </div>
+            </button>
             <ul class="info">
               <li>
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h4l2 5-2.5 1.5a11 11 0 0 0 5 5L14 19l5 2v-3a16 16 0 0 1-14-14H4Z" stroke-linejoin="round" /></svg>
@@ -323,29 +473,6 @@ function printInvoice() {
                 {{ customer.address }}
               </li>
             </ul>
-            <a href="#" class="link" @click.prevent>View Customer Profile →</a>
-          </section>
-
-          <!-- Assigned technician -->
-          <section class="card">
-            <header class="card__head">
-              <h3 class="card__title">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6V21h3.3l6-6a4 4 0 0 0 5.4-5.4l-2.3 2.3-2.6-.7-.7-2.6 2.3-2.3Z" stroke-linejoin="round" />
-                </svg>
-                Assigned Technician
-              </h3>
-            </header>
-            <div class="tech">
-              <span class="customer__avatar">{{ thumbInitials(technician.name) }}</span>
-              <div class="tech__meta">
-                <p class="customer__name">{{ technician.name }}</p>
-                <p class="customer__email">{{ technician.role }}</p>
-              </div>
-              <button type="button" class="icon-btn" title="Reassign technician" aria-label="Reassign technician">
-                <svg viewBox="0 0 24 24" fill="none"><path d="M4 7h11l-3-3M20 17H9l3 3" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              </button>
-            </div>
           </section>
 
           <!-- Payment -->
@@ -361,10 +488,27 @@ function printInvoice() {
             </header>
             <dl class="kv">
               <div class="kv__row"><dt>Method</dt><dd>{{ payment.method }}</dd></div>
-              <div class="kv__row"><dt>Status</dt><dd class="kv__ok">{{ payment.status }}</dd></div>
+              <div class="kv__row">
+                <dt>Status</dt>
+                <dd :class="payment.isPaid ? 'kv__ok' : 'kv__pending'">{{ payment.status }}</dd>
+              </div>
               <div class="kv__row"><dt>Transaction ID</dt><dd class="kv__mono">{{ payment.transactionId }}</dd></div>
               <div class="kv__row kv__row--total"><dt>Total Paid</dt><dd class="kv__total">{{ payment.totalPaid }}</dd></div>
             </dl>
+
+            <!-- Payment is recorded here, not at creation time. -->
+            <button
+              v-if="canMarkPaid"
+              type="button"
+              class="mark-paid"
+              :disabled="markingPaid"
+              @click="markAsPaid"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              {{ markingPaid ? 'Recording…' : 'Mark as paid' }}
+            </button>
           </section>
 
           <!-- Internal notes -->
@@ -375,15 +519,33 @@ function printInvoice() {
                   <path d="M6 3h9l4 4v14H6Z" stroke-linejoin="round" />
                   <path d="M9 12h7M9 16h4" stroke-linecap="round" />
                 </svg>
-                Internal Notes
+                Notes
               </h3>
-              <a href="#" class="link" @click.prevent>+ Add Note</a>
             </header>
             <div v-for="note in notes" :key="note.id" class="note">
               <p class="note__body">{{ note.body }}</p>
               <p class="note__by">{{ note.author }} · {{ note.at }}</p>
             </div>
+            <!-- The orders table has no notes column yet, so this stays empty. -->
+            <p v-if="notes.length === 0" class="note note__empty">No notes on this order.</p>
           </section>
+
+          <div v-if="isEditMode" class="detail-actions">
+            <BaseButton
+              variant="primary"
+              block
+              :disabled="!isDirty || saving || loading"
+              @click="editOrder"
+            >
+              <template #icon>
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M12 20h9" stroke-linecap="round" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </template>
+              {{ saving ? 'Saving…' : 'Save Changes' }}
+            </BaseButton>
+          </div>
         </div>
       </div>
     </div>
@@ -391,9 +553,6 @@ function printInvoice() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -414,8 +573,8 @@ $divider: #eef0f3;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1rem 1.25rem;
   flex-wrap: wrap;
@@ -424,9 +583,9 @@ $divider: #eef0f3;
 
   &__title-row { display: flex; align-items: center; gap: 0.7rem; }
 
-  &__id { margin: 0; font-size: 1.15rem; font-weight: 700; color: $color-text; }
+  &__id { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--text-strong); }
 
-  &__meta { margin: 0.2rem 0 0; font-size: 0.78rem; color: $muted; }
+  &__meta { margin: 0.2rem 0 0; font-size: 0.78rem; color: var(--text-subtle); }
 
   &__actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 }
@@ -439,12 +598,12 @@ $divider: #eef0f3;
   height: 36px;
   padding: 0;
   flex-shrink: 0;
-  background: #f4f5f7;
+  background: var(--bg);
   border: none;
   border-radius: 9px;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
-  &:hover { background: #eceef1; }
+  &:hover { background: var(--surface-hover); }
   svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.9; }
 }
 
@@ -469,8 +628,8 @@ $divider: #eef0f3;
 
 /* Card */
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
 
@@ -491,12 +650,10 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
 
-    svg { width: 16px; height: 16px; stroke: $muted; stroke-width: 1.8; }
+    svg { width: 16px; height: 16px; stroke: var(--text-subtle); stroke-width: 1.8; }
   }
-
-  &__aside { font-size: 0.78rem; font-weight: 600; color: #a8850a; }
 }
 
 /* Status badge */
@@ -510,21 +667,10 @@ $divider: #eef0f3;
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--pending { background: #fff2d6; color: #b8890b; }
-  &--processing { background: rgba($accent, 0.22); color: #a8780a; }
-  &--completed { background: #e6f7ee; color: #1f9d57; }
-  &--cancelled { background: #fdecec; color: #d14343; }
-}
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.22rem 0.6rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  border-radius: 999px;
-
-  &--warning { background: #fff2d6; color: #b8890b; }
+  &--pending { background: rgb(var(--accent-rgb) / 0.18); color: var(--accent-ink); }
+  &--processing { background: rgb(var(--accent-rgb) / 0.22); color: var(--accent-ink); }
+  &--completed { background: var(--success-bg); color: var(--success); }
+  &--cancelled { background: var(--danger-bg); color: var(--danger); }
 }
 
 /* Order items */
@@ -539,15 +685,39 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9099a6;
-    border-bottom: 1px solid $divider;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
-  tbody tr + tr td { border-top: 1px solid $divider; }
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
 
   &__num { text-align: right; white-space: nowrap; }
-  &__muted { color: $muted; }
-  &__strong { font-weight: 700; color: $color-text; }
+  &__muted { color: var(--text-subtle); }
+  &__strong { font-weight: 700; color: var(--text-strong); }
+
+  &__empty {
+    text-align: center;
+    color: var(--text-subtle);
+    font-size: 0.88rem;
+    padding: 2rem 1rem;
+
+    &--error { color: var(--danger); }
+  }
+}
+
+.retry-btn {
+  margin-left: 0.6rem;
+  padding: 0.35rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+
+  &:hover { background: var(--surface-alt); }
 }
 
 .product {
@@ -562,15 +732,15 @@ $divider: #eef0f3;
     width: 40px;
     height: 40px;
     border-radius: 8px;
-    background: #eef0f3;
-    color: #6b7280;
+    background: var(--border-subtle);
+    color: var(--text-muted);
     font-size: 0.7rem;
     font-weight: 700;
     flex-shrink: 0;
   }
 
-  &__name { margin: 0; font-size: 0.85rem; font-weight: 600; color: $color-text; }
-  &__sku { margin: 0.1rem 0 0; font-size: 0.72rem; color: $muted; }
+  &__name { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--text-strong); }
+  &__sku { margin: 0.1rem 0 0; font-size: 0.72rem; color: var(--text-subtle); }
 }
 
 .summary {
@@ -584,160 +754,45 @@ $divider: #eef0f3;
     padding: 0.35rem 0.4rem;
     font-size: 0.86rem;
 
-    dt { margin: 0; color: $muted; }
-    dd { margin: 0; font-weight: 600; color: $color-text; }
+    dt { margin: 0; color: var(--text-subtle); }
+    dd { margin: 0; font-weight: 600; color: var(--text-strong); }
 
     &--total {
       margin-top: 0.3rem;
-      border-top: 1px solid $divider;
+      border-top: 1px solid var(--border-subtle);
       padding-top: 0.7rem;
 
-      dt { font-weight: 700; color: $color-text; font-size: 0.95rem; }
-      dd { font-weight: 800; font-size: 1.1rem; color: #a8850a; }
+      dt { font-weight: 700; color: var(--text-strong); font-size: 0.95rem; }
+      dd { font-weight: 800; font-size: 1.1rem; color: var(--accent-ink); }
     }
   }
 }
 
-/* Build progress */
-.progress {
-  margin-bottom: 1.4rem;
-
-  &__head {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.8rem;
-    color: $muted;
-    margin-bottom: 0.45rem;
-  }
-
-  &__pct { font-weight: 700; color: $color-text; }
-
-  &__track {
-    height: 8px;
-    background: #f0f1f4;
-    border-radius: 999px;
-    overflow: hidden;
-  }
-
-  &__fill {
-    height: 100%;
-    background: $accent;
-    border-radius: 999px;
-    transition: width 0.3s ease;
-  }
-}
-
-.steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  justify-content: space-between;
-  gap: 0.4rem;
-}
-
-.step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.45rem;
-  flex: 1;
-  text-align: center;
-
-  &__dot {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    font-size: 0.8rem;
-    font-weight: 700;
-    background: #f0f1f4;
-    color: #9099a6;
-
-    svg { width: 16px; height: 16px; stroke: #1f242d; stroke-width: 2.2; }
-  }
-
-  &__label { font-size: 0.7rem; color: $muted; line-height: 1.2; }
-
-  &--done .step__dot { background: $accent; color: #1f242d; }
-  &--done .step__label { color: $color-text; font-weight: 600; }
-}
-
-/* Delivery */
-.ship-meta {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.75rem;
-  margin-bottom: 1.1rem;
-
-  &__label { margin: 0; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: $muted; }
-  &__value { margin: 0.25rem 0 0; font-size: 0.88rem; font-weight: 600; color: $color-text; }
-}
-
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-
-  &__heading {
-    margin: 0 0 0.6rem;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: $muted;
-  }
-
-  &__item {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    padding: 0.5rem 0 0.5rem 0.2rem;
-    font-size: 0.85rem;
-    color: $muted;
-
-    &:not(:last-child)::before {
-      content: '';
-      position: absolute;
-      left: 5px;
-      top: 1.4rem;
-      bottom: -0.4rem;
-      width: 2px;
-      background: $divider;
-    }
-
-    &.is-done { color: $color-text; font-weight: 600; }
-    &.is-done .timeline__dot { background: $accent; border-color: $accent; }
-  }
-
-  &__dot {
-    position: relative;
-    z-index: 1;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #fff;
-    border: 2px solid #d7dae0;
-    flex-shrink: 0;
-  }
-
-  &__label { flex: 1; }
-  &__at { font-size: 0.74rem; font-weight: 400; color: $muted; white-space: nowrap; }
-}
-
-/* Customer / technician */
-.customer,
-.tech {
+/* Customer */
+.customer {
   display: flex;
   align-items: center;
   gap: 0.7rem;
   margin-bottom: 0.9rem;
 }
 
-.tech { margin-bottom: 0; }
-.tech__meta { flex: 1; min-width: 0; }
+.customer--link {
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem;
+  margin: -0.4rem -0.4rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background: var(--surface-alt);
+
+    .customer__name { color: var(--accent-ink); text-decoration: underline; }
+  }
+}
 
 .customer__avatar {
   display: inline-flex;
@@ -746,15 +801,15 @@ $divider: #eef0f3;
   width: 42px;
   height: 42px;
   border-radius: 50%;
-  background: #35495e;
-  color: #fff;
+  background: var(--secondary);
+  color: var(--surface);
   font-size: 0.8rem;
   font-weight: 700;
   flex-shrink: 0;
 }
 
-.customer__name { margin: 0; font-size: 0.9rem; font-weight: 700; color: $color-text; }
-.customer__email { margin: 0.1rem 0 0; font-size: 0.78rem; color: $muted; }
+.customer__name { margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--text-strong); }
+.customer__email { margin: 0.1rem 0 0; font-size: 0.78rem; color: var(--text-subtle); }
 
 .info {
   list-style: none;
@@ -767,34 +822,153 @@ $divider: #eef0f3;
     gap: 0.55rem;
     padding: 0.35rem 0;
     font-size: 0.82rem;
-    color: #4a5160;
+    color: var(--text-body);
 
-    svg { width: 16px; height: 16px; stroke: $muted; stroke-width: 1.7; flex-shrink: 0; margin-top: 1px; }
+    svg { width: 16px; height: 16px; stroke: var(--text-subtle); stroke-width: 1.7; flex-shrink: 0; margin-top: 1px; }
   }
 }
 
-.link {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #a8850a;
-  &:hover { text-decoration: underline; }
+/* Order status */
+$status-colors: (
+  'pending': (var(--accent-ink), rgb(var(--accent-rgb) / 0.18), rgb(var(--accent-rgb))),
+  'processing': (var(--accent-ink), rgb(var(--accent-rgb) / 0.22), rgb(var(--accent-rgb))),
+  'completed': (var(--success), var(--success-bg), var(--success)),
+  'cancelled': (var(--danger), var(--danger-bg), var(--danger)),
+);
+
+/* Edit mode: custom status dropdown */
+.status-dd {
+  position: relative;
+
+  &__dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    flex-shrink: 0;
+  }
+
+  &__trigger {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.7rem 0.85rem;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-body);
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+
+    &:hover { border-color: var(--border); }
+    &:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.25); }
+  }
+
+  &__value { flex: 1; text-align: left; }
+
+  &__chevron {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    stroke-width: 2;
+    transition: transform 0.18s ease;
+  }
+
+  &.is-open &__chevron { transform: rotate(180deg); }
+
+  // Trigger reflects the selected status colour.
+  @each $name, $c in $status-colors {
+    $text: nth($c, 1);
+    $bg: nth($c, 2);
+    $dot: nth($c, 3);
+
+    &__trigger--#{$name} {
+      color: $text;
+      border-color: $dot;
+      background: $bg;
+      .status-dd__dot { background: $dot; }
+    }
+  }
+
+  &__menu {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 0.35rem;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    box-shadow: 0 12px 30px rgba(20, 23, 28, 0.14);
+  }
+
+  &__option {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.55rem 0.6rem;
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--text-body);
+    border-radius: 8px;
+    cursor: pointer;
+
+    &:hover { background: var(--surface-alt); }
+  }
+
+  &__label { flex: 1; }
+
+  &__check {
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    flex-shrink: 0;
+  }
+
+  // Each option carries its own status colour dot; selected row is tinted.
+  @each $name, $c in $status-colors {
+    $text: nth($c, 1);
+    $bg: nth($c, 2);
+    $dot: nth($c, 3);
+
+    &__option--#{$name} .status-dd__dot { background: $dot; }
+
+    &__option--#{$name}.is-selected {
+      color: $text;
+      background: $bg;
+    }
+  }
 }
 
-.icon-btn {
+/* Read-only status (view mode) */
+.status-text {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
-  border-radius: 8px;
-  color: #6b7280;
-  cursor: pointer;
-  flex-shrink: 0;
-  &:hover { background: #f6f7f9; color: $color-text; }
-  svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+
+  &__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+
+  &--pending { color: var(--accent-ink); }
+  &--processing { color: var(--accent-ink); }
+  &--completed { color: var(--success); }
+  &--cancelled { color: var(--danger); }
 }
 
 /* Payment key/value */
@@ -808,29 +982,54 @@ $divider: #eef0f3;
     padding: 0.4rem 0;
     font-size: 0.84rem;
 
-    dt { margin: 0; color: $muted; }
-    dd { margin: 0; font-weight: 600; color: $color-text; }
+    dt { margin: 0; color: var(--text-subtle); }
+    dd { margin: 0; font-weight: 600; color: var(--text-strong); }
 
     &--total {
       margin-top: 0.3rem;
-      border-top: 1px solid $divider;
+      border-top: 1px solid var(--border-subtle);
       padding-top: 0.7rem;
     }
   }
 
-  &__ok { color: #1f9d57 !important; font-weight: 700 !important; }
+  &__ok { color: var(--success) !important; font-weight: 700 !important; }
+  &__pending { color: var(--accent-ink) !important; font-weight: 700 !important; }
+}
+
+.mark-paid {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+  margin-top: 0.85rem;
+  padding: 0.55rem 0.8rem;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--success-ink);
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: 9px;
+  cursor: pointer;
+
+  svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2.2; }
+
+  &:hover:not(:disabled) { background: var(--success-bg); }
+  &:disabled { opacity: 0.6; cursor: not-allowed; }
   &__mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
-  &__total { color: #a8850a !important; font-weight: 800 !important; font-size: 1rem; }
+  &__total { color: var(--accent-ink) !important; font-weight: 800 !important; font-size: 1rem; }
 }
 
 /* Notes */
 .note {
-  background: #fafbfc;
-  border: 1px solid $divider;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
   padding: 0.75rem 0.85rem;
 
-  &__body { margin: 0; font-size: 0.82rem; color: #4a5160; line-height: 1.45; }
-  &__by { margin: 0.5rem 0 0; font-size: 0.72rem; color: $muted; }
+  &__body { margin: 0; font-size: 0.82rem; color: var(--text-body); line-height: 1.45; }
+  &__by { margin: 0.5rem 0 0; font-size: 0.72rem; color: var(--text-subtle); }
+  &__empty { margin: 0; font-size: 0.82rem; color: var(--text-subtle); text-align: center; }
 }
 </style>

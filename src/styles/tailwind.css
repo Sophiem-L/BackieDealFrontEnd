@@ -1,0 +1,66 @@
+/* Tailwind v4 entry.
+ *
+ * Tailwind exists in this project only to support the shadcn-vue components in
+ * src/components/ui. Every other view is SCSS and stays that way.
+ *
+ * PREFLIGHT IS DELIBERATELY OMITTED. `@import "tailwindcss"` would pull it in,
+ * and it zeroes heading/list margins and sets border-width: 0 on every element
+ * globally. The 20+ existing SCSS views were written against browser defaults
+ * and are not audited for that. Importing the layers by hand skips it.
+ *
+ * main.js imports this BEFORE main.scss, so the unlayered SCSS keeps winning
+ * the cascade over anything Tailwind puts in a layer.
+ */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+/* Supplies the enter/exit animation utilities (animate-in, fade-in-0,
+ * zoom-in-95, slide-in-from-top-2) that shadcn's markup uses. Tailwind v4 does
+ * not ship them; without this the classes are inert and the popup snaps open. */
+@import 'tw-animate-css';
+
+/* Dark mode is driven by <html data-theme>, written by the ui store — not by
+ * the `.dark` class Tailwind assumes. This points the `dark:` variant at it so
+ * the `dark:` utilities inside shadcn's markup resolve correctly. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* shadcn's own palette is NOT declared here.
+ *
+ * _tokens.scss already owns --primary (#42b883, the link colour) and
+ * --secondary with different meanings, so declaring shadcn's block would
+ * silently repaint every <a> in the app. Tailwind's theme colours are mapped
+ * onto the existing tokens instead.
+ *
+ * This also makes dark mode free: these tokens already re-declare under
+ * :root[data-theme='dark'], so the components follow the existing toggle with
+ * no second palette to maintain. */
+@theme inline {
+  --color-background: var(--surface);
+  --color-foreground: var(--text-strong);
+
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text-strong);
+
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: rgb(var(--accent-rgb));
+
+  --color-muted: var(--surface-alt);
+  --color-muted-foreground: var(--text-muted);
+
+  /* shadcn uses `accent` for the hover/highlight fill on menu rows, which is a
+   * neutral here — not the yellow brand accent. */
+  --color-accent: var(--surface-alt);
+  --color-accent-foreground: var(--text-strong);
+
+  --color-primary: rgb(var(--accent-rgb));
+  --color-primary-foreground: var(--ink-on-accent);
+
+  --color-secondary: var(--surface-alt);
+  --color-secondary-foreground: var(--text-strong);
+
+  --color-destructive: var(--danger);
+
+  --radius: 10px;
+}

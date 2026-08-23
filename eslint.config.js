@@ -11,7 +11,10 @@ export default [
 
   {
     name: 'app/files-to-ignore',
-    ignores: ['**/dist/**', '**/node_modules/**'],
+    // src/components/ui holds vendored shadcn-vue source, kept verbatim from
+    // upstream so it can be re-pulled. Its <script lang="ts"> blocks are also
+    // unparseable by the default espree parser.
+    ignores: ['**/dist/**', '**/node_modules/**', 'src/components/ui/**'],
   },
 
   {

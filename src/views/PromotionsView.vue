@@ -3,64 +3,20 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { promotions as promotionData } from '@/data/promotions'
 
 const router = useRouter()
 
-const promotions = ref([
-  {
-    id: 1,
-    name: 'Black Friday Sale',
-    code: 'BLACKFRIDAY2023',
-    period: 'Nov 20 - Nov 30',
-    status: 'active',
-    benefit: 'Up to 30% OFF',
-    benefitType: 'Percentage',
-    used: 245,
-    limit: 500,
-    banner: 'linear-gradient(135deg, #b3091a 0%, #2b0a0a 100%)',
-  },
-  {
-    id: 2,
-    name: 'Intel 14th Gen Launch',
-    code: 'INTEL14TH',
-    period: 'Oct 15 - Oct 31',
-    status: 'active',
-    benefit: 'Flat $50 OFF',
-    benefitType: 'Fixed Amount',
-    used: 112,
-    limit: 200,
-    banner: 'linear-gradient(135deg, #0a3a6b 0%, #061b33 100%)',
-  },
-  {
-    id: 3,
-    name: 'Student Special',
-    code: 'STUDENT10',
-    period: 'Permanent',
-    status: 'paused',
-    benefit: '10% OFF Storewide',
-    benefitType: 'Percentage',
-    used: 892,
-    limit: null,
-    banner: 'linear-gradient(135deg, #1f6f5c 0%, #0c2e27 100%)',
-  },
-  {
-    id: 4,
-    name: 'NVIDIA Bundle Promo',
-    code: 'RTXBUNDLE',
-    period: 'Sep 01 - Sep 30',
-    status: 'expired',
-    benefit: 'Free Game Key',
-    benefitType: 'Gift',
-    used: 150,
-    limit: 150,
-    banner: 'linear-gradient(135deg, #2f7d3a 0%, #0c2913 100%)',
-  },
-])
+const promotions = ref([...promotionData])
 
 const statusLabels = { active: 'Active', paused: 'Paused', expired: 'Expired' }
 
 function usageText(promo) {
   return `${promo.used}/${promo.limit ?? '∞'}`
+}
+
+function viewPromotion(promo) {
+  router.push({ name: 'promotion-detail', params: { id: promo.id } })
 }
 
 function editPromotion(promo) {
@@ -109,7 +65,15 @@ function deletePromotion(promo) {
 
       <!-- Cards grid -->
       <section class="grid">
-        <article v-for="promo in promotions" :key="promo.id" class="promo">
+        <article
+          v-for="promo in promotions"
+          :key="promo.id"
+          class="promo"
+          role="button"
+          tabindex="0"
+          @click="viewPromotion(promo)"
+          @keydown.enter="viewPromotion(promo)"
+        >
           <div class="promo__banner" :style="{ background: promo.banner }">
             <span class="promo__status" :class="`promo__status--${promo.status}`">
               {{ statusLabels[promo.status] }}
@@ -121,7 +85,7 @@ function deletePromotion(promo) {
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.2-6.2A2 2 0 0 1 4 12V5a1 1 0 0 1 1-1h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6Z" stroke-linejoin="round" />
                   </svg>
-                  {{ promo.code }}
+                  {{ promo.benefitType }}
                 </span>
                 <span class="chip chip--dark">
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -147,9 +111,8 @@ function deletePromotion(promo) {
             </div>
 
             <div class="promo__footer">
-              <span class="chip chip--type">{{ promo.benefitType }}</span>
               <div class="promo__actions">
-                <BaseButton variant="ghost" size="sm" @click="editPromotion(promo)">
+                <BaseButton variant="ghost" size="sm" @click.stop="editPromotion(promo)">
                   <template #icon>
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
@@ -162,7 +125,7 @@ function deletePromotion(promo) {
                   type="button"
                   class="icon-btn icon-btn--danger"
                   aria-label="Delete promotion"
-                  @click="deletePromotion(promo)"
+                  @click.stop="deletePromotion(promo)"
                 >
                   <svg viewBox="0 0 24 24" fill="none">
                     <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
@@ -178,9 +141,6 @@ function deletePromotion(promo) {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -200,8 +160,8 @@ $divider: #eef0f3;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
@@ -211,17 +171,17 @@ $divider: #eef0f3;
     min-width: 220px;
     display: flex;
     align-items: center;
-    background: #f4f5f7;
+    background: var(--bg);
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 0 0.75rem;
 
-    &:focus-within { background: #fff; border-color: #e6e8ec; }
+    &:focus-within { background: var(--surface); border-color: var(--border); }
   }
 
   &__search-icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
@@ -235,7 +195,7 @@ $divider: #eef0f3;
     padding: 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
     &:focus { outline: none; }
   }
 }
@@ -247,33 +207,49 @@ $divider: #eef0f3;
   padding: 0.55rem 0.8rem;
   font-size: 0.82rem;
   font-weight: 500;
-  color: #4a5160;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
 
-  svg { width: 14px; height: 14px; stroke: $muted; stroke-width: 1.8; }
+  svg { width: 14px; height: 14px; stroke: var(--text-subtle); stroke-width: 1.8; }
   &__caret { margin-left: 0.1rem; }
 }
 
 /* Cards */
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1.25rem;
 
-  @media (max-width: 860px) { grid-template-columns: 1fr; }
+  @media (max-width: 1200px) { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 900px) { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 560px) { grid-template-columns: 1fr; }
 }
 
 .promo {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    border-color: var(--border);
+    box-shadow: 0 8px 24px rgba(20, 23, 28, 0.1);
+    transform: translateY(-2px);
+  }
+
+  &:focus-visible {
+    outline: none;
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.3);
+  }
 
   &__banner {
     position: relative;
@@ -294,19 +270,19 @@ $divider: #eef0f3;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     border-radius: 999px;
-    color: #fff;
+    color: var(--ink-on-solid);
 
-    &--active { background: #1f9d57; }
-    &--paused { background: #d99413; }
-    &--expired { background: #6b7280; }
+    &--active { background: var(--success-solid); }
+    &--paused { background: var(--accent-ink); }
+    &--expired { background: var(--neutral-solid); }
   }
 
   &__name {
     margin: 0 0 0.5rem;
     font-size: 1.1rem;
     font-weight: 700;
-    color: #fff;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    color: var(--ink-on-solid);
+    text-shadow: 0 1px 4px var(--backdrop);
   }
 
   &__tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
@@ -334,30 +310,30 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
   &__benefit {
     margin: 0;
     font-size: 1.05rem;
     font-weight: 700;
-    color: #a8850a;
+    color: var(--accent-ink);
   }
 
   &__usage-value {
     margin: 0;
     font-size: 1.05rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 0.75rem;
     padding-top: 0.9rem;
-    border-top: 1px solid $divider;
+    border-top: 1px solid var(--border-subtle);
   }
 
   &__actions { display: flex; align-items: center; gap: 0.4rem; }
@@ -375,18 +351,9 @@ $divider: #eef0f3;
   svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.8; }
 
   &--dark {
-    background: rgba(0, 0, 0, 0.45);
-    color: #fff;
+    background: var(--backdrop);
+    color: var(--ink-on-solid);
     backdrop-filter: blur(2px);
-  }
-
-  &--type {
-    background: #f1f3f5;
-    color: #5b6472;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 0.64rem;
-    font-weight: 700;
   }
 }
 
@@ -397,18 +364,18 @@ $divider: #eef0f3;
   width: 32px;
   height: 32px;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e6e8ec;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: #6b7280;
+  color: var(--text-muted);
   cursor: pointer;
 
   svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
 
   &--danger:hover {
-    background: #fdf2f2;
-    color: #d14343;
-    border-color: #f0c9c9;
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: var(--danger-border);
   }
 }
 </style>

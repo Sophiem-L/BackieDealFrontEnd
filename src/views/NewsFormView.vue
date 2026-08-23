@@ -206,9 +206,6 @@ function remove() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -238,7 +235,7 @@ $divider: #eef0f3;
 
     &:hover { text-decoration: none; }
 
-    svg { width: 22px; height: 22px; stroke: #6b7280; stroke-width: 1.8; }
+    svg { width: 22px; height: 22px; stroke: var(--text-muted); stroke-width: 1.8; }
     span { display: flex; flex-direction: column; line-height: 1.2; }
   }
 
@@ -247,10 +244,10 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
-  &__title { font-size: 1.1rem; font-weight: 700; color: $color-text; }
+  &__title { font-size: 1.1rem; font-weight: 700; color: var(--text-strong); }
   &__actions { display: flex; gap: 0.6rem; }
 }
 
@@ -271,8 +268,8 @@ $divider: #eef0f3;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -282,14 +279,14 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
   &__hint {
     margin: 0.75rem 0 0;
     font-size: 0.72rem;
     line-height: 1.5;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -305,28 +302,28 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   input,
   textarea,
   select {
     width: 100%;
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.65rem 0.8rem;
     font-size: 0.9rem;
     font-family: inherit;
-    color: $color-text;
-    background: #fff;
+    color: var(--text-strong);
+    background: var(--surface);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
-    &::placeholder { color: #b4b9c2; }
+    &::placeholder { color: var(--text-faint); }
 
     &:focus {
       outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
   }
 
@@ -345,7 +342,7 @@ $divider: #eef0f3;
     transform: translateY(-50%);
     width: 16px;
     height: 16px;
-    stroke: $muted;
+    stroke: var(--text-subtle);
     stroke-width: 1.8;
     pointer-events: none;
   }
@@ -384,8 +381,8 @@ $divider: #eef0f3;
     gap: 0.4rem;
     font-size: 0.78rem;
     font-weight: 600;
-    color: #fff;
-    background: rgba(20, 23, 28, 0.45);
+    color: var(--ink-on-solid);
+    background: var(--backdrop);
     opacity: 0;
     transition: opacity 0.15s ease;
 
@@ -405,11 +402,11 @@ $divider: #eef0f3;
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: rgba(20, 23, 28, 0.55);
-    color: #fff;
+    background: var(--backdrop);
+    color: var(--ink-on-solid);
     cursor: pointer;
 
-    &:hover { background: #d14343; }
+    &:hover { background: var(--danger); }
 
     svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; }
   }

@@ -34,8 +34,6 @@ const tag = computed(() => (props.to ? RouterLink : 'button'))
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -84,36 +82,39 @@ $accent: #f4c10f;
   }
 
   &--primary {
-    background: $accent;
-    color: #1f242d;
+    background: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
     &:hover:not(:disabled) { filter: brightness(0.96); }
   }
 
   &--ghost {
-    background: #fff;
-    border-color: #e6e8ec;
-    color: #4a5160;
-    &:hover:not(:disabled) { background: #f6f7f9; }
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text-body);
+    &:hover:not(:disabled) { background: var(--surface-alt); }
   }
 
   &--subtle {
-    background: #f4f5f7;
-    color: #4a5160;
-    &:hover:not(:disabled) { background: #eceef1; }
+    background: var(--bg);
+    color: var(--text-body);
+    &:hover:not(:disabled) { background: var(--surface-hover); }
   }
 
   &--danger {
-    background: #fff;
-    border-color: #e6e8ec;
-    color: #d14343;
-    &:hover:not(:disabled) { background: #fff5f5; border-color: #f0c9c9; }
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--danger);
+    &:hover:not(:disabled) {
+      background: var(--danger-bg);
+      border-color: var(--danger-border);
+    }
   }
 
   &--outline {
-    background: #fff;
-    border-color: $accent;
-    color: #a8850a;
-    &:hover:not(:disabled) { background: rgba($accent, 0.12); }
+    background: var(--surface);
+    border-color: rgb(var(--accent-rgb));
+    color: var(--accent-ink);
+    &:hover:not(:disabled) { background: rgb(var(--accent-rgb) / 0.12); }
   }
 }
 </style>

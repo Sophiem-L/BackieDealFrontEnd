@@ -23,8 +23,6 @@ const emit = defineEmits(['update:modelValue'])
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-
 .toggle {
   display: inline-flex;
   align-items: center;
@@ -34,7 +32,7 @@ $accent: #f4c10f;
   &__label {
     font-size: 0.85rem;
     font-weight: 600;
-    color: #2f7d52;
+    color: var(--success-ink);
   }
 
   &__track {
@@ -45,7 +43,7 @@ $accent: #f4c10f;
     padding: 0;
     border: none;
     border-radius: 999px;
-    background: #d3d7dd;
+    background: var(--switch-track);
     cursor: pointer;
     transition: background-color 0.18s ease;
   }
@@ -57,13 +55,15 @@ $accent: #f4c10f;
     width: 18px;
     height: 18px;
     border-radius: 50%;
+    // Stays white in both themes: the thumb reads against the grey off-track
+    // and the yellow on-track, neither of which inverts.
     background: #fff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    box-shadow: var(--shadow-sm);
     transition: transform 0.18s ease;
   }
 
   &--on {
-    .toggle__track { background: $accent; }
+    .toggle__track { background: rgb(var(--accent-rgb)); }
     .toggle__thumb { transform: translateX(18px); }
   }
 }

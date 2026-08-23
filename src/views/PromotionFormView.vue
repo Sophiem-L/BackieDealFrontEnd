@@ -4,13 +4,27 @@ import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { FORM_SELECT } from '@/lib/selectPresets'
 
 const route = useRoute()
 const router = useRouter()
 
 const isEdit = computed(() => Boolean(route.params.id))
 
-const promotionTypes = ['Percentage Discount', 'Fixed Amount', 'Free Gift', 'Free Shipping']
+const promotionTypes = [
+  'Percentage Discount',
+  'Fixed Amount',
+  'Free Gift',
+  'Free Shipping',
+  'Flash Sale',
+]
 
 const form = reactive({
   name: '',
@@ -76,10 +90,6 @@ function save() {
   // TODO: POST/PUT to the promotions API.
   router.push('/promotions')
 }
-function remove() {
-  // TODO: DELETE via the promotions API.
-  router.push('/promotions')
-}
 </script>
 
 <template>
@@ -94,31 +104,17 @@ function remove() {
             <path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
           <span>
-            <span class="subhead__crumb">Marketing &amp; Campaigns</span>
-            <span class="subhead__title">{{ form.name || 'New Campaign' }}</span>
+            <span class="subhead__title">{{ isEdit ? 'Edit Promotion' : 'New Promotion' }}</span>
           </span>
         </RouterLink>
 
-        <div class="subhead__actions">
-          <BaseButton v-if="isEdit" variant="danger" @click="remove">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </template>
-            Delete Campaign
-          </BaseButton>
-          <BaseButton variant="primary" @click="save">
-            {{ isEdit ? 'Update Campaign' : 'Create Campaign' }}
-          </BaseButton>
-        </div>
       </div>
 
       <div class="grid">
         <!-- Main column -->
         <div class="col">
           <section class="card">
-            <h3 class="card__title">Campaign Details</h3>
+            <h3 class="card__title">Promotion Details</h3>
             <div class="field">
               <label for="name">Promotion Name</label>
               <input id="name" v-model="form.name" type="text" placeholder="e.g. Black Friday Sale 2023" />
@@ -130,16 +126,22 @@ function remove() {
               </div>
               <div class="field">
                 <label for="type">Promotion Type</label>
-                <div class="select-wrap">
-                  <select id="type" v-model="form.type">
-                    <option v-for="t in promotionTypes" :key="t" :value="t">{{ t }}</option>
-                  </select>
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                </div>
+                <Select v-model="form.type">
+                  <!-- id keeps the <label for="type"> association: a <button>
+                       is a labelable element, so the label still focuses it. -->
+                  <SelectTrigger id="type" :class="FORM_SELECT.trigger">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent :class="FORM_SELECT.content">
+                    <SelectItem v-for="t in promotionTypes" :key="t" :value="t" :class="FORM_SELECT.item">
+                      {{ t }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div class="field">
-              <label for="description">Internal Description</label>
+              <label for="description">Description</label>
               <textarea id="description" v-model="form.description" rows="3" placeholder="Notes for your team..."></textarea>
             </div>
           </section>
@@ -251,14 +253,19 @@ function remove() {
           </section>
         </div>
       </div>
+
+      <!-- Form actions -->
+      <div class="actions">
+        <BaseButton variant="ghost" to="/promotions">Cancel</BaseButton>
+        <BaseButton variant="primary" @click="save">
+          {{ isEdit ? 'Update Promotion' : 'Create Promotion' }}
+        </BaseButton>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped lang="scss">
-$accent: #f4c10f;
-$muted: #8a909c;
-$divider: #eef0f3;
 
 .page {
   display: flex;
@@ -288,7 +295,7 @@ $divider: #eef0f3;
 
     &:hover { text-decoration: none; }
 
-    svg { width: 22px; height: 22px; stroke: #6b7280; stroke-width: 1.8; }
+    svg { width: 22px; height: 22px; stroke: var(--text-muted); stroke-width: 1.8; }
     span { display: flex; flex-direction: column; line-height: 1.2; }
   }
 
@@ -297,10 +304,10 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: $muted;
+    color: var(--text-subtle);
   }
 
-  &__title { font-size: 1.1rem; font-weight: 700; color: $color-text; }
+  &__title { font-size: 1.1rem; font-weight: 700; color: var(--text-strong); }
   &__actions { display: flex; gap: 0.6rem; }
 }
 
@@ -313,6 +320,13 @@ $divider: #eef0f3;
   @media (max-width: 920px) { grid-template-columns: 1fr; }
 }
 
+/* Bottom action bar */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
 .col {
   display: flex;
   flex-direction: column;
@@ -321,8 +335,8 @@ $divider: #eef0f3;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid $divider;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.25rem;
 
@@ -332,14 +346,14 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--text-muted);
   }
 
   &__hint {
     margin: 0.75rem 0 0;
     font-size: 0.72rem;
     line-height: 1.5;
-    color: $muted;
+    color: var(--text-subtle);
   }
 }
 
@@ -355,28 +369,28 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   input,
   textarea,
   select {
     width: 100%;
-    border: 1px solid #e6e8ec;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.65rem 0.8rem;
     font-size: 0.9rem;
     font-family: inherit;
-    color: $color-text;
-    background: #fff;
+    color: var(--text-strong);
+    background: var(--surface);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
-    &::placeholder { color: #b4b9c2; }
+    &::placeholder { color: var(--text-faint); }
 
     &:focus {
       outline: none;
-      border-color: $accent;
-      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
   }
 
@@ -394,37 +408,19 @@ $divider: #eef0f3;
   @media (max-width: 560px) { grid-template-columns: 1fr; }
 }
 
-.select-wrap {
-  position: relative;
-
-  select { appearance: none; padding-right: 2.2rem; cursor: pointer; }
-
-  svg {
-    position: absolute;
-    top: 50%;
-    right: 0.8rem;
-    transform: translateY(-50%);
-    width: 16px;
-    height: 16px;
-    stroke: $muted;
-    stroke-width: 1.8;
-    pointer-events: none;
-  }
-}
-
 .affix {
   display: flex;
   align-items: center;
-  border: 1px solid #e6e8ec;
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0 0.8rem;
 
   &:focus-within {
-    border-color: $accent;
-    box-shadow: 0 0 0 3px rgba($accent, 0.18);
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
   }
 
-  span { color: $muted; font-size: 0.9rem; }
+  span { color: var(--text-subtle); font-size: 0.9rem; }
 
   input {
     border: none;
@@ -443,14 +439,14 @@ $divider: #eef0f3;
   gap: 0.75rem;
   padding: 0.7rem 0.85rem;
   border-radius: 10px;
-  background: #f4f5f7;
+  background: var(--bg);
 
-  &--on { background: #e9f7ef; }
+  &--on { background: var(--success-bg); }
 
   &__text {
     font-size: 0.85rem;
     font-weight: 600;
-    color: #2f7d52;
+    color: var(--success-ink);
   }
 }
 
@@ -484,8 +480,8 @@ $divider: #eef0f3;
     font-weight: 800;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #fff;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+    color: var(--ink-on-solid);
+    text-shadow: 0 1px 4px var(--backdrop);
     text-align: center;
     padding: 0 0.75rem;
   }
@@ -502,8 +498,8 @@ $divider: #eef0f3;
     gap: 0.4rem;
     font-size: 0.78rem;
     font-weight: 600;
-    color: #fff;
-    background: rgba(20, 23, 28, 0.45);
+    color: var(--ink-on-solid);
+    background: var(--backdrop);
     opacity: 0;
     transition: opacity 0.15s ease;
 
@@ -521,11 +517,11 @@ $divider: #eef0f3;
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: rgba(20, 23, 28, 0.55);
-    color: #fff;
+    background: var(--backdrop);
+    color: var(--ink-on-solid);
     cursor: pointer;
 
-    &:hover { background: #d14343; }
+    &:hover { background: var(--danger); }
 
     svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; }
   }
@@ -542,23 +538,23 @@ $divider: #eef0f3;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
     margin-bottom: 0.45rem;
   }
 
-  &__value { color: #a8850a; }
+  &__value { color: var(--accent-ink); }
 
   &__bar {
     height: 8px;
     border-radius: 999px;
-    background: #eceef1;
+    background: var(--surface-hover);
     overflow: hidden;
   }
 
   &__fill {
     height: 100%;
     border-radius: 999px;
-    background: $accent;
+    background: rgb(var(--accent-rgb));
     transition: width 0.2s ease;
   }
 }

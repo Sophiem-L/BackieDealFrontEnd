@@ -11,11 +11,6 @@ const router = createRouter({
       component: HomeView,
     },
     {
-      path: '/reports',
-      name: 'reports',
-      component: () => import('@/views/ReportsView.vue'),
-    },
-    {
       path: '/orders',
       name: 'orders',
       component: () => import('@/views/OrdersView.vue'),
@@ -71,6 +66,11 @@ const router = createRouter({
       component: () => import('@/views/CustomerFormView.vue'),
     },
     {
+      path: '/customers/:id',
+      name: 'customer-detail',
+      component: () => import('@/views/CustomerDetailView.vue'),
+    },
+    {
       path: '/customers/:id/edit',
       name: 'customer-edit',
       component: () => import('@/views/CustomerFormView.vue'),
@@ -86,14 +86,54 @@ const router = createRouter({
       component: () => import('@/views/PromotionFormView.vue'),
     },
     {
+      path: '/promotions/:id',
+      name: 'promotion-detail',
+      component: () => import('@/views/PromotionDetailView.vue'),
+    },
+    {
       path: '/promotions/:id/edit',
       name: 'promotion-edit',
       component: () => import('@/views/PromotionFormView.vue'),
     },
     {
+      path: '/stock',
+      name: 'stock',
+      component: () => import('@/views/StockManagementView.vue'),
+    },
+    {
+      path: '/stock/new',
+      name: 'stock-adjustment-create',
+      component: () => import('@/views/StockAdjustmentFormView.vue'),
+    },
+    {
+      path: '/stock/:id',
+      name: 'stock-detail',
+      component: () => import('@/views/StockDetailView.vue'),
+    },
+    {
+      path: '/reports',
+      name: 'reports',
+      component: () => import('@/views/ReportsView.vue'),
+    },
+    {
       path: '/slides',
       name: 'slides',
       component: () => import('@/views/SlidesView.vue'),
+    },
+    {
+      path: '/slides/new',
+      name: 'slide-create',
+      component: () => import('@/views/SlideFormView.vue'),
+    },
+    {
+      path: '/slides/:id',
+      name: 'slide-detail',
+      component: () => import('@/views/SlideDetailView.vue'),
+    },
+    {
+      path: '/slides/:id/edit',
+      name: 'slide-edit',
+      component: () => import('@/views/SlideFormView.vue'),
     },
     {
       path: '/news',

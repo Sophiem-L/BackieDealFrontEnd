@@ -135,8 +135,6 @@ async function handleSubmit() {
 </template>
 
 <style scoped lang="scss">
-$accent: #f6d916;
-$muted: #8a909c;
 
 .login {
   min-height: 100vh;
@@ -145,7 +143,7 @@ $muted: #8a909c;
   align-items: center;
   justify-content: center;
   padding: $spacing * 2;
-  background: #f4f5f7;
+  background: var(--bg);
 
   &__inner {
     width: 100%;
@@ -173,13 +171,13 @@ $muted: #8a909c;
       margin: 0;
       font-size: 1.4rem;
       font-weight: 700;
-      color: $color-text;
+      color: var(--text-strong);
     }
 
     p {
       margin: 0.35rem 0 0;
       font-size: 0.85rem;
-      color: $muted;
+      color: var(--text-subtle);
     }
   }
 
@@ -193,10 +191,10 @@ $muted: #8a909c;
       align-items: center;
       gap: 0.4rem;
       font-size: 0.8rem;
-      color: $muted;
+      color: var(--text-subtle);
 
       &:hover {
-        color: $color-text;
+        color: var(--text-strong);
         text-decoration: none;
       }
 
@@ -212,8 +210,8 @@ $muted: #8a909c;
 
 .card {
   width: 100%;
-  background: #ffffff;
-  border: 1px solid #eef0f3;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 16px;
   padding: 1.75rem;
   box-shadow: 0 12px 30px rgba(20, 23, 28, 0.06);
@@ -226,13 +224,13 @@ $muted: #8a909c;
       margin: 0;
       font-size: 1.2rem;
       font-weight: 700;
-      color: $color-text;
+      color: var(--text-strong);
     }
 
     p {
       margin: 0.3rem 0 0;
       font-size: 0.82rem;
-      color: $muted;
+      color: var(--text-subtle);
     }
   }
 
@@ -242,8 +240,8 @@ $muted: #8a909c;
     padding: 0.85rem;
     font-size: 0.95rem;
     font-weight: 700;
-    color: #1f242d;
-    background: $accent;
+    color: var(--ink-on-accent);
+    background: rgb(var(--accent-rgb));
     border: none;
     border-radius: 10px;
     cursor: pointer;
@@ -265,9 +263,9 @@ $muted: #8a909c;
     margin: 0;
     padding: 0.7rem 0.85rem;
     font-size: 0.82rem;
-    color: #b42318;
-    background: #fef3f2;
-    border: 1px solid #fecdca;
+    color: var(--danger);
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
     border-radius: 10px;
   }
 }
@@ -282,7 +280,7 @@ $muted: #8a909c;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #4a5160;
+    color: var(--text-body);
   }
 
   &__label-row {
@@ -294,7 +292,7 @@ $muted: #8a909c;
   &__link {
     font-size: 0.75rem;
     font-weight: 600;
-    color: #c9a800;
+    color: var(--accent-ink);
     text-transform: none;
     letter-spacing: 0;
 
@@ -307,21 +305,21 @@ $muted: #8a909c;
     position: relative;
     display: flex;
     align-items: center;
-    background: #f7f8fa;
-    border: 1px solid #e6e8ec;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
     border-radius: 10px;
     transition: border-color 0.15s ease, background-color 0.15s ease;
 
     &:focus-within {
-      border-color: $accent;
-      background: #fffefa;
+      border-color: rgb(var(--accent-rgb));
+      background: var(--surface);
     }
   }
 
   &__icon {
     display: inline-flex;
     padding-left: 0.85rem;
-    color: $muted;
+    color: var(--text-subtle);
 
     svg {
       width: 17px;
@@ -339,7 +337,7 @@ $muted: #8a909c;
     padding: 0.7rem 0.75rem;
     font-size: 0.9rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
 
     &:focus {
       outline: none;
@@ -352,11 +350,11 @@ $muted: #8a909c;
     padding: 0 0.85rem;
     background: transparent;
     border: none;
-    color: $muted;
+    color: var(--text-subtle);
     cursor: pointer;
 
     &:hover {
-      color: $color-text;
+      color: var(--text-strong);
       border-color: transparent;
     }
 
@@ -374,13 +372,13 @@ $muted: #8a909c;
   align-items: center;
   gap: 0.55rem;
   font-size: 0.82rem;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
 
   input {
     width: 15px;
     height: 15px;
-    accent-color: $accent;
+    accent-color: rgb(var(--accent-rgb));
     cursor: pointer;
   }
 }

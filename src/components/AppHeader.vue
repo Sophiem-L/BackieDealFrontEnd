@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useUiStore } from '@/stores/ui'
 
 const ui = useUiStore()
@@ -52,6 +53,8 @@ const initials = computed(() =>
         <input type="search" placeholder="Search everything..." />
       </label>
 
+      <ThemeToggle />
+
       <button type="button" class="bell" aria-label="Notifications">
         <svg viewBox="0 0 24 24" fill="none">
           <path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" stroke-linejoin="round" />
@@ -75,9 +78,6 @@ const initials = computed(() =>
 </template>
 
 <style scoped lang="scss">
-$muted: #8a909c;
-$divider: #eef0f3;
-
 .header {
   position: sticky;
   top: 0;
@@ -87,8 +87,8 @@ $divider: #eef0f3;
   justify-content: space-between;
   gap: 1rem;
   padding: 0.85rem 1.5rem;
-  background: #ffffff;
-  border-bottom: 1px solid $divider;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
 
   &__lead {
     display: flex;
@@ -108,11 +108,11 @@ $divider: #eef0f3;
     background: transparent;
     border: none;
     border-radius: 8px;
-    color: #4a5160;
+    color: var(--text-body);
     cursor: pointer;
 
     &:hover {
-      background: #f4f5f7;
+      background: var(--bg);
       border-color: transparent;
     }
 
@@ -128,7 +128,7 @@ $divider: #eef0f3;
     margin: 0;
     font-size: 1.15rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -137,7 +137,9 @@ $divider: #eef0f3;
   &__actions {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    // Tightened from 1rem to keep the row compact now that the theme toggle
+    // sits alongside the search field, bell and profile chip.
+    gap: 0.75rem;
   }
 }
 
@@ -155,20 +157,20 @@ $divider: #eef0f3;
   align-items: center;
   width: 280px;
   max-width: 32vw;
-  background: #f4f5f7;
+  background: var(--bg);
   border: 1px solid transparent;
   border-radius: 999px;
   padding: 0 0.85rem;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 
   &:focus-within {
-    background: #fff;
-    border-color: #e6e8ec;
+    background: var(--surface);
+    border-color: var(--border);
   }
 
   &__icon {
     display: inline-flex;
-    color: $muted;
+    color: var(--text-subtle);
 
     svg {
       width: 16px;
@@ -186,7 +188,11 @@ $divider: #eef0f3;
     padding: 0.5rem 0.6rem;
     font-size: 0.85rem;
     font-family: inherit;
-    color: $color-text;
+    color: var(--text-strong);
+
+    &::placeholder {
+      color: var(--text-subtle);
+    }
 
     &:focus {
       outline: none;
@@ -202,14 +208,14 @@ $divider: #eef0f3;
   width: 38px;
   height: 38px;
   padding: 0;
-  background: #f4f5f7;
+  background: var(--bg);
   border: none;
   border-radius: 50%;
-  color: #4a5160;
+  color: var(--text-body);
   cursor: pointer;
 
   &:hover {
-    background: #eceef1;
+    background: var(--surface-hover);
     border-color: transparent;
   }
 
@@ -226,8 +232,8 @@ $divider: #eef0f3;
     right: 10px;
     width: 7px;
     height: 7px;
-    background: #f4c10f;
-    border: 1.5px solid #fff;
+    background: rgb(var(--accent-rgb));
+    border: 1.5px solid var(--surface);
     border-radius: 50%;
   }
 }
@@ -240,7 +246,7 @@ $divider: #eef0f3;
   border-radius: 999px;
 
   &:hover {
-    background: #f4f5f7;
+    background: var(--bg);
     text-decoration: none;
   }
 
@@ -254,12 +260,12 @@ $divider: #eef0f3;
   &__name {
     font-size: 0.82rem;
     font-weight: 700;
-    color: $color-text;
+    color: var(--text-strong);
   }
 
   &__role {
     font-size: 0.72rem;
-    color: $muted;
+    color: var(--text-muted);
   }
 
   &__avatar {
@@ -270,8 +276,8 @@ $divider: #eef0f3;
     height: 36px;
     border-radius: 50%;
     overflow: hidden;
-    background: #35495e;
-    color: #fff;
+    background: var(--secondary);
+    color: var(--surface);
     font-size: 0.78rem;
     font-weight: 700;
 
