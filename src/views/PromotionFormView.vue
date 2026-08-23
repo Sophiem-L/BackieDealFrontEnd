@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -12,18 +12,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { FORM_SELECT } from '@/lib/selectPresets'
+import { uploadImage } from '@/services/media'
+import { fetchPromotion, promotionToForm, savePromotion } from '@/services/promotions'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
 const isEdit = computed(() => Boolean(route.params.id))
 
 const promotionTypes = [
   'Percentage Discount',
   'Fixed Amount',
-  'Free Gift',
-  'Free Shipping',
-  'Flash Sale',
 ]
 
 const form = reactive({
@@ -43,39 +44,51 @@ const form = reactive({
   currentUsage: 0,
 })
 
-// Prefill when editing (stands in for an API fetch).
-if (isEdit.value) {
-  Object.assign(form, {
-    name: 'Black Friday Sale 2023',
-    code: 'BLACKFRIDAY23',
-    type: 'Percentage Discount',
-    description:
-      'Annual store-wide clearance sale for Black Friday. Applies to all hardware components and gaming peripherals.',
-    active: true,
-    discountValue: '30',
-    minimumSpend: '0.00',
-    startDate: '2023-11-20',
-    endDate: '2023-11-30',
-    totalLimit: '500',
-    perCustomerLimit: '1',
-    currentUsage: 245,
-  })
-}
-
 const pageTitle = computed(() =>
   isEdit.value ? `Edit Promotion: ${form.name || 'Promotion'}` : 'New Promotion',
 )
 
 const bannerInput = ref(null)
+const bannerFile = ref(null)
+const loading = ref(false)
+const saving = ref(false)
+const submitError = ref('')
+const fieldErrors = ref({})
+
+function errorFor(field) {
+  const messages = fieldErrors.value[field]
+  return Array.isArray(messages) ? messages[0] : messages
+}
+
+async function loadPromotion() {
+  if (!isEdit.value) return
+
+  loading.value = true
+  submitError.value = ''
+  try {
+    Object.assign(form, promotionToForm(await fetchPromotion(route.params.id, auth.accessToken)))
+  } catch (err) {
+    submitError.value = err.message || 'Could not load the promotion.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadPromotion)
+
 function pickBanner() {
   bannerInput.value?.click()
 }
 function onBannerChange(event) {
   const file = event.target.files?.[0]
-  if (file) form.bannerImage = URL.createObjectURL(file)
+  if (file) {
+    bannerFile.value = file
+    form.bannerImage = URL.createObjectURL(file)
+  }
 }
 function clearBanner(event) {
   event.stopPropagation()
+  bannerFile.value = null
   form.bannerImage = ''
   if (bannerInput.value) bannerInput.value.value = ''
 }
@@ -86,9 +99,26 @@ const usagePercent = computed(() => {
   return Math.min(100, Math.round((Number(form.currentUsage) / limit) * 100))
 })
 
-function save() {
-  // TODO: POST/PUT to the promotions API.
-  router.push('/promotions')
+async function save() {
+  if (saving.value || loading.value) return
+
+  saving.value = true
+  submitError.value = ''
+  fieldErrors.value = {}
+  try {
+    if (bannerFile.value) {
+      form.bannerImage = (await uploadImage(bannerFile.value, { token: auth.accessToken, folder: 'promotions' })).url
+    }
+    await savePromotion(isEdit.value ? route.params.id : null, form, auth.accessToken)
+    router.push({ name: 'promotions' })
+  } catch (err) {
+    fieldErrors.value = err.errors ?? {}
+    submitError.value = err.status === 422
+      ? 'Please correct the highlighted fields and try again.'
+      : err.message || 'Could not save the promotion.'
+  } finally {
+    saving.value = false
+  }
 }
 </script>
 
@@ -97,6 +127,7 @@ function save() {
     <AppHeader :title="pageTitle" />
 
     <div class="page__body">
+      <p v-if="submitError" class="submit-error">{{ submitError }}</p>
       <!-- Sub header -->
       <div class="subhead">
         <RouterLink to="/promotions" class="subhead__back">
@@ -117,12 +148,14 @@ function save() {
             <h3 class="card__title">Promotion Details</h3>
             <div class="field">
               <label for="name">Promotion Name</label>
-              <input id="name" v-model="form.name" type="text" placeholder="e.g. Black Friday Sale 2023" />
+              <input id="name" v-model="form.name" :class="{ 'field--invalid': errorFor('name') }" type="text" placeholder="e.g. Black Friday Sale 2023" />
+              <span v-if="errorFor('name')" class="field-error">{{ errorFor('name') }}</span>
             </div>
             <div class="row">
               <div class="field">
                 <label for="code">Promo Code</label>
-                <input id="code" v-model="form.code" type="text" placeholder="e.g. BLACKFRIDAY23" />
+                <input id="code" v-model="form.code" :class="{ 'field--invalid': errorFor('code') }" type="text" placeholder="e.g. BLACKFRIDAY23" />
+                <span v-if="errorFor('code')" class="field-error">{{ errorFor('code') }}</span>
               </div>
               <div class="field">
                 <label for="type">Promotion Type</label>
@@ -152,9 +185,10 @@ function save() {
               <div class="field">
                 <label for="discount">Discount Value</label>
                 <div class="affix affix--suffix">
-                  <input id="discount" v-model="form.discountValue" type="text" placeholder="0" />
+                  <input id="discount" v-model="form.discountValue" :class="{ 'field--invalid': errorFor('value') }" type="text" placeholder="0" />
                   <span>%</span>
                 </div>
+                <span v-if="errorFor('value')" class="field-error">{{ errorFor('value') }}</span>
               </div>
               <div class="field">
                 <label for="minSpend">Minimum Spend</label>
@@ -167,11 +201,13 @@ function save() {
             <div class="row">
               <div class="field">
                 <label for="start">Start Date</label>
-                <input id="start" v-model="form.startDate" type="date" />
+                <input id="start" v-model="form.startDate" :class="{ 'field--invalid': errorFor('starts_at') }" type="date" />
+                <span v-if="errorFor('starts_at')" class="field-error">{{ errorFor('starts_at') }}</span>
               </div>
               <div class="field">
                 <label for="end">End Date</label>
-                <input id="end" v-model="form.endDate" type="date" />
+                <input id="end" v-model="form.endDate" :class="{ 'field--invalid': errorFor('expires_at') }" type="date" />
+                <span v-if="errorFor('expires_at')" class="field-error">{{ errorFor('expires_at') }}</span>
               </div>
             </div>
           </section>
@@ -257,8 +293,8 @@ function save() {
       <!-- Form actions -->
       <div class="actions">
         <BaseButton variant="ghost" to="/promotions">Cancel</BaseButton>
-        <BaseButton variant="primary" @click="save">
-          {{ isEdit ? 'Update Promotion' : 'Create Promotion' }}
+        <BaseButton variant="primary" :disabled="saving || loading" @click="save">
+          {{ saving ? 'Saving…' : (isEdit ? 'Update Promotion' : 'Create Promotion') }}
         </BaseButton>
       </div>
     </div>
@@ -396,6 +432,10 @@ function save() {
 
   textarea { resize: vertical; }
 }
+
+.field--invalid { border-color: var(--danger) !important; }
+.field-error, .submit-error { font-size: 0.75rem; color: var(--danger); }
+.submit-error { margin: 0; }
 
 .row {
   display: grid;

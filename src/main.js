@@ -6,9 +6,22 @@ import './styles/tailwind.css'
 import './styles/main.scss'
 import App from './App.vue'
 import router from './router'
+import { setUnauthenticatedHandler } from './services/api'
+import { useAuthStore } from './stores/auth'
 
 const app = createApp(App)
+const pinia = createPinia()
 
-app.use(createPinia())
+app.use(pinia)
 app.use(router)
+
+setUnauthenticatedHandler(async () => {
+  const auth = useAuthStore(pinia)
+  await auth.logout()
+
+  if (router.currentRoute.value.name !== 'login') {
+    await router.replace({ name: 'login' })
+  }
+})
+
 app.mount('#app')
