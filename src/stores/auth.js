@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import { apiFetch } from '@/services/api'
+import { apiFetch, resetUnauthenticatedHandler } from '@/services/api'
 
 // Persisted so a page reload keeps the admin signed in.
 const STORAGE_KEY = 'beckie_admin_auth'
@@ -61,6 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
       refreshToken.value = data.refresh_token
       user.value = data.user ?? null
       persist()
+      resetUnauthenticatedHandler()
       return true
     } catch (err) {
       error.value = err.message || 'Unable to sign in. Please try again.'
