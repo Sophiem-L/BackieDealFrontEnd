@@ -16,6 +16,11 @@ const orderUuid = String(route.params.id ?? '')
 // The Orders list opens this page with ?edit=1 for editing; without it, it's read-only view.
 const isEditMode = computed(() => Boolean(route.query.edit))
 
+// Approving an order is how a manager moves it through its statuses, so
+// orders.approve unlocks the status dropdown and Save alongside orders.update.
+// Payment state is not part of that — Mark as paid stays on orders.update.
+const canEditStatus = computed(() => auth.hasAnyPermission(['orders.update', 'orders.approve']))
+
 // The canonical statuses, matching OrdersView's tabs and UpdateOrderRequest.
 const statusLabels = {
   pending: 'Pending',
@@ -393,7 +398,7 @@ async function editOrder() {
             </header>
 
             <!-- View mode: read-only status text -->
-            <p v-if="!isEditMode" class="status-text" :class="`status-text--${order.status}`">
+            <p v-if="!isEditMode || !canEditStatus" class="status-text" :class="`status-text--${order.status}`">
               <span class="status-text__dot" aria-hidden="true"></span>
               {{ orderStatusLabel }}
             </p>
@@ -498,7 +503,7 @@ async function editOrder() {
 
             <!-- Payment is recorded here, not at creation time. -->
             <button
-              v-if="canMarkPaid"
+              v-if="canMarkPaid && auth.hasPermission('orders.update')"
               type="button"
               class="mark-paid"
               :disabled="markingPaid"
@@ -530,7 +535,7 @@ async function editOrder() {
             <p v-if="notes.length === 0" class="note note__empty">No notes on this order.</p>
           </section>
 
-          <div v-if="isEditMode" class="detail-actions">
+          <div v-if="isEditMode && canEditStatus" class="detail-actions">
             <BaseButton
               variant="primary"
               block

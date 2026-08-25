@@ -863,7 +863,11 @@ async function exportOrders(format) {
           </div>
         </div>
 
-        <BaseButton variant="primary" :to="{ name: 'order-create' }">
+        <BaseButton
+          v-if="auth.hasPermission('orders.create')"
+          variant="primary"
+          :to="{ name: 'order-create' }"
+        >
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
           </template>
@@ -889,13 +893,14 @@ async function exportOrders(format) {
         </header>
 
         <!-- Bulk actions, shown only while rows are selected -->
-        <div v-if="selected.size > 0" class="bulkbar">
+        <div v-if="selected.size > 0 && auth.hasPermission('orders.delete')" class="bulkbar">
           <p class="bulkbar__count">
             {{ selected.size }} order{{ selected.size === 1 ? '' : 's' }} selected
           </p>
           <div class="bulkbar__actions">
             <button type="button" class="bulkbar__clear" @click="clearSelection">Clear</button>
             <button
+              v-if="auth.hasPermission('orders.delete')"
               type="button"
               class="bulkbar__delete"
               :disabled="bulkDeleting"
@@ -996,6 +1001,7 @@ async function exportOrders(format) {
                     </svg>
                   </button>
                   <button
+                    v-if="auth.hasAnyPermission(['orders.update', 'orders.approve'])"
                     type="button"
                     class="icon-btn"
                     title="Edit order"
@@ -1022,6 +1028,7 @@ async function exportOrders(format) {
                     </svg>
                   </button>
                   <button
+                    v-if="auth.hasPermission('orders.delete')"
                     type="button"
                     class="icon-btn icon-btn--danger"
                     title="Delete order"

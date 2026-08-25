@@ -4,8 +4,12 @@ import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { promotions as promotionData } from '@/data/promotions'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+// This screen still reads mock data, but its create/edit/delete controls
+// are gated on the real permissions the API reports.
+const auth = useAuthStore()
 
 const promotions = ref([...promotionData])
 
@@ -55,7 +59,11 @@ function deletePromotion(promo) {
 
         <div class="toolbar__spacer"></div>
 
-        <BaseButton variant="primary" :to="{ name: 'promotion-create' }">
+        <BaseButton
+          v-if="auth.hasPermission('promotions.create')"
+          variant="primary"
+          :to="{ name: 'promotion-create' }"
+        >
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
           </template>
@@ -112,7 +120,12 @@ function deletePromotion(promo) {
 
             <div class="promo__footer">
               <div class="promo__actions">
-                <BaseButton variant="ghost" size="sm" @click.stop="editPromotion(promo)">
+                <BaseButton
+                  v-if="auth.hasPermission('promotions.update')"
+                  variant="ghost"
+                  size="sm"
+                  @click.stop="editPromotion(promo)"
+                >
                   <template #icon>
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
@@ -122,6 +135,7 @@ function deletePromotion(promo) {
                   Edit
                 </BaseButton>
                 <button
+                  v-if="auth.hasPermission('promotions.delete')"
                   type="button"
                   class="icon-btn icon-btn--danger"
                   aria-label="Delete promotion"

@@ -3,8 +3,12 @@ import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { slides, removeSlide } from '@/data/slides'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+// This screen still reads mock data, but its create/edit/delete controls
+// are gated on the real permissions the API reports.
+const auth = useAuthStore()
 
 const statusLabels = {
   active: 'Active',
@@ -42,7 +46,7 @@ function deleteSlide(slide) {
           <p class="head__subtitle">Manage the main sliders on your computer shop homepage.</p>
         </div>
 
-        <BaseButton variant="primary" @click="addSlide">
+        <BaseButton v-if="auth.hasPermission('banners.create')" variant="primary" @click="addSlide">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none">
               <path d="M12 5v14M5 12h14" stroke-linecap="round" />
@@ -97,6 +101,7 @@ function deleteSlide(slide) {
 
           <div class="slide__actions">
             <button
+              v-if="auth.hasPermission('banners.update')"
               type="button"
               class="icon-btn"
               :aria-label="`Edit ${slide.title}`"
@@ -109,6 +114,7 @@ function deleteSlide(slide) {
             </button>
 
             <button
+              v-if="auth.hasPermission('banners.delete')"
               type="button"
               class="icon-btn icon-btn--danger"
               :aria-label="`Delete ${slide.title}`"

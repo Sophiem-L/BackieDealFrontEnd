@@ -3,27 +3,33 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
+import { userDisplayName, userRoleLabel, initialsFrom } from '@/lib/identity'
 
 const ui = useUiStore()
+const auth = useAuthStore()
 
 // Reusable top bar. Any page renders <AppHeader title="..." /> to get the
 // search field, notifications and the profile chip that links to /profile.
+//
+// userName/userRole default to empty, not to a placeholder admin: no page
+// passes them, so a baked-in default would show every signed-in user the same
+// wrong identity. They stay as props only so a screen can override the chip.
 const props = defineProps({
   title: { type: String, required: true },
-  userName: { type: String, default: 'Admin User' },
-  userRole: { type: String, default: 'Administrator' },
+  userName: { type: String, default: '' },
+  userRole: { type: String, default: '' },
   avatar: { type: String, default: '' },
   notifications: { type: Boolean, default: true },
 })
 
-const initials = computed(() =>
-  props.userName
-    .split(' ')
-    .map((part) => part.charAt(0))
-    .join('')
-    .slice(0, 2)
-    .toUpperCase(),
-)
+const displayName = computed(() => props.userName || userDisplayName(auth.user) || 'Account')
+
+// Empty for a user with no roles — the chip drops the line rather than
+// captioning them with a role they do not hold.
+const displayRole = computed(() => props.userRole || userRoleLabel(auth.user))
+
+const initials = computed(() => initialsFrom(displayName.value) || '?')
 </script>
 
 <template>
@@ -65,11 +71,11 @@ const initials = computed(() =>
 
       <RouterLink to="/profile" class="profile" title="Account settings">
         <span class="profile__meta">
-          <span class="profile__name">{{ userName }}</span>
-          <span class="profile__role">{{ userRole }}</span>
+          <span class="profile__name">{{ displayName }}</span>
+          <span v-if="displayRole" class="profile__role">{{ displayRole }}</span>
         </span>
         <span class="profile__avatar">
-          <img v-if="avatar" :src="avatar" :alt="userName" />
+          <img v-if="avatar" :src="avatar" :alt="displayName" />
           <span v-else>{{ initials }}</span>
         </span>
       </RouterLink>
