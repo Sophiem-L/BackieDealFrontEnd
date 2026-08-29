@@ -264,11 +264,13 @@ async function loadSummary() {
 
 // Category options for the filter. GET /admin/categories hard-codes paginate(20)
 // and ignores per_page, so walk the pages (guarded at 10 = 200 categories).
+const CATEGORY_PAGE_SIZE = 20
+
 async function loadCategories() {
   try {
     const collected = []
     let current = 1
-    let last = 1
+    let more = true
     do {
       const response = await apiFetch(`/admin/categories?page=${current}`, {
         token: auth.accessToken,
@@ -277,9 +279,13 @@ async function loadCategories() {
       const payload = response?.data
       const rows = Array.isArray(payload) ? payload : (payload?.data ?? [])
       collected.push(...rows)
-      last = payload?.meta?.last_page ?? 1
+      // The success envelope serialises `data` as a bare array, dropping the
+      // paginator's `meta` — so `meta.last_page` was always undefined here and
+      // the walk stopped after page 1, silently capping the dropdown at 20.
+      // A short page is the only reliable end-of-list signal.
+      more = rows.length === CATEGORY_PAGE_SIZE
       current += 1
-    } while (current <= last && current <= 10)
+    } while (more && current <= 10)
 
     categories.value = collected
       .filter((row) => row?.id != null)
