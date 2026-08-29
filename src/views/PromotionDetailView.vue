@@ -1,14 +1,18 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { findPromotion } from '@/data/promotions'
+import { fetchPromotion } from '@/services/promotions'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
-const promo = computed(() => findPromotion(route.params.id))
+const promo = ref(null)
+const loading = ref(false)
+const error = ref('')
 
 const statusLabels = { active: 'Active', paused: 'Paused', expired: 'Expired' }
 
@@ -26,6 +30,22 @@ function goBack() {
   if (window.history.length > 1) router.back()
   else router.push({ name: 'promotions' })
 }
+
+async function loadPromotion() {
+  loading.value = true
+  error.value = ''
+  try {
+    promo.value = await fetchPromotion(route.params.id, auth.accessToken)
+  } catch (err) {
+    error.value = err.status === 404
+      ? 'This promotion could not be found.'
+      : err.message || 'Could not load the promotion.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadPromotion)
 </script>
 
 <template>
@@ -42,8 +62,8 @@ function goBack() {
       </div>
 
       <!-- Not found -->
-      <section v-if="!promo" class="empty">
-        <p>This promotion could not be found.</p>
+      <section v-if="loading || error" class="empty">
+        <p>{{ loading ? 'Loading promotion…' : error }}</p>
         <BaseButton variant="ghost" :to="{ name: 'promotions' }">Back to Promotions</BaseButton>
       </section>
 

@@ -1,17 +1,28 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { promotions as promotionData } from '@/data/promotions'
+import { deletePromotion as removePromotion, fetchPromotions } from '@/services/promotions'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 // This screen still reads mock data, but its create/edit/delete controls
 // are gated on the real permissions the API reports.
 const auth = useAuthStore()
+const promotions = ref([])
+const loading = ref(false)
+const error = ref('')
+const deletingId = ref(null)
+const search = ref('')
 
-const promotions = ref([...promotionData])
+const filteredPromotions = computed(() => {
+  const term = search.value.trim().toLowerCase()
+  if (!term) return promotions.value
+  return promotions.value.filter((promotion) =>
+    [promotion.name, promotion.code].some((value) => value?.toLowerCase().includes(term)),
+  )
+})
 
 const statusLabels = { active: 'Active', paused: 'Paused', expired: 'Expired' }
 
@@ -27,9 +38,34 @@ function editPromotion(promo) {
   router.push({ name: 'promotion-edit', params: { id: promo.id } })
 }
 
-function deletePromotion(promo) {
-  promotions.value = promotions.value.filter((p) => p.id !== promo.id)
+async function loadPromotions() {
+  loading.value = true
+  error.value = ''
+  try {
+    promotions.value = await fetchPromotions(auth.accessToken)
+  } catch (err) {
+    error.value = err.message || 'Could not load promotions.'
+  } finally {
+    loading.value = false
+  }
 }
+
+async function deletePromotion(promo) {
+  if (!window.confirm(`Delete ${promo.name}?`)) return
+
+  deletingId.value = promo.id
+  error.value = ''
+  try {
+    await removePromotion(promo.id, auth.accessToken)
+    promotions.value = promotions.value.filter((item) => item.id !== promo.id)
+  } catch (err) {
+    error.value = err.message || 'Could not delete the promotion.'
+  } finally {
+    deletingId.value = null
+  }
+}
+
+onMounted(loadPromotions)
 </script>
 
 <template>
@@ -46,7 +82,7 @@ function deletePromotion(promo) {
               <path d="m20 20-3.2-3.2" stroke-linecap="round" />
             </svg>
           </span>
-          <input type="search" placeholder="Search promotion name or code..." />
+          <input v-model="search" type="search" placeholder="Search promotion name or code..." />
         </label>
 
         <div class="select">
@@ -72,9 +108,12 @@ function deletePromotion(promo) {
       </section>
 
       <!-- Cards grid -->
-      <section class="grid">
+      <p v-if="error" class="load-error">{{ error }} <button type="button" class="retry-btn" @click="loadPromotions">Retry</button></p>
+      <p v-else-if="loading" class="load-error">Loading promotions…</p>
+
+      <section v-else class="grid">
         <article
-          v-for="promo in promotions"
+          v-for="promo in filteredPromotions"
           :key="promo.id"
           class="promo"
           role="button"
@@ -139,6 +178,7 @@ function deletePromotion(promo) {
                   type="button"
                   class="icon-btn icon-btn--danger"
                   aria-label="Delete promotion"
+                  :disabled="deletingId === promo.id"
                   @click.stop="deletePromotion(promo)"
                 >
                   <svg viewBox="0 0 24 24" fill="none">
