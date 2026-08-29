@@ -241,24 +241,32 @@ async function loadProducts() {
 // the rest is Low Stock, matching deriveStatus() above. In Stock is the
 // remainder of the catalog. A failure here leaves the cards at '—'.
 async function loadSummary() {
-  try {
-    const [catalog, alerts] = await Promise.all([
-      apiFetch('/admin/products?page=1&per_page=1', { token: auth.accessToken }),
-      apiFetch('/admin/stock/alerts', { token: auth.accessToken }),
-    ])
+  // allSettled, not all: a role without stock.view gets a 403 from
+  // /admin/stock/alerts, and Promise.all would reject the pair and blank the
+  // catalog total that had already loaded fine. Each card degrades on its own.
+  const [catalogResult, alertsResult] = await Promise.allSettled([
+    apiFetch('/admin/products?page=1&per_page=1', { token: auth.accessToken }),
+    apiFetch('/admin/stock/alerts', { token: auth.accessToken }),
+  ])
 
-    const catalogTotal = catalog?.data?.pagination?.total ?? null
-    const rows = Array.isArray(alerts?.data) ? alerts.data : []
-    const out = rows.filter((row) => Number(row.stock_quantity ?? 0) <= 0).length
+  const catalogTotal =
+    catalogResult.status === 'fulfilled'
+      ? (catalogResult.value?.data?.pagination?.total ?? null)
+      : null
 
-    summary.value = {
-      total: catalogTotal,
-      low: rows.length - out,
-      out,
-      inStock: catalogTotal == null ? null : Math.max(0, catalogTotal - rows.length),
-    }
-  } catch {
-    summary.value = { total: null, low: null, out: null, inStock: null }
+  if (alertsResult.status !== 'fulfilled') {
+    summary.value = { total: catalogTotal, low: null, out: null, inStock: null }
+    return
+  }
+
+  const rows = Array.isArray(alertsResult.value?.data) ? alertsResult.value.data : []
+  const out = rows.filter((row) => Number(row.stock_quantity ?? 0) <= 0).length
+
+  summary.value = {
+    total: catalogTotal,
+    low: rows.length - out,
+    out,
+    inStock: catalogTotal == null ? null : Math.max(0, catalogTotal - rows.length),
   }
 }
 
@@ -1099,7 +1107,12 @@ async function runImport() {
             class="visually-hidden"
             @change="onImportFileChange"
           />
-          <BaseButton variant="ghost" :disabled="importing" @click="pickImportFile">
+          <BaseButton
+            v-if="auth.hasPermission('products.create')"
+            variant="ghost"
+            :disabled="importing"
+            @click="pickImportFile"
+          >
             <template #icon>
               <svg viewBox="0 0 24 24" fill="none">
                 <path d="M12 15V3m0 0L8 7m4-4 4 4" stroke-linecap="round" stroke-linejoin="round" />
@@ -1141,7 +1154,11 @@ async function runImport() {
               </button>
             </div>
           </div>
-          <BaseButton variant="primary" :to="{ name: 'product-create' }">
+          <BaseButton
+            v-if="auth.hasPermission('products.create')"
+            variant="primary"
+            :to="{ name: 'product-create' }"
+          >
             <template #icon>
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
             </template>
@@ -1270,6 +1287,7 @@ async function runImport() {
                     </svg>
                   </button>
                   <button
+                    v-if="auth.hasPermission('products.update')"
                     type="button"
                     class="icon-btn"
                     title="Edit product"
@@ -1282,6 +1300,7 @@ async function runImport() {
                     </svg>
                   </button>
                   <button
+                    v-if="auth.hasPermission('products.create')"
                     type="button"
                     class="icon-btn"
                     title="Duplicate product"
@@ -1295,6 +1314,7 @@ async function runImport() {
                     </svg>
                   </button>
                   <button
+                    v-if="auth.hasPermission('products.delete')"
                     type="button"
                     class="icon-btn icon-btn--danger"
                     title="Delete product"
