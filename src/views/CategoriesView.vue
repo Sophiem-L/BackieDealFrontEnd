@@ -157,7 +157,11 @@ const filtered = computed(() => {
 
         <div class="toolbar__spacer"></div>
 
-        <BaseButton variant="primary" :to="{ name: 'category-create' }">
+        <BaseButton
+          v-if="auth.hasPermission('categories.create')"
+          variant="primary"
+          :to="{ name: 'category-create' }"
+        >
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
           </template>
@@ -206,6 +210,7 @@ const filtered = computed(() => {
             </div>
             <div class="cat__actions">
               <button
+                v-if="auth.hasPermission('categories.update')"
                 type="button"
                 class="icon-btn"
                 title="Edit category"
@@ -218,6 +223,7 @@ const filtered = computed(() => {
                 </svg>
               </button>
               <button
+                v-if="auth.hasPermission('categories.delete')"
                 type="button"
                 class="icon-btn icon-btn--danger"
                 title="Delete category"

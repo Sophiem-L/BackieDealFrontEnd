@@ -7,7 +7,8 @@ import { deletePromotion as removePromotion, fetchPromotions } from '@/services/
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
-
+// This screen still reads mock data, but its create/edit/delete controls
+// are gated on the real permissions the API reports.
 const auth = useAuthStore()
 const promotions = ref([])
 const loading = ref(false)
@@ -94,7 +95,11 @@ onMounted(loadPromotions)
 
         <div class="toolbar__spacer"></div>
 
-        <BaseButton variant="primary" :to="{ name: 'promotion-create' }">
+        <BaseButton
+          v-if="auth.hasPermission('promotions.create')"
+          variant="primary"
+          :to="{ name: 'promotion-create' }"
+        >
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
           </template>
@@ -154,7 +159,12 @@ onMounted(loadPromotions)
 
             <div class="promo__footer">
               <div class="promo__actions">
-                <BaseButton variant="ghost" size="sm" @click.stop="editPromotion(promo)">
+                <BaseButton
+                  v-if="auth.hasPermission('promotions.update')"
+                  variant="ghost"
+                  size="sm"
+                  @click.stop="editPromotion(promo)"
+                >
                   <template #icon>
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
@@ -164,6 +174,7 @@ onMounted(loadPromotions)
                   Edit
                 </BaseButton>
                 <button
+                  v-if="auth.hasPermission('promotions.delete')"
                   type="button"
                   class="icon-btn icon-btn--danger"
                   aria-label="Delete promotion"

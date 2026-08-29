@@ -1,7 +1,9 @@
 <script setup>
+import { computed } from 'vue'
 import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
+import { visibleSections } from '@/lib/navigation'
 
 const ui = useUiStore()
 const auth = useAuthStore()
@@ -21,45 +23,10 @@ function isActive(to) {
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
-// Nav model — grouped to match the Admin Portal layout.
-// `icon` keys map to the inline <svg> set in the template below.
-const sections = [
-  {
-    title: 'Dashboard',
-    items: [
-      { label: 'Overview', icon: 'overview', to: '/' },
-    ],
-  },
-  {
-    title: 'E-Commerce',
-    items: [
-      { label: 'Orders', icon: 'orders', to: '/orders', badge: 12 },
-      { label: 'Products', icon: 'products', to: '/products' },
-      { label: 'Categories', icon: 'categories', to: '/categories' },
-      { label: 'Promotions', icon: 'promotions', to: '/promotions' },
-      { label: 'Stock Management', icon: 'stock', to: '/stock' },
-      { label: 'Reports', icon: 'reports', to: '/reports' },
-    ],
-  },
-  {
-    title: 'Content',
-    items: [
-      { label: 'Slides', icon: 'slides', to: '/slides' },
-      // News is hidden from the nav. Its routes and views are untouched, so
-      // restoring it is putting this line back:
-      // { label: 'News', icon: 'news', to: '/news' },
-    ],
-  },
-  {
-    title: 'Users',
-    items: [
-      { label: 'Customers', icon: 'customers', to: '/customers' },
-      { label: 'Administrators', icon: 'administrators', to: '/administrators' },
-      { label: 'Roles & Permissions', icon: 'roles', to: '/roles' },
-      { label: 'Logs', icon: 'logs', to: '/logs' },
-    ],
-  },
-]
+// Nav model lives in @/lib/navigation so the permission filtering is unit
+// testable. Items the signed-in role may not see are dropped, and a section
+// left empty disappears with them.
+const sections = computed(() => visibleSections((permission) => auth.hasPermission(permission)))
 </script>
 
 <template>

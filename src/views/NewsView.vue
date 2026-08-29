@@ -4,8 +4,12 @@ import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { newsArticles } from '@/data/news'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+// This screen still reads mock data, but its create/edit/delete controls
+// are gated on the real permissions the API reports.
+const auth = useAuthStore()
 
 const statusLabels = {
   published: 'Published',
@@ -53,7 +57,7 @@ function deleteArticle(article) {
           <p class="head__subtitle">Publish updates, guides and announcements for your storefront.</p>
         </div>
 
-        <BaseButton variant="primary" @click="addArticle">
+        <BaseButton v-if="auth.hasPermission('content.create')" variant="primary" @click="addArticle">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none">
               <path d="M12 5v14M5 12h14" stroke-linecap="round" />
@@ -108,6 +112,7 @@ function deleteArticle(article) {
 
           <div class="news__actions">
             <button
+              v-if="auth.hasPermission('content.update')"
               type="button"
               class="icon-btn"
               :aria-label="`Edit ${item.title}`"
@@ -120,6 +125,7 @@ function deleteArticle(article) {
             </button>
 
             <button
+              v-if="auth.hasPermission('content.delete')"
               type="button"
               class="icon-btn icon-btn--danger"
               :aria-label="`Delete ${item.title}`"
