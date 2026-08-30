@@ -31,8 +31,10 @@ const form = reactive({
 
 function step(delta) {
   const current = product.value ? product.value.currentStock : 0
+  const next = form.quantityChange + delta
   if (current + next < 0) return
   form.quantityChange = next
+}
 
 const signedChange = computed(() =>
   form.quantityChange > 0 ? `+${form.quantityChange}` : `${form.quantityChange}`,
@@ -116,6 +118,8 @@ async function complete() {
       stockable_id: product.value.id,
       movement_type: 'adjust',
       quantity: form.quantityChange,
+      reason: form.adjustmentType,
+      reference: form.reason?.trim() || form.adjustmentType,
       metadata: {
         adjustment_type: form.adjustmentType,
       },
@@ -194,6 +198,7 @@ onMounted(() => {
               </div>
             </div>
 
+            <div class="controls">
               <div class="field">
                 <label for="adjustmentType">Adjustment Type</label>
                 <div class="select-wrap">
@@ -204,10 +209,22 @@ onMounted(() => {
                 </div>
               </div>
 
+              <div class="field">
+                <label>Quantity Change</label>
+                <div class="stepper">
+                  <button type="button" class="stepper__btn" aria-label="Decrease" @click="step(-1)">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14" stroke-linecap="round" /></svg>
+                  </button>
+                  <span class="stepper__value" :class="{ 'stepper__value--neg': form.quantityChange < 0 }">{{ signedChange }}</span>
+                  <button type="button" class="stepper__btn" aria-label="Increase" @click="step(1)">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
+                  </button>
+                </div>
               </div>
             </div>
 
             <div class="field field--reason">
+              <label for="reason">Reason for Adjustment</label>
               <textarea
                 id="reason"
                 v-model="form.reason"
@@ -261,6 +278,7 @@ onMounted(() => {
     border: 1px solid var(--border-subtle);
     color: var(--text-body);
     flex-shrink: 0;
+
     &:hover { background: var(--surface-alt); text-decoration: none; }
 
     svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.8; }

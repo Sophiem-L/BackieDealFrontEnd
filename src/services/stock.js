@@ -40,7 +40,9 @@ export function stockFromApi(item) {
 }
 
 export function stockDetailFromApi(data) {
-  const movements = data.movements ?? []
+  const movements = Array.isArray(data.movements)
+    ? data.movements
+    : data.movements?.items ?? []
   const recentLocation = movements.find(
     (m) => m.destination_location || m.source_location,
   )
@@ -123,9 +125,15 @@ export async function fetchStockAlerts(token) {
 export async function fetchStockDetail(id, token) {
   const response = await apiFetch(`/admin/stock/${id}`, { token })
   const data = response?.data ?? {}
+  const movementsPayload = data.movements
+  const movementsItems = Array.isArray(movementsPayload)
+    ? movementsPayload
+    : movementsPayload?.items ?? []
+
   return {
     item: stockDetailFromApi(data),
-    movements: (data.movements ?? []).map(movementFromApi),
+    movements: movementsItems.map(movementFromApi),
+    movementsPagination: movementsPayload?.pagination ?? {},
   }
 }
 
