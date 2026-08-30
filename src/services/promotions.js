@@ -3,13 +3,47 @@ import { apiFetch } from '@/services/api'
 const DEFAULT_BANNER = 'linear-gradient(135deg, #b3091a 0%, #2b0a0a 100%)'
 const HOUR_MS = 60 * 60 * 1000
 
-// A flash sale is not its own value in the API: `coupons.type` is an enum of
-// exactly ('fixed','percentage'). It is inferred from the length of the window
-// instead, so the label survives a reload without a backend change. Anything
-// running for at most this many hours reads as a flash sale.
-export const FLASH_SALE_TYPE = 'Flash Sale'
+// What kind of campaign a promotion is, as opposed to how its discount is
+// computed. The two are separate columns on `coupons` for a reason:
+// `Coupon::calculateDiscount()` treats any `type` that is not 'fixed' as a
+// percentage, so a campaign label reaching `type` would silently discount every
+// cart. `kind` carries the campaign; `type` stays ('percentage'|'fixed').
+//
+// A standard promotion has no kind at all — null, not a sentinel string.
+export const STANDARD_KIND = 'Standard'
+export const FLASH_SALE_KIND = 'Flash Sale'
+
+export const PROMOTION_KINDS = [
+  { label: STANDARD_KIND, value: null },
+  { label: FLASH_SALE_KIND, value: 'flash_sale' },
+  { label: 'Buy One Get One', value: 'bogo' },
+  { label: 'Free Shipping', value: 'free_shipping' },
+  { label: 'Bundle Deal', value: 'bundle' },
+  { label: 'Free Gift', value: 'free_gift' },
+  { label: 'Coupon', value: 'coupon' },
+]
+
+export const DISCOUNT_TYPES = ['Percentage Discount', 'Fixed Amount']
+
+// Flash sales predating the `kind` column are recognised by their window: at
+// most this many hours. Only consulted when the API sent no kind at all.
 export const FLASH_SALE_MAX_HOURS = 24
 export const DEFAULT_FLASH_HOURS = 3
+
+export function kindLabel(value) {
+  if (!value) return null
+  // An unknown kind (a newer API than this build) reads as a plain discount
+  // rather than blanking the card.
+  return PROMOTION_KINDS.find((kind) => kind.value === value)?.label ?? null
+}
+
+export function kindValue(label) {
+  return PROMOTION_KINDS.find((kind) => kind.label === label)?.value ?? null
+}
+
+function discountLabel(type) {
+  return type === 'fixed' ? 'Fixed Amount' : 'Percentage Discount'
+}
 
 function dateValue(value) {
   return value ? String(value).slice(0, 10) : ''
@@ -42,6 +76,10 @@ function windowHours(startsAt, expiresAt) {
 }
 
 export function isFlashSale(promotion) {
+  // A stored kind is the authority: a six-hour window saved as a bundle is a
+  // bundle. Only a promotion with no kind at all falls back to its window.
+  if (promotion?.kind) return promotion.kind === 'flash_sale'
+
   const hours = windowHours(promotion?.starts_at, promotion?.expires_at)
   return hours !== null && hours > 0 && hours <= FLASH_SALE_MAX_HOURS
 }
@@ -80,11 +118,9 @@ export function promotionFromApi(promotion) {
     name: promotion.name || promotion.code,
     isFlash,
     expiresAt: promotion.expires_at ?? null,
-    benefitType: isFlash
-      ? FLASH_SALE_TYPE
-      : promotion.type === 'percentage'
-        ? 'Percentage Discount'
-        : 'Fixed Amount',
+    // The campaign is what the card leads with; how the money works out is
+    // already spelled out by `benefit` right beside it.
+    benefitType: (isFlash ? FLASH_SALE_KIND : kindLabel(promotion.kind)) ?? discountLabel(promotion.type),
     benefit: promotion.type === 'percentage' ? `${value}% OFF` : `$${value.toFixed(2)} OFF`,
     period: formatPeriod(promotion.starts_at, promotion.expires_at, isFlash),
     status,
@@ -103,7 +139,8 @@ export function promotionToForm(promotion) {
   return {
     name: promotion.name ?? '',
     code: promotion.code ?? '',
-    type: isFlash ? FLASH_SALE_TYPE : promotion.type === 'fixed' ? 'Fixed Amount' : 'Percentage Discount',
+    kind: isFlash ? FLASH_SALE_KIND : (kindLabel(promotion.kind) ?? STANDARD_KIND),
+    type: discountLabel(promotion.type),
     description: promotion.description ?? '',
     active: Boolean(promotion.is_active),
     bannerImage: promotion.banner_image ?? '',
@@ -140,13 +177,14 @@ function flashWindow(form) {
 }
 
 export function promotionPayload(form) {
-  const isFlash = form.type === FLASH_SALE_TYPE
+  const isFlash = form.kind === FLASH_SALE_KIND
   const window = isFlash ? flashWindow(form) : null
 
   const payload = {
     name: form.name.trim(),
     code: form.code.trim(),
     type: form.type === 'Fixed Amount' ? 'fixed' : 'percentage',
+    kind: kindValue(form.kind),
     value: Number(form.discountValue),
     min_order_amount: Number(form.minimumSpend || 0),
     starts_at: isFlash ? window.startsAt : form.startDate,

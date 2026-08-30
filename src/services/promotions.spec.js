@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
+  FLASH_SALE_KIND,
   FLASH_SALE_MAX_HOURS,
-  FLASH_SALE_TYPE,
+  PROMOTION_KINDS,
   isFlashSale,
+  kindLabel,
   liveStatus,
   promotionFromApi,
   promotionPayload,
@@ -21,6 +23,7 @@ function promotion(overrides = {}) {
     name: 'Black Friday Sale',
     code: 'BLACKFRIDAY',
     type: 'percentage',
+    kind: null,
     value: '30.00',
     min_order_amount: '0.00',
     starts_at: '2026-11-20T00:00:00+00:00',
@@ -35,56 +38,117 @@ function promotion(overrides = {}) {
   }
 }
 
-// A flash sale is not a distinct type in the API — it is a short window. This
-// builds one that starts `hoursFromNow` out and runs for `hours`.
-function flashSale(hours = 3, startsAt = '2026-08-30T09:00:00+00:00') {
-  const start = new Date(startsAt)
+// A flash sale running for `hours` from `startsAt`. `kind` is passed explicitly
+// per test: rows created before the kind column exists have none.
+function flashSale(hours = 3, overrides = {}) {
+  const start = new Date('2026-08-30T09:00:00+00:00')
   return promotion({
+    kind: 'flash_sale',
     starts_at: start.toISOString(),
     expires_at: new Date(start.getTime() + hours * HOUR).toISOString(),
+    ...overrides,
   })
 }
 
 describe('isFlashSale', () => {
-  it('recognises a three-hour window as a flash sale', () => {
-    expect(isFlashSale(flashSale(3))).toBe(true)
+  it('trusts the campaign kind the API stored', () => {
+    expect(isFlashSale(promotion({ kind: 'flash_sale' }))).toBe(true)
   })
 
-  it('treats a window exactly at the threshold as a flash sale', () => {
-    expect(isFlashSale(flashSale(FLASH_SALE_MAX_HOURS))).toBe(true)
+  it('does not call a promotion a flash sale just because its window is short', () => {
+    // An explicit kind is the authority: a six-hour launch window that the
+    // admin saved as a bundle stays a bundle.
+    expect(isFlashSale(flashSale(3, { kind: 'bundle' }))).toBe(false)
   })
 
-  it('rejects a window one minute past the threshold', () => {
-    expect(isFlashSale(flashSale(FLASH_SALE_MAX_HOURS + 1 / 60))).toBe(false)
-  })
+  describe('rows saved before the kind column existed', () => {
+    it('falls back to reading a three-hour window as a flash sale', () => {
+      expect(isFlashSale(flashSale(3, { kind: null }))).toBe(true)
+    })
 
-  it('rejects a multi-day promotion', () => {
-    expect(isFlashSale(promotion())).toBe(false)
-  })
+    it('treats a window exactly at the threshold as a flash sale', () => {
+      expect(isFlashSale(flashSale(FLASH_SALE_MAX_HOURS, { kind: null }))).toBe(true)
+    })
 
-  it('rejects a promotion with no end date', () => {
-    expect(isFlashSale(promotion({ expires_at: null }))).toBe(false)
-  })
+    it('rejects a window one minute past the threshold', () => {
+      expect(isFlashSale(flashSale(FLASH_SALE_MAX_HOURS + 1 / 60, { kind: null }))).toBe(false)
+    })
 
-  it('rejects a promotion with no start date', () => {
-    expect(isFlashSale(promotion({ starts_at: null }))).toBe(false)
-  })
+    it('rejects a multi-day promotion', () => {
+      expect(isFlashSale(promotion())).toBe(false)
+    })
 
-  it('rejects a window that ends before it starts', () => {
-    expect(isFlashSale(flashSale(-3))).toBe(false)
-  })
+    it('rejects a promotion with no end date', () => {
+      expect(isFlashSale(promotion({ expires_at: null }))).toBe(false)
+    })
 
-  it('rejects an unparseable date rather than reading it as a zero-length window', () => {
-    expect(isFlashSale(promotion({ starts_at: 'not a date', expires_at: 'not a date' }))).toBe(false)
+    it('rejects a promotion with no start date', () => {
+      expect(isFlashSale(promotion({ starts_at: null }))).toBe(false)
+    })
+
+    it('rejects a window that ends before it starts', () => {
+      expect(isFlashSale(flashSale(-3, { kind: null }))).toBe(false)
+    })
+
+    it('rejects an unparseable date rather than reading it as a zero-length window', () => {
+      expect(isFlashSale(promotion({ starts_at: 'not a date', expires_at: 'not a date' }))).toBe(false)
+    })
   })
 })
 
-describe('promotionFromApi — flash sales', () => {
-  it('labels a short promotion as a flash sale', () => {
+describe('kindLabel', () => {
+  it('names every campaign kind the form offers', () => {
+    expect(PROMOTION_KINDS.map((kind) => kind.label)).toEqual([
+      'Standard',
+      'Flash Sale',
+      'Buy One Get One',
+      'Free Shipping',
+      'Bundle Deal',
+      'Free Gift',
+    ])
+  })
+
+  it('reads a stored kind back as its label', () => {
+    expect(kindLabel('free_shipping')).toBe('Free Shipping')
+  })
+
+  it('has no label for a plain discount', () => {
+    expect(kindLabel(null)).toBe(null)
+  })
+
+  it('has no label for a kind this build does not know about', () => {
+    // Forward compatibility: a kind added by a newer API must not blank the card.
+    expect(kindLabel('mystery')).toBe(null)
+  })
+})
+
+describe('promotionFromApi', () => {
+  it('labels a campaign by its kind rather than its discount', () => {
+    const promo = promotionFromApi(promotion({ kind: 'bogo' }))
+
+    expect(promo.benefitType).toBe('Buy One Get One')
+  })
+
+  it('still shows how the discount is worked out', () => {
+    expect(promotionFromApi(promotion({ kind: 'bogo', type: 'fixed', value: '25.00' })).benefit).toBe('$25.00 OFF')
+  })
+
+  it('falls back to the discount type for a plain promotion', () => {
+    const promo = promotionFromApi(promotion())
+
+    expect(promo.isFlash).toBe(false)
+    expect(promo.benefitType).toBe('Percentage Discount')
+  })
+
+  it('falls back to the discount type for a kind this build does not know about', () => {
+    expect(promotionFromApi(promotion({ kind: 'mystery' })).benefitType).toBe('Percentage Discount')
+  })
+
+  it('marks a flash sale so the card can count it down', () => {
     const promo = promotionFromApi(flashSale(3))
 
     expect(promo.isFlash).toBe(true)
-    expect(promo.benefitType).toBe(FLASH_SALE_TYPE)
+    expect(promo.benefitType).toBe(FLASH_SALE_KIND)
   })
 
   it('exposes the raw expiry so the countdown can tick against it', () => {
@@ -94,15 +158,7 @@ describe('promotionFromApi — flash sales', () => {
 
   it('shows the time of day in the period of a flash sale', () => {
     // A three-hour window rendered as "Aug 30 – Aug 30" tells the admin nothing.
-    const period = promotionFromApi(flashSale(3)).period
-    expect(period).toMatch(/\d{1,2}:\d{2}/)
-  })
-
-  it('leaves the benefit type of an ordinary promotion alone', () => {
-    const promo = promotionFromApi(promotion())
-
-    expect(promo.isFlash).toBe(false)
-    expect(promo.benefitType).toBe('Percentage Discount')
+    expect(promotionFromApi(flashSale(3)).period).toMatch(/\d{1,2}:\d{2}/)
   })
 
   it('keeps the date-only period for an ordinary promotion', () => {
@@ -110,9 +166,24 @@ describe('promotionFromApi — flash sales', () => {
   })
 })
 
-describe('promotionToForm — flash sales', () => {
-  it('selects the flash sale type for a short promotion', () => {
-    expect(promotionToForm(flashSale(3)).type).toBe(FLASH_SALE_TYPE)
+describe('promotionToForm', () => {
+  it('splits a campaign into its kind and its discount', () => {
+    const form = promotionToForm(promotion({ kind: 'bogo', type: 'fixed' }))
+
+    expect(form.kind).toBe('Buy One Get One')
+    expect(form.type).toBe('Fixed Amount')
+  })
+
+  it('shows a plain promotion as a standard campaign', () => {
+    expect(promotionToForm(promotion()).kind).toBe('Standard')
+  })
+
+  it('shows a kind this build does not know about as standard rather than blank', () => {
+    expect(promotionToForm(promotion({ kind: 'mystery' })).kind).toBe('Standard')
+  })
+
+  it('selects the flash sale kind for a short promotion saved before the column existed', () => {
+    expect(promotionToForm(flashSale(3, { kind: null })).kind).toBe(FLASH_SALE_KIND)
   })
 
   it('recovers the duration in hours', () => {
@@ -132,15 +203,11 @@ describe('promotionToForm — flash sales', () => {
     expect(new Date(form.startDateTime).getTime()).toBe(new Date(raw.starts_at).getTime())
   })
 
-  it('leaves the ordinary date fields populated so switching type back still works', () => {
-    const form = promotionToForm(flashSale(3, '2026-08-30T09:00:00+00:00'))
+  it('leaves the ordinary date fields populated so switching kind still works', () => {
+    const form = promotionToForm(flashSale(3))
 
     expect(form.startDate).not.toBe('')
     expect(form.endDate).not.toBe('')
-  })
-
-  it('leaves a long promotion on its discount type', () => {
-    expect(promotionToForm(promotion()).type).toBe('Percentage Discount')
   })
 
   it('defaults the duration for a promotion that is not a flash sale', () => {
@@ -148,12 +215,13 @@ describe('promotionToForm — flash sales', () => {
   })
 })
 
-describe('promotionPayload — flash sales', () => {
-  function flashForm(overrides = {}) {
+describe('promotionPayload', () => {
+  function form(overrides = {}) {
     return {
       name: 'Three Hour Frenzy',
       code: 'FLASH3',
-      type: FLASH_SALE_TYPE,
+      kind: 'Standard',
+      type: 'Percentage Discount',
       description: '',
       active: true,
       bannerImage: '',
@@ -169,48 +237,72 @@ describe('promotionPayload — flash sales', () => {
     }
   }
 
-  it('sends a discount type the API enum accepts', () => {
-    // coupons.type is enum('fixed','percentage') — "flash_sale" would 422.
-    expect(promotionPayload(flashForm()).type).toBe('percentage')
+  it('sends the campaign kind the API stores', () => {
+    expect(promotionPayload(form({ kind: 'Free Shipping' })).kind).toBe('free_shipping')
   })
 
-  it('starts the promotion at the instant the admin picked', () => {
-    const payload = promotionPayload(flashForm())
-
-    expect(new Date(payload.starts_at).getTime()).toBe(new Date('2026-08-30T14:00').getTime())
+  it('sends no kind for a standard promotion', () => {
+    expect(promotionPayload(form()).kind).toBeNull()
   })
 
-  it('expires the promotion the set number of hours after it starts', () => {
-    const payload = promotionPayload(flashForm())
-    const window = new Date(payload.expires_at).getTime() - new Date(payload.starts_at).getTime()
-
-    expect(window).toBe(3 * HOUR)
-  })
-
-  it('honours a duration other than the three-hour default', () => {
-    const payload = promotionPayload(flashForm({ flashDurationHours: '6' }))
-    const window = new Date(payload.expires_at).getTime() - new Date(payload.starts_at).getTime()
-
-    expect(window).toBe(6 * HOUR)
-  })
-
-  it('sends no dates at all when the start is blank, so the API reports the missing field', () => {
-    const payload = promotionPayload(flashForm({ startDateTime: '' }))
-
-    expect(payload.starts_at).toBeNull()
-    expect(payload.expires_at).toBeNull()
-  })
-
-  it('sends no expiry when the duration is zero rather than expiring on the spot', () => {
-    expect(promotionPayload(flashForm({ flashDurationHours: '0' })).expires_at).toBeNull()
-  })
-
-  it('ignores the flash fields for an ordinary promotion', () => {
-    const payload = promotionPayload(flashForm({ type: 'Fixed Amount' }))
+  it('keeps the discount type independent of the campaign kind', () => {
+    // The whole point of the split: a BOGO can take a flat amount off.
+    const payload = promotionPayload(form({ kind: 'Buy One Get One', type: 'Fixed Amount' }))
 
     expect(payload.type).toBe('fixed')
-    expect(payload.starts_at).toBe('2026-08-30')
-    expect(payload.expires_at).toBeNull()
+    expect(payload.kind).toBe('bogo')
+  })
+
+  it('never lets a campaign kind reach the discount type', () => {
+    // calculateDiscount() treats anything but 'fixed' as a percentage, so a
+    // campaign label landing in `type` would silently discount every cart.
+    PROMOTION_KINDS.forEach(({ label }) => {
+      expect(['percentage', 'fixed']).toContain(promotionPayload(form({ kind: label })).type)
+    })
+  })
+
+  describe('flash sales', () => {
+    function flashForm(overrides = {}) {
+      return form({ kind: FLASH_SALE_KIND, ...overrides })
+    }
+
+    it('starts the promotion at the instant the admin picked', () => {
+      const payload = promotionPayload(flashForm())
+
+      expect(new Date(payload.starts_at).getTime()).toBe(new Date('2026-08-30T14:00').getTime())
+    })
+
+    it('expires the promotion the set number of hours after it starts', () => {
+      const payload = promotionPayload(flashForm())
+      const window = new Date(payload.expires_at).getTime() - new Date(payload.starts_at).getTime()
+
+      expect(window).toBe(3 * HOUR)
+    })
+
+    it('honours a duration other than the three-hour default', () => {
+      const payload = promotionPayload(flashForm({ flashDurationHours: '6' }))
+      const window = new Date(payload.expires_at).getTime() - new Date(payload.starts_at).getTime()
+
+      expect(window).toBe(6 * HOUR)
+    })
+
+    it('sends no dates at all when the start is blank, so the API reports the missing field', () => {
+      const payload = promotionPayload(flashForm({ startDateTime: '' }))
+
+      expect(payload.starts_at).toBeNull()
+      expect(payload.expires_at).toBeNull()
+    })
+
+    it('sends no expiry when the duration is zero rather than expiring on the spot', () => {
+      expect(promotionPayload(flashForm({ flashDurationHours: '0' })).expires_at).toBeNull()
+    })
+
+    it('leaves the plain date fields alone for every other kind', () => {
+      const payload = promotionPayload(form({ kind: 'Bundle Deal' }))
+
+      expect(payload.starts_at).toBe('2026-08-30')
+      expect(payload.expires_at).toBeNull()
+    })
   })
 })
 

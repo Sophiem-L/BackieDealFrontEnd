@@ -16,7 +16,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 
-// The reka-ui Select is replaced by a native one so a test can pick a type.
+// The reka-ui Select is replaced by a native one so a test can pick a value.
 const stubs = {
   AppHeader: { template: '<div />' },
   BaseButton: { template: '<button><slot /></button>' },
@@ -29,7 +29,8 @@ const stubs = {
       '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><slot /></select>',
   },
   // The trigger and its value render nothing: a <select> only accepts <option>
-  // children, and anything else in there makes setValue a no-op.
+  // children, and anything else in there makes setValue a no-op. That also
+  // takes the trigger's id with it, hence the positional helpers below.
   SelectTrigger: { render: () => null },
   SelectContent: { template: '<slot />' },
   SelectValue: { render: () => null },
@@ -40,18 +41,89 @@ function mountForm() {
   return mount(PromotionFormView, { global: { stubs } })
 }
 
-async function chooseFlashSale(wrapper) {
-  await wrapper.find('select').setValue('Flash Sale')
+// The combined promotion-type selector includes both the campaign kind and the
+// discount style in a single list.
+function typeSelect(wrapper) {
+  return wrapper.findAll('select')[0]
 }
 
-describe('PromotionFormView — flash sales', () => {
+async function chooseFlashSale(wrapper) {
+  await typeSelect(wrapper).setValue('Flash Sale|Percentage Discount')
+}
+
+describe('PromotionFormView — campaign kinds', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
   })
 
-  it('offers Flash Sale as a promotion type', () => {
-    expect(mountForm().text()).toContain('Flash Sale')
+  it('offers every campaign kind', () => {
+    const text = mountForm().text()
+
+    expect(text).toContain('Flash Sale - Percentage Discount')
+    expect(text).toContain('Buy One Get One - Percentage Discount')
+    expect(text).toContain('Free Shipping - Percentage Discount')
+    expect(text).toContain('Bundle Deal - Percentage Discount')
+    expect(text).toContain('Free Gift - Percentage Discount')
+    expect(text).toContain('Coupon - Percentage Discount')
+  })
+
+  it('keeps the discount choice inside the promotion type selector', () => {
+    const options = typeSelect(mountForm()).findAll('option').map((option) => option.text())
+
+    expect(options).toContain('Standard - Percentage Discount')
+    expect(options).toContain('Standard - Fixed Amount')
+    expect(options).toContain('Flash Sale - Fixed Amount')
+  })
+
+  it('starts a new promotion as a standard percentage discount', () => {
+    const wrapper = mountForm()
+
+    expect(typeSelect(wrapper).element.value).toBe('Standard|Percentage Discount')
+  })
+
+  it('sends the kind and the discount as separate choices', async () => {
+    // The point of the split: a BOGO can take a flat amount off.
+    const wrapper = mountForm()
+    await typeSelect(wrapper).setValue('Buy One Get One|Fixed Amount')
+    await wrapper.find('#name').setValue('Two for one')
+    await wrapper.find('#code').setValue('BOGO26')
+
+    await wrapper.findAll('button').find((button) => button.text().includes('Create Promotion')).trigger('click')
+    await flushPromises()
+
+    expect(savePromotion).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({ kind: 'Buy One Get One', type: 'Fixed Amount' }),
+      null,
+    )
+  })
+
+  it('marks the discount value as a percentage by default', () => {
+    expect(mountForm().find('.affix--suffix').text()).toBe('%')
+  })
+
+  it('marks the discount value as money once a fixed amount is chosen', async () => {
+    const wrapper = mountForm()
+    await typeSelect(wrapper).setValue('Standard|Fixed Amount')
+
+    expect(wrapper.find('.affix--suffix').exists()).toBe(false)
+    expect(wrapper.find('#discount').element.previousElementSibling.textContent).toBe('$')
+  })
+
+  it('leaves the dates alone for a kind that is not a flash sale', async () => {
+    const wrapper = mountForm()
+    await typeSelect(wrapper).setValue('Free Shipping|Percentage Discount')
+
+    expect(wrapper.find('#end').exists()).toBe(true)
+    expect(wrapper.find('#flashDuration').exists()).toBe(false)
+  })
+})
+
+describe('PromotionFormView — flash sales', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
   })
 
   it('replaces the end date with a duration once flash sale is picked', async () => {
@@ -95,10 +167,10 @@ describe('PromotionFormView — flash sales', () => {
     expect(wrapper.text()).toContain('8:00')
   })
 
-  it('restores the end date when the admin switches back to a normal promotion', async () => {
+  it('restores the end date when the admin switches back to a standard promotion', async () => {
     const wrapper = mountForm()
     await chooseFlashSale(wrapper)
-    await wrapper.find('select').setValue('Percentage Discount')
+    await typeSelect(wrapper).setValue('Standard|Percentage Discount')
 
     expect(wrapper.find('#end').exists()).toBe(true)
     expect(wrapper.find('#flashDuration').exists()).toBe(false)
@@ -118,7 +190,7 @@ describe('PromotionFormView — flash sales', () => {
     expect(savePromotion).toHaveBeenCalledWith(
       null,
       expect.objectContaining({
-        type: 'Flash Sale',
+        kind: 'Flash Sale',
         startDateTime: '2026-08-30T14:00',
         flashDurationHours: '3',
       }),
