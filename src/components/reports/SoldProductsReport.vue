@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   Select,
   SelectContent,
@@ -12,11 +12,20 @@ import ReportPanel from './ReportPanel.vue'
 import ReportTable from './ReportTable.vue'
 import GranularityTabs from './GranularityTabs.vue'
 import ReportExportMenu from './ReportExportMenu.vue'
-import { soldProducts, soldProductsSummary, productCategories } from '@/data/reports'
+import { fetchSoldProductsReport } from '@/services/reports'
+import { useAuthStore } from '@/stores/auth'
 import { currency } from '@/lib/format'
 
+const auth = useAuthStore()
 const granularity = ref('monthly')
 const category = ref('All Categories')
+
+const loading = ref(true)
+const error = ref('')
+// Base rows for the active granularity, straight from the API. Category
+// filtering and ranking happen in `rows` so the table and the summary strip
+// always read off the same scoped set.
+const reportTable = ref([])
 
 const COLUMNS = [
   { key: 'rank', label: '#' },
@@ -27,12 +36,18 @@ const COLUMNS = [
   { key: 'revenue', label: 'Revenue', align: 'right' },
 ]
 
+// Derived from the live data so the filter can never offer a category the
+// current period doesn't actually contain.
+const productCategories = computed(() => [
+  'All Categories',
+  ...new Set(reportTable.value.map((row) => row.category)),
+])
+
 const rows = computed(() => {
-  const bucket = soldProducts[granularity.value]
   const scoped =
     category.value === 'All Categories'
-      ? bucket
-      : bucket.filter((row) => row.category === category.value)
+      ? reportTable.value
+      : reportTable.value.filter((row) => row.category === category.value)
 
   return [...scoped]
     .sort((a, b) => b.units - a.units)
@@ -42,14 +57,19 @@ const rows = computed(() => {
 // Summary follows the category filter rather than reporting the whole bucket,
 // so the strip and the table below it never disagree.
 const summary = computed(() => {
-  if (category.value === 'All Categories') return soldProductsSummary[granularity.value]
+  const unitsByCategory = new Map()
+  for (const row of rows.value) {
+    unitsByCategory.set(row.category, (unitsByCategory.get(row.category) ?? 0) + row.units)
+  }
+  const top = [...unitsByCategory.entries()].sort((a, b) => b[1] - a[1])[0]
 
-  const units = rows.value.reduce((sum, row) => sum + row.units, 0)
   return {
-    units,
+    units: rows.value.reduce((sum, row) => sum + row.units, 0),
+    // The report API doesn't expose order counts, so the strip shows '—' for
+    // this stat rather than a fabricated figure.
     orders: null,
     distinctProducts: rows.value.length,
-    topCategory: category.value,
+    topCategory: top ? top[0] : '—',
   }
 })
 
@@ -59,6 +79,37 @@ const unitsPeak = computed(() => Math.max(...rows.value.map((row) => row.units),
 function sharePct(units) {
   return totalUnits.value ? Math.round((units / totalUnits.value) * 1000) / 10 : 0
 }
+
+async function loadReport() {
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await fetchSoldProductsReport(
+      { granularity: granularity.value },
+      auth.accessToken,
+    )
+    reportTable.value = result.rows
+
+    // A category from a previous period may not exist in the new one; falling
+    // back keeps the dashboard legible instead of showing an empty table.
+    if (!productCategories.value.includes(category.value)) {
+      category.value = 'All Categories'
+    }
+  } catch (err) {
+    reportTable.value = []
+    error.value = err.message || 'Unable to load the report. Please try again.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadReport()
+})
+
+watch(granularity, () => {
+  loadReport()
+})
 
 const EXPORT_COLUMNS = [
   { key: 'rank', label: '#', width: 6, align: 'right', value: (r) => r.rank },
@@ -107,46 +158,52 @@ const EXPORT_COLUMNS = [
       />
     </template>
 
-    <!-- Summary strip -->
-    <ul class="strip">
-      <li>
-        <span class="strip__label">Units sold</span>
-        <span class="strip__value">{{ summary.units.toLocaleString() }}</span>
-      </li>
-      <li>
-        <span class="strip__label">Orders</span>
-        <span class="strip__value">{{ summary.orders === null ? '—' : summary.orders.toLocaleString() }}</span>
-      </li>
-      <li>
-        <span class="strip__label">Products</span>
-        <span class="strip__value">{{ summary.distinctProducts.toLocaleString() }}</span>
-      </li>
-      <li>
-        <span class="strip__label">Top category</span>
-        <span class="strip__value strip__value--text">{{ summary.topCategory }}</span>
-      </li>
-    </ul>
+    <p v-if="loading" class="state">Loading sold products…</p>
 
-    <ReportTable :columns="COLUMNS" :row-count="rows.length">
-      <tr v-for="row in rows" :key="row.productId">
-        <td><span class="rankbadge">{{ row.rank }}</span></td>
-        <td class="cell-name">
-          {{ row.name }}
-          <span class="cell-sku">{{ row.sku }}</span>
-        </td>
-        <td><span class="chip">{{ row.category }}</span></td>
-        <td>
-          <div class="units">
-            <span class="units__count">{{ row.units.toLocaleString() }}</span>
-            <div class="units__track">
-              <div class="units__fill" :style="{ width: (row.units / unitsPeak) * 100 + '%' }"></div>
+    <p v-else-if="error" class="state state--error">{{ error }}</p>
+
+    <template v-else>
+      <!-- Summary strip -->
+      <ul class="strip">
+        <li>
+          <span class="strip__label">Units sold</span>
+          <span class="strip__value">{{ summary.units.toLocaleString() }}</span>
+        </li>
+        <li>
+          <span class="strip__label">Orders</span>
+          <span class="strip__value">{{ summary.orders === null ? '—' : summary.orders.toLocaleString() }}</span>
+        </li>
+        <li>
+          <span class="strip__label">Products</span>
+          <span class="strip__value">{{ summary.distinctProducts.toLocaleString() }}</span>
+        </li>
+        <li>
+          <span class="strip__label">Top category</span>
+          <span class="strip__value strip__value--text">{{ summary.topCategory }}</span>
+        </li>
+      </ul>
+
+      <ReportTable :columns="COLUMNS" :row-count="rows.length">
+        <tr v-for="row in rows" :key="row.productId">
+          <td><span class="rankbadge">{{ row.rank }}</span></td>
+          <td class="cell-name">
+            {{ row.name }}
+            <span class="cell-sku">{{ row.sku }}</span>
+          </td>
+          <td><span class="chip">{{ row.category }}</span></td>
+          <td>
+            <div class="units">
+              <span class="units__count">{{ row.units.toLocaleString() }}</span>
+              <div class="units__track">
+                <div class="units__fill" :style="{ width: (row.units / unitsPeak) * 100 + '%' }"></div>
+              </div>
             </div>
-          </div>
-        </td>
-        <td class="table__right share">{{ sharePct(row.units) }}%</td>
-        <td class="table__right money">{{ currency.format(row.revenue) }}</td>
-      </tr>
-    </ReportTable>
+          </td>
+          <td class="table__right share">{{ sharePct(row.units) }}%</td>
+          <td class="table__right money">{{ currency.format(row.revenue) }}</td>
+        </tr>
+      </ReportTable>
+    </template>
   </ReportPanel>
 </template>
 
@@ -267,5 +324,17 @@ const EXPORT_COLUMNS = [
   font-size: 0.86rem;
   font-weight: 600;
   color: var(--text-strong);
+}
+
+.state {
+  margin: 0;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-subtle);
+
+  &--error {
+    color: var(--danger);
+  }
 }
 </style>
