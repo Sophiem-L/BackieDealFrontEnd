@@ -11,11 +11,16 @@ import { useAuthStore } from '@/stores/auth'
 //     today:      { orders, revenue },
 //     this_month: { orders, revenue },
 //     this_year:  { orders, revenue },
+//     orders_per_day:   [{ date, day, orders }]  — Mon..Sun, zero-filled
+//     status_breakdown: [{ status, count }]      — all four statuses
+//     recent_orders:    [{ id, order_number, customer, item, amount, status }]
 //   }
 export const useDashboardStore = defineStore('dashboard', () => {
   const stats = ref(null)
   const loading = ref(false)
   const error = ref('')
+
+  const lowStock = ref([])
 
   async function fetchStats() {
     const auth = useAuthStore()
@@ -33,5 +38,31 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
   }
 
-  return { stats, loading, error, fetchStats }
+  // Low stock reuses the existing stock endpoint rather than duplicating the
+  // threshold logic in the dashboard payload.
+  // Contract: GET /admin/stock/alerts ->
+  //   data: [{ id, name, sku, stock_quantity, min_stock_alert }]
+  //
+  // Deliberately quiet on failure: the panel is already hidden from callers
+  // without `stock.view`, so a rejection here should not take over the page
+  // that the rest of the dashboard rendered fine.
+  async function fetchLowStock() {
+    const auth = useAuthStore()
+    try {
+      const response = await apiFetch('/admin/stock/alerts', { token: auth.accessToken })
+      const items = Array.isArray(response?.data) ? response.data : []
+      lowStock.value = items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        sku: item.sku,
+        stock: Number(item.stock_quantity) || 0,
+      }))
+      return true
+    } catch {
+      lowStock.value = []
+      return false
+    }
+  }
+
+  return { stats, loading, error, lowStock, fetchStats, fetchLowStock }
 })

@@ -1,11 +1,20 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppSidebar from '@/components/AppSidebar.vue'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const ui = useUiStore()
+const auth = useAuthStore()
+
+// The persisted session carries whatever permissions it held when it was
+// stored. Re-reading the profile on boot means a grant changed server-side
+// takes effect on the next page load instead of lingering in localStorage.
+onMounted(() => {
+  if (auth.isAuthenticated) auth.refreshProfile()
+})
 // Routes with meta.layout === 'blank' (e.g. login) render full-bleed, no sidebar.
 const isBlank = computed(() => route.meta.layout === 'blank')
 </script>

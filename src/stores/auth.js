@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
+import { can, canAny } from '@/lib/permissions'
 import { apiFetch, resetUnauthenticatedHandler } from '@/services/api'
 
 // Persisted so a page reload keeps the admin signed in.
@@ -22,6 +23,19 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref('')
 
   const isAuthenticated = computed(() => !!accessToken.value)
+
+  // `permissions` rides inside `user`, so the existing persist() already
+  // carries it through a reload. It can go stale between reloads, which is
+  // why App.vue refreshes from /auth/me on boot.
+  const permissions = computed(() => user.value?.permissions ?? [])
+
+  function hasPermission(permission) {
+    return can(permissions.value, permission)
+  }
+
+  function hasAnyPermission(required) {
+    return canAny(permissions.value, required)
+  }
 
   function persist() {
     localStorage.setItem(
@@ -86,6 +100,20 @@ export const useAuthStore = defineStore('auth', () => {
     clear()
   }
 
+  // GET /admin/auth/me -> { data: { ...profile, permissions } }
+  // Re-reads the profile so a grant changed server-side takes effect on the
+  // next page load rather than lingering in localStorage.
+  async function refreshProfile() {
+    if (!accessToken.value) return
+    try {
+      const response = await apiFetch('/admin/auth/me', { token: accessToken.value })
+      if (response?.data) setUser(response.data)
+    } catch {
+      // A failure here leaves the persisted user in place; the router guard
+      // and API 403s still hold the line.
+    }
+  }
+
   return {
     accessToken,
     refreshToken,
@@ -96,5 +124,9 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     logout,
     setUser,
+    permissions,
+    hasPermission,
+    hasAnyPermission,
+    refreshProfile,
   }
 })

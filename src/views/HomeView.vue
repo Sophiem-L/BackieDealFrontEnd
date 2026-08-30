@@ -2,31 +2,27 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
-import BaseButton from '@/components/BaseButton.vue'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const dashboard = useDashboardStore()
+const auth = useAuthStore()
 
-// Pull live stats on load. If the request fails (e.g. the endpoint isn't
-// available yet) the page falls back to SAMPLE below so it never looks broken.
-onMounted(() => dashboard.fetchStats())
+// Low stock comes from the stock API, which manager and staff cannot call.
+// Gate the request as well as the panel so those roles never trigger a 403.
+const canSeeStock = computed(() => auth.hasPermission('stock.view'))
 
-// Fallback mirrors the GET /admin/dashboard contract, with sample figures in
-// the same computer-shop domain as the rest of the admin.
-const SAMPLE = {
-  total_orders: 142,
-  total_revenue: 48320,
-  total_promotions: 24,
-  total_products: 1284,
-  total_customers: 938,
-  today: { orders: 12, revenue: 3840 },
-  this_month: { orders: 142, revenue: 48320 },
-  this_year: { orders: 1680, revenue: 612400 },
-}
+onMounted(() => {
+  dashboard.fetchStats()
+  if (canSeeStock.value) dashboard.fetchLowStock()
+})
 
-const data = computed(() => dashboard.stats ?? SAMPLE)
-const usingSample = computed(() => !dashboard.stats)
+const stats = computed(() => dashboard.stats)
+const loading = computed(() => dashboard.loading)
+const error = computed(() => dashboard.error)
+// Only the first load shows the skeleton; a refresh keeps the old figures up.
+const showSkeleton = computed(() => loading.value && !stats.value)
 
 function money(value) {
   return '$' + (Number(value) || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
@@ -37,41 +33,36 @@ function count(value) {
 
 // KPI cards bound to the backend's top-level totals, in display order.
 const kpis = computed(() => [
-  { key: 'products', label: 'Total Products', value: count(data.value.total_products), icon: 'products', tone: 'neutral' },
-  { key: 'customers', label: 'Total Customers', value: count(data.value.total_customers), icon: 'customers', tone: 'neutral' },
-  { key: 'orders', label: 'Total Orders', value: count(data.value.total_orders), icon: 'orders', tone: 'neutral' },
+  { key: 'products', label: 'Total Products', value: count(stats.value?.total_products), icon: 'products', tone: 'neutral' },
+  { key: 'customers', label: 'Total Customers', value: count(stats.value?.total_customers), icon: 'customers', tone: 'neutral' },
+  { key: 'orders', label: 'Total Orders', value: count(stats.value?.total_orders), icon: 'orders', tone: 'neutral' },
   // A count, not a currency amount — formatted with count() rather than money().
-  { key: 'promotions', label: 'Total Promotions', value: count(data.value.total_promotions), icon: 'promotions', tone: 'accent' },
+  { key: 'promotions', label: 'Total Promotions', value: count(stats.value?.total_promotions), icon: 'promotions', tone: 'accent' },
 ])
 
 // Today / this month / this year — each { orders, revenue } from the contract.
 const periods = computed(() => [
-  { key: 'today', label: 'Today', orders: count(data.value.today?.orders), revenue: money(data.value.today?.revenue) },
-  { key: 'month', label: 'This Month', orders: count(data.value.this_month?.orders), revenue: money(data.value.this_month?.revenue) },
-  { key: 'year', label: 'This Year', orders: count(data.value.this_year?.orders), revenue: money(data.value.this_year?.revenue) },
+  { key: 'today', label: 'Today', orders: count(stats.value?.today?.orders), revenue: money(stats.value?.today?.revenue) },
+  { key: 'month', label: 'This Month', orders: count(stats.value?.this_month?.orders), revenue: money(stats.value?.this_month?.revenue) },
+  { key: 'year', label: 'This Year', orders: count(stats.value?.this_year?.orders), revenue: money(stats.value?.this_year?.revenue) },
 ])
 
-// Orders created per day, Mon -> Sun — drives the signature CSS bar chart below.
-const week = [
-  { day: 'Mon', orders: 12 },
-  { day: 'Tue', orders: 18 },
-  { day: 'Wed', orders: 15 },
-  { day: 'Thu', orders: 23 },
-  { day: 'Fri', orders: 28 },
-  { day: 'Sat', orders: 35 },
-  { day: 'Sun', orders: 21 },
-]
-const weekPeak = Math.max(...week.map((d) => d.orders))
+/* ---------------------------------------------------------------------------
+ * Orders created per day, Mon -> Sun — the signature CSS bar chart.
+ * The API zero-fills quiet days, so the series is always seven long and the
+ * columns keep their positions even in a week with no orders.
+ * ------------------------------------------------------------------------- */
+const week = computed(() => stats.value?.orders_per_day ?? [])
+const weekPeak = computed(() => Math.max(...week.value.map((d) => d.orders), 0))
 const bars = computed(() =>
-  week.map((d) => ({
+  week.value.map((d) => ({
     ...d,
-    height: Math.round((d.orders / weekPeak) * 100),
-    isPeak: d.orders === weekPeak,
+    // A week with no orders has peak 0; every bar is then flat rather than NaN.
+    height: weekPeak.value > 0 ? Math.round((d.orders / weekPeak.value) * 100) : 0,
+    isPeak: weekPeak.value > 0 && d.orders === weekPeak.value,
   })),
 )
-const weekTotal = computed(() =>
-  count(week.reduce((sum, d) => sum + d.orders, 0)),
-)
+const weekTotal = computed(() => count(week.value.reduce((sum, d) => sum + d.orders, 0)))
 
 /* ---------------------------------------------------------------------------
  * Order status mix — a donut, because the job is part-to-whole across four
@@ -86,7 +77,7 @@ const weekTotal = computed(() =>
  *
  * These steps were checked with the palette validator against a white surface:
  * all four sit inside the lightness band, clear the chroma floor, clear 3:1
- * contrast, and the closest normal-vision pair is ΔE 16.6 (floor is 15).
+ * contrast, and the closest normal-vision pair is deltaE 16.6 (floor is 15).
  *
  * The steps now live in _tokens.scss so they can be re-lightened for the dark
  * surface, where the white-validated values fall below 3:1. Consumed via inline
@@ -99,21 +90,24 @@ const STATUS_COLORS = {
   processing: 'var(--chart-processing)',
   cancelled: 'var(--chart-cancelled)',
 }
+const statusLabels = {
+  pending: 'Pending',
+  processing: 'Processing',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+}
 
-// Counts mirror the Orders page tabs (total 142).
-const statusTotal = 142
-const statuses = [
-  { key: 'completed', label: 'Completed', count: 98 },
-  { key: 'pending', label: 'Pending', count: 24 },
-  { key: 'processing', label: 'Processing', count: 12 },
-  { key: 'cancelled', label: 'Cancelled', count: 8 },
-]
+const statuses = computed(() => stats.value?.status_breakdown ?? [])
+const statusTotal = computed(() => statuses.value.reduce((sum, s) => sum + s.count, 0))
 
 const statusBreakdown = computed(() =>
-  statuses.map((s) => ({
-    ...s,
-    color: STATUS_COLORS[s.key],
-    pct: Math.round((s.count / statusTotal) * 100),
+  statuses.value.map((s) => ({
+    key: s.status,
+    label: statusLabels[s.status] ?? s.status,
+    count: s.count,
+    color: STATUS_COLORS[s.status],
+    // Guard the empty case: no orders means no share, not a division by zero.
+    pct: statusTotal.value > 0 ? Math.round((s.count / statusTotal.value) * 100) : 0,
   })),
 )
 
@@ -129,10 +123,11 @@ const donutSegments = computed(() => {
   let cursor = 0
 
   return statusBreakdown.value.map((s) => {
-    const arc = statusTotal > 0 ? (s.count / statusTotal) * CIRCUMFERENCE : 0
+    const arc = statusTotal.value > 0 ? (s.count / statusTotal.value) * CIRCUMFERENCE : 0
     // Shorten each arc by the gap so neighbours never touch. Tiny slices keep a
-    // sliver rather than collapsing to nothing.
-    const drawn = Math.max(arc - GAP, 1)
+    // sliver rather than collapsing to nothing — but a status with no orders at
+    // all draws nothing.
+    const drawn = s.count > 0 ? Math.max(arc - GAP, 1) : 0
     const segment = {
       ...s,
       dash: `${drawn} ${CIRCUMFERENCE - drawn}`,
@@ -150,33 +145,23 @@ const centreReadout = computed(() => {
   const active = statusBreakdown.value.find((s) => s.key === activeStatus.value)
   return active
     ? { value: count(active.count), caption: active.label }
-    : { value: count(statusTotal), caption: 'orders' }
+    : { value: count(statusTotal.value), caption: 'orders' }
 })
 
-// Recent orders — a slice of the Orders page data, newest first.
-const recentOrders = [
-  { id: '#ORD-1042', customer: 'Sarah Jenkins', item: 'Custom PC Build', amount: '$4,299.00', status: 'pending' },
-  { id: '#ORD-1041', customer: 'Michael Chen', item: 'Gaming Peripherals', amount: '$249.98', status: 'processing' },
-  { id: '#ORD-1040', customer: 'David Smith', item: 'Upgrade Kit', amount: '$385.50', status: 'completed' },
-  { id: '#ORD-1039', customer: 'Emma Wilson', item: 'Display Monitor', amount: '$549.00', status: 'pending' },
-  { id: '#ORD-1038', customer: 'James Carter', item: 'External Storage', amount: '$199.00', status: 'completed' },
-]
-const statusLabels = {
-  pending: 'Pending',
-  processing: 'Processing',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-}
+// Recent orders — the newest five, already flattened by the API.
+const recentOrders = computed(() =>
+  (stats.value?.recent_orders ?? []).map((order) => ({
+    ...order,
+    label: '#' + order.order_number,
+    amountLabel: money(order.amount),
+  })),
+)
 
-// Low stock — sourced from the Products page inventory.
-const lowStock = [
-  { id: 4, name: 'Corsair Dominator Platinum 64GB DDR5', sku: 'COR-DP-64G5', stock: 0 },
-  { id: 3, name: 'ASUS ROG Maximus Z790 Dark Hero', sku: 'AS-MAX-Z790', stock: 4 },
-  { id: 6, name: 'Logitech G Pro X Superlight', sku: 'LOG-GPX-SL', stock: 6 },
-]
+const lowStock = computed(() => dashboard.lowStock)
 
+// `id` is the order's uuid, which is what the detail route resolves on.
 function openOrder(order) {
-  router.push({ name: 'order-detail', params: { id: order.id.replace(/^#/, '') } })
+  router.push({ name: 'order-detail', params: { id: order.id } })
 }
 </script>
 
@@ -192,6 +177,11 @@ function openOrder(order) {
           <p class="intro__sub">Here's how Beckie Deal is performing.</p>
         </div>
       </section>
+
+      <!-- The dashboard is read-only, so a failure is reported and left there:
+           there is nothing for the user to retry beyond reloading. -->
+      <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
+      <p v-else-if="showSkeleton" class="notice" role="status">Loading dashboard…</p>
 
       <!-- KPI cards -->
       <section class="stats">
@@ -219,6 +209,23 @@ function openOrder(order) {
           </span>
           <p class="stat__value">{{ kpi.value }}</p>
           <p class="stat__label">{{ kpi.label }}</p>
+        </article>
+      </section>
+
+      <!-- Today / this month / this year, each { orders, revenue } -->
+      <section class="periods">
+        <article v-for="period in periods" :key="period.key" class="period-card">
+          <p class="period-card__label">{{ period.label }}</p>
+          <div class="period-card__rows">
+            <div class="period-card__row">
+              <span class="period-card__num">{{ period.orders }}</span>
+              <span class="period-card__cap">Orders</span>
+            </div>
+            <div class="period-card__row">
+              <span class="period-card__num">{{ period.revenue }}</span>
+              <span class="period-card__cap">Revenue</span>
+            </div>
+          </div>
         </article>
       </section>
 
@@ -326,7 +333,7 @@ function openOrder(order) {
             <RouterLink class="panel__link" :to="{ name: 'orders' }">View all</RouterLink>
           </header>
 
-          <table class="mini">
+          <table v-if="recentOrders.length" class="mini">
             <tbody>
               <tr
                 v-for="order in recentOrders"
@@ -336,26 +343,29 @@ function openOrder(order) {
                 @keyup.enter="openOrder(order)"
               >
                 <td>
-                  <p class="mini__id">{{ order.id }}</p>
+                  <p class="mini__id">{{ order.label }}</p>
                   <p class="mini__sub">{{ order.customer }}</p>
                 </td>
                 <td class="mini__item">{{ order.item }}</td>
-                <td class="mini__amount">{{ order.amount }}</td>
+                <td class="mini__amount">{{ order.amountLabel }}</td>
                 <td>
                   <span class="badge" :class="`badge--${order.status}`">{{ statusLabels[order.status] }}</span>
                 </td>
               </tr>
             </tbody>
           </table>
+          <p v-else-if="!showSkeleton" class="panel__empty">No orders yet.</p>
         </article>
 
-        <article class="panel">
+        <!-- Stock is an admin-only API; manager and staff never see this panel. -->
+        <article v-if="canSeeStock" class="panel">
           <header class="panel__head">
             <h3 class="panel__title">Low stock alerts</h3>
             <RouterLink class="panel__link" :to="{ name: 'products' }">Manage</RouterLink>
           </header>
 
-          <ul class="alerts">
+          <p v-if="!lowStock.length" class="panel__empty">Every product is above its stock threshold.</p>
+          <ul v-else class="alerts">
             <li v-for="item in lowStock" :key="item.id" class="alert">
               <span class="alert__thumb" :class="{ 'alert__thumb--out': item.stock === 0 }" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none">
@@ -428,27 +438,6 @@ function openOrder(order) {
   }
 }
 
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.5rem 0.8rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  border-radius: 999px;
-  white-space: nowrap;
-
-  i {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  &--live { background: var(--success-bg); color: var(--success); i { background: var(--success); } }
-  &--sample { background: var(--bg); color: var(--text-muted); i { background: var(--text-subtle); } }
-}
-
 .notice {
   margin: 0;
   padding: 0.7rem 0.9rem;
@@ -457,6 +446,12 @@ function openOrder(order) {
   background: rgb(var(--accent-rgb) / 0.12);
   border: 1px solid rgb(var(--accent-rgb) / 0.4);
   border-radius: 10px;
+
+  &--error {
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-color: var(--danger);
+  }
 }
 
 /* KPI cards */
@@ -598,6 +593,14 @@ function openOrder(order) {
     white-space: nowrap;
 
     &:hover { text-decoration: none; opacity: 0.8; }
+  }
+
+  &__empty {
+    margin: 0;
+    padding: 1.5rem 0;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
   }
 }
 
