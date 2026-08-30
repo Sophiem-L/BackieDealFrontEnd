@@ -1,89 +1,18 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
+import { fetchStockDetail } from '@/services/stock'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
-// Sample inventory records (stands in for an API fetch by id), keyed to the
-// rows on the Stock Management list.
-const records = {
-  1: {
-    name: 'NVIDIA RTX 4090 Founders Edition',
-    sku: 'NV-4090-FE',
-    category: 'Graphics Cards',
-    location: 'A-12-04',
-    startDate: '23/june/26',
-    lastUpdated: '28/june/26',
-    onHand: 8,
-    threshold: 5,
-    unitPrice: 1599,
-    availability: 'healthy',
-  },
-  2: {
-    name: 'AMD Ryzen 9 7950X',
-    sku: 'AMD-7950X-AM5',
-    category: 'Processors',
-    location: 'A-04-11',
-    startDate: '13/june/26',
-    lastUpdated: '26/june/26',
-    onHand: 3,
-    threshold: 10,
-    unitPrice: 589,
-    availability: 'low-stock',
-  },
-  3: {
-    name: 'Corsair Vengeance 32GB DDR5',
-    sku: 'COR-32D5-RGB',
-    category: 'Memory',
-    location: 'C-05-02',
-    startDate: '05/june/26',
-    lastUpdated: '24/june/26',
-    onHand: 45,
-    threshold: 20,
-    unitPrice: 149,
-    availability: 'healthy',
-  },
-  4: {
-    name: 'Samsung 990 Pro 2TB NVMe',
-    sku: 'SAM-990P-2TB',
-    category: 'Storage',
-    location: 'C-08-01',
-    startDate: '08/june/26',
-    lastUpdated: '22/june/26',
-    onHand: 0,
-    threshold: 15,
-    unitPrice: 179,
-    availability: 'out-of-stock',
-  },
-  5: {
-    name: 'ASUS ROG Thor 1200W PSU',
-    sku: 'AS-THOR-1200',
-    category: 'Power Supplies',
-    location: 'A-01-09',
-    startDate: '01/june/26',
-    lastUpdated: '21/june/26',
-    onHand: 4,
-    threshold: 3,
-    unitPrice: 329,
-    availability: 'healthy',
-  },
-  6: {
-    name: 'NZXT H9 Flow Case (White)',
-    sku: 'NZXT-H9F-W',
-    category: 'Cases',
-    location: 'W-04-12',
-    startDate: '04/june/26',
-    lastUpdated: '20/june/26',
-    onHand: 12,
-    threshold: 8,
-    unitPrice: 159,
-    availability: 'healthy',
-  },
-}
-
-const item = computed(() => records[route.params.id] || records[1])
+const loading = ref(true)
+const error = ref('')
+const item = ref(null)
+const history = ref([])
 
 const availabilityLabels = {
   healthy: 'In Stock',
@@ -91,20 +20,46 @@ const availabilityLabels = {
   'out-of-stock': 'Out of Stock',
 }
 
-// Sample adjustment history (most recent first).
-const history = ref([
-  { id: 1, date: '28/june/26', type: 'Inventory Recount', change: 2, balance: 8, by: 'Admin User' },
-  { id: 2, date: '24/june/26', type: 'Customer Return', change: 1, balance: 6, by: 'Sophie L.' },
-  { id: 3, date: '18/june/26', type: 'Damaged Goods', change: -1, balance: 5, by: 'Admin User' },
-  { id: 4, date: '12/june/26', type: 'Supplier Delivery', change: 6, balance: 6, by: 'Admin User' },
-])
-
 function signed(value) {
   return value > 0 ? `+${value}` : `${value}`
 }
+
 function thumbInitials(name) {
-  return name.replace(/[^A-Za-z0-9 ]/g, '').slice(0, 2).toUpperCase()
+  return String(name ?? '')
+    .replace(/[^A-Za-z0-9 ]/g, '')
+    .slice(0, 2)
+    .toUpperCase()
 }
+
+const brokenThumb = ref(false)
+function onThumbError() {
+  brokenThumb.value = true
+}
+
+async function loadDetail() {
+  const id = route.params.id
+  if (!id) return
+
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await fetchStockDetail(id, auth.accessToken)
+    item.value = result.item
+    history.value = result.movements
+  } catch (err) {
+    error.value = err.message || 'Unable to load stock details. Please try again.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadDetail()
+})
+
+watch(() => route.params.id, () => {
+  loadDetail()
+})
 </script>
 
 <template>
@@ -112,71 +67,90 @@ function thumbInitials(name) {
     <AppHeader title="Inventory & Stock Control" />
 
     <div class="page__body">
-      <!-- Heading -->
-      <section class="lead">
-        <div class="lead__text">
-          <div class="lead__row">
-            <button type="button" class="lead__back" aria-label="Back to stock management" @click="router.back()">
-              <svg viewBox="0 0 24 24" fill="none"><path d="m15 6-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            </button>
-            <h2 class="lead__title">{{ item.name }}</h2>
-            <span class="badge" :class="`badge--${item.availability}`">{{ availabilityLabels[item.availability] }}</span>
-          </div>
+      <div v-if="loading" class="lead">
+        <p class="muted">Loading stock details...</p>
+      </div>
+
+      <div v-else-if="error" class="lead">
+        <div class="lead__row">
+          <button type="button" class="lead__back" aria-label="Back to stock management" @click="router.back()">
+            <svg viewBox="0 0 24 24" fill="none"><path d="m15 6-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </button>
+          <p class="error-text">{{ error }}</p>
         </div>
-      </section>
+      </div>
 
-      <div class="grid">
-        <!-- Adjustment history -->
-        <section class="table-card">
-          <header class="table-card__head">
-            <h3 class="table-card__title">Adjustment History</h3>
-          </header>
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Change</th>
-                <th>Balance</th>
-                <th>Adjusted By</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="entry in history" :key="entry.id">
-                <td class="muted">{{ entry.date }}</td>
-                <td>{{ entry.type }}</td>
-                <td>
-                  <span class="change" :class="entry.change >= 0 ? 'change--up' : 'change--down'">{{ signed(entry.change) }}</span>
-                </td>
-                <td class="balance">{{ entry.balance }} units</td>
-                <td class="muted">{{ entry.by }}</td>
-              </tr>
-              <tr v-if="history.length === 0">
-                <td colspan="5" class="table__empty">No adjustments recorded yet.</td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
-
-        <!-- Product information -->
-        <section class="card">
-          <h3 class="card__title">Product Information</h3>
-          <div class="product">
-            <span class="product__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
-            <div>
-              <p class="product__name">{{ item.name }}</p>
-              <p class="product__sku">SKU: {{ item.sku }}</p>
+      <template v-else-if="item">
+        <section class="lead">
+          <div class="lead__text">
+            <div class="lead__row">
+              <button type="button" class="lead__back" aria-label="Back to stock management" @click="router.back()">
+                <svg viewBox="0 0 24 24" fill="none"><path d="m15 6-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </button>
+              <h2 class="lead__title">{{ item.name }}</h2>
+              <span class="badge" :class="`badge--${item.availability}`">{{ availabilityLabels[item.availability] }}</span>
             </div>
           </div>
-
-          <dl class="info">
-            <div class="info__row"><dt>Category</dt><dd>{{ item.category }}</dd></div>
-            <div class="info__row"><dt>Warehouse Location</dt><dd>{{ item.location }}</dd></div>
-            <div class="info__row"><dt>Start Date</dt><dd>{{ item.startDate }}</dd></div>
-            <div class="info__row"><dt>Last Updated</dt><dd>{{ item.lastUpdated }}</dd></div>
-          </dl>
         </section>
-      </div>
+
+        <div class="grid">
+          <section class="table-card">
+            <header class="table-card__head">
+              <h3 class="table-card__title">Adjustment History</h3>
+            </header>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Change</th>
+                  <th>Balance</th>
+                  <th>Adjusted By</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="entry in history" :key="entry.id">
+                  <td class="muted">{{ entry.date }}</td>
+                  <td>{{ entry.type }}</td>
+                  <td>
+                    <span class="change" :class="entry.change >= 0 ? 'change--up' : 'change--down'">{{ signed(entry.change) }}</span>
+                  </td>
+                  <td class="balance">{{ entry.balance }} units</td>
+                  <td class="muted">{{ entry.by }}</td>
+                </tr>
+                <tr v-if="history.length === 0">
+                  <td colspan="5" class="table__empty">No adjustments recorded yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="card">
+            <h3 class="card__title">Product Information</h3>
+            <div class="product">
+              <img
+                v-if="item.thumbnail && !brokenThumb"
+                :src="item.thumbnail"
+                :alt="item.name"
+                class="product__thumb product__thumb--img"
+                @error="onThumbError"
+              />
+              <span v-else class="product__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
+              <div>
+                <p class="product__name">{{ item.name }}</p>
+                <p class="product__sku">SKU: {{ item.sku }}</p>
+              </div>
+            </div>
+
+            <dl class="info">
+              <div class="info__row"><dt>Category</dt><dd>{{ item.category }}</dd></div>
+              <div class="info__row"><dt>Warehouse Location</dt><dd>{{ item.location }}</dd></div>
+              <div class="info__row"><dt>Start Date</dt><dd>{{ item.startDate }}</dd></div>
+              <div class="info__row"><dt>Last Updated</dt><dd>{{ item.lastUpdated }}</dd></div>
+            </dl>
+          </section>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -196,7 +170,6 @@ function thumbInitials(name) {
   }
 }
 
-/* Heading */
 .lead {
   display: flex;
   align-items: flex-end;
@@ -230,7 +203,6 @@ function thumbInitials(name) {
   &__title { margin: 0; font-size: 1.4rem; font-weight: 700; color: var(--text-strong); }
 }
 
-/* Layout */
 .grid {
   display: grid;
   grid-template-columns: 1fr 320px;
@@ -240,7 +212,6 @@ function thumbInitials(name) {
   @media (max-width: 900px) { grid-template-columns: 1fr; }
 }
 
-/* History table */
 .table-card {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
@@ -293,7 +264,6 @@ function thumbInitials(name) {
 
 .balance { font-weight: 600; }
 
-/* Product info card */
 .card {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
@@ -329,10 +299,20 @@ function thumbInitials(name) {
     font-size: 0.78rem;
     font-weight: 700;
     flex-shrink: 0;
+
+    &--img {
+      object-fit: cover;
+    }
   }
 
   &__name { margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--text-strong); }
   &__sku { margin: 0.2rem 0 0; font-size: 0.74rem; color: var(--text-subtle); }
+}
+
+.error-text {
+  color: var(--danger);
+  font-size: 0.9rem;
+  margin: 0;
 }
 
 .info {
