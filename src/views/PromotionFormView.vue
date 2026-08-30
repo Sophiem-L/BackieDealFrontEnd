@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -13,7 +13,14 @@ import {
 } from '@/components/ui/select'
 import { FORM_SELECT } from '@/lib/selectPresets'
 import { uploadImage } from '@/services/media'
-import { fetchPromotion, promotionToForm, savePromotion } from '@/services/promotions'
+import {
+  DEFAULT_FLASH_HOURS,
+  FLASH_SALE_TYPE,
+  fetchPromotion,
+  promotionToForm,
+  savePromotion,
+  toDateTimeLocal,
+} from '@/services/promotions'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -25,6 +32,7 @@ const isEdit = computed(() => Boolean(route.params.id))
 const promotionTypes = [
   'Percentage Discount',
   'Fixed Amount',
+  FLASH_SALE_TYPE,
 ]
 
 const form = reactive({
@@ -39,6 +47,10 @@ const form = reactive({
   minimumSpend: '0.00',
   startDate: '',
   endDate: '',
+  // A flash sale is scheduled as an instant plus a length, not as two dates —
+  // the whole point is a window measured in hours.
+  startDateTime: '',
+  flashDurationHours: String(DEFAULT_FLASH_HOURS),
   totalLimit: '',
   perCustomerLimit: '',
   currentUsage: 0,
@@ -47,6 +59,34 @@ const form = reactive({
 const pageTitle = computed(() =>
   isEdit.value ? `Edit Promotion: ${form.name || 'Promotion'}` : 'New Promotion',
 )
+
+const isFlash = computed(() => form.type === FLASH_SALE_TYPE)
+
+// Picking "Flash Sale" on a blank form should not leave the admin staring at an
+// empty datetime field — most flash sales start now or shortly after.
+watch(
+  () => form.type,
+  (type) => {
+    if (type === FLASH_SALE_TYPE && !form.startDateTime) form.startDateTime = toDateTimeLocal(Date.now())
+  },
+)
+
+// Spells out the moment the window closes, so "3 hours" is never left as
+// arithmetic for the admin to do in their head.
+const flashEndsAt = computed(() => {
+  if (!isFlash.value || !form.startDateTime) return ''
+
+  const start = new Date(form.startDateTime).getTime()
+  const hours = Number(form.flashDurationHours)
+  if (Number.isNaN(start) || !Number.isFinite(hours) || hours <= 0) return ''
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(start + hours * 60 * 60 * 1000))
+})
 
 const bannerInput = ref(null)
 const bannerFile = ref(null)
@@ -199,12 +239,23 @@ async function save() {
               </div>
             </div>
             <div class="row">
-              <div class="field">
+              <div v-if="isFlash" class="field">
+                <label for="flashStart">Starts At</label>
+                <input id="flashStart" v-model="form.startDateTime" :class="{ 'field--invalid': errorFor('starts_at') }" type="datetime-local" />
+                <span v-if="errorFor('starts_at')" class="field-error">{{ errorFor('starts_at') }}</span>
+              </div>
+              <div v-else class="field">
                 <label for="start">Start Date</label>
                 <input id="start" v-model="form.startDate" :class="{ 'field--invalid': errorFor('starts_at') }" type="date" />
                 <span v-if="errorFor('starts_at')" class="field-error">{{ errorFor('starts_at') }}</span>
               </div>
-              <div class="field">
+              <div v-if="isFlash" class="field">
+                <label for="flashDuration">Duration (hours)</label>
+                <input id="flashDuration" v-model="form.flashDurationHours" :class="{ 'field--invalid': errorFor('expires_at') }" type="number" min="0.5" step="0.5" placeholder="3" />
+                <span v-if="errorFor('expires_at')" class="field-error">{{ errorFor('expires_at') }}</span>
+                <span v-else-if="flashEndsAt" class="field-hint">Ends {{ flashEndsAt }}</span>
+              </div>
+              <div v-else class="field">
                 <label for="end">End Date</label>
                 <input id="end" v-model="form.endDate" :class="{ 'field--invalid': errorFor('expires_at') }" type="date" />
                 <span v-if="errorFor('expires_at')" class="field-error">{{ errorFor('expires_at') }}</span>
@@ -435,6 +486,7 @@ async function save() {
 
 .field--invalid { border-color: var(--danger) !important; }
 .field-error, .submit-error { font-size: 0.75rem; color: var(--danger); }
+.field-hint { font-size: 0.75rem; color: var(--text-subtle); }
 .submit-error { margin: 0; }
 
 .row {

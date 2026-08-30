@@ -1,21 +1,33 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import SlideSequence from '@/components/slides/SlideSequence.vue'
-import { findSlide, removeSlide } from '@/data/slides'
+import { deleteSlide as removeSlide, fetchSlide } from '@/services/slides'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
-const slide = computed(() => findSlide(route.params.id))
+const slide = ref(null)
+const loading = ref(true)
+const error = ref('')
 
 const statusLabels = {
   active: 'Active',
   scheduled: 'Scheduled',
+  expired: 'Expired',
   draft: 'Draft',
 }
+
+const schedule = computed(() => {
+  if (!slide.value) return ''
+  const { startDate, endDate } = slide.value
+  if (!startDate && !endDate) return 'Always on'
+  return `${startDate || 'No start date'} → ${endDate || 'No end date'}`
+})
 
 // Describes how the slide renders, which follows from the image count alone.
 const mediaSummary = computed(() => {
@@ -30,12 +42,32 @@ function editSlide() {
   router.push(`/slides/${route.params.id}/edit`)
 }
 
-function deleteSlide() {
+async function loadSlide() {
+  loading.value = true
+  error.value = ''
+  try {
+    slide.value = await fetchSlide(route.params.id, auth.accessToken)
+  } catch (err) {
+    error.value = err.message || 'Could not load this slide.'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function deleteSlide() {
   if (!slide.value) return
   if (!window.confirm(`Delete slide "${slide.value.title}"? This cannot be undone.`)) return
-  removeSlide(route.params.id)
-  router.push('/slides')
+
+  error.value = ''
+  try {
+    await removeSlide(route.params.id, auth.accessToken)
+    router.push('/slides')
+  } catch (err) {
+    error.value = err.message || 'Could not delete the slide.'
+  }
 }
+
+onMounted(loadSlide)
 </script>
 
 <template>
@@ -51,7 +83,7 @@ function deleteSlide() {
           </svg>
           <span>
             <span class="subhead__crumb">Content &middot; Homepage Slides</span>
-            <span class="subhead__title">{{ slide ? slide.title : 'Slide not found' }}</span>
+            <span class="subhead__title">{{ slide ? slide.title : loading ? 'Loading…' : 'Slide not found' }}</span>
           </span>
         </RouterLink>
 
@@ -75,6 +107,8 @@ function deleteSlide() {
           </BaseButton>
         </div>
       </div>
+
+      <p v-if="error" class="detail-error" role="alert">{{ error }}</p>
 
       <div v-if="slide" class="grid">
         <!-- Preview -->
@@ -107,6 +141,8 @@ function deleteSlide() {
               <dd><span class="badge" :class="`badge--${slide.status}`">{{ statusLabels[slide.status] }}</span></dd>
             </div>
             <div class="info__row"><dt>CTA Button</dt><dd>{{ slide.cta }}</dd></div>
+            <div class="info__row"><dt>CTA Link</dt><dd>{{ slide.ctaUrl || 'No link' }}</dd></div>
+            <div class="info__row"><dt>Schedule</dt><dd>{{ schedule }}</dd></div>
             <div class="info__row"><dt>Media</dt><dd>{{ mediaSummary }}</dd></div>
             <div class="info__row"><dt>Slide ID</dt><dd>#{{ slide.id }}</dd></div>
           </dl>
@@ -114,7 +150,7 @@ function deleteSlide() {
       </div>
 
       <!-- Not found -->
-      <section v-else class="missing">
+      <section v-else-if="!loading" class="missing">
         <p class="missing__text">This slide doesn’t exist or has been removed.</p>
         <BaseButton variant="ghost" :to="{ name: 'slides' }">Back to Slides</BaseButton>
       </section>
@@ -123,6 +159,12 @@ function deleteSlide() {
 </template>
 
 <style scoped lang="scss">
+.detail-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+
 
 .page {
   display: flex;
@@ -268,6 +310,7 @@ function deleteSlide() {
 
   &--active { color: var(--success); background: var(--success-bg); }
   &--scheduled { color: var(--info); background: var(--info-bg); }
+  &--expired { color: var(--danger); background: var(--danger-bg); }
   &--draft { color: var(--text-muted); background: var(--surface-track); }
 }
 

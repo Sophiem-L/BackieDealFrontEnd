@@ -69,10 +69,8 @@ const stats = computed(() => [
   },
 ])
 
-const availabilityLabels = {
-  healthy: 'In Stock',
-  'low-stock': 'Low Stock',
-  'out-of-stock': 'Out of Stock',
+function formatCount(value) {
+  return value == null ? '—' : Number(value).toLocaleString()
 }
 
 function thumbInitials(name) {
@@ -132,8 +130,154 @@ async function loadItems() {
   }
 }
 
+function formatDate(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : dateFormatter.format(date)
+}
+
+function mapItem(row) {
+  return {
+    id: row.id,
+    uuid: row.uuid,
+    name: row.name ?? '',
+    sku: row.sku ?? '',
+    startDate: formatDate(row.created_at),
+    onHand: Number(row.stock_quantity ?? 0),
+    threshold: Number(row.min_stock_alert ?? 0),
+    availability: deriveStockStatus(row),
+  }
+}
+
+// GET /admin/stock takes `search` (not `q`, as the products endpoint does).
+function listParams({ page: targetPage = page.value, perPage = PER_PAGE } = {}) {
+  const params = new URLSearchParams({
+    page: String(targetPage),
+    per_page: String(perPage),
+  })
+  const q = query.value.trim()
+  if (q) params.set('search', q)
+  return params
+}
+
+// Walk every page of the current search, for the client-side availability
+// filter. Returns raw API rows.
+async function fetchAllMatching() {
+  const rows = []
+  let current = 1
+  let last
+  do {
+    const response = await apiFetch(
+      `/admin/stock?${listParams({ page: current, perPage: FILTER_PER_PAGE }).toString()}`,
+      { token: auth.accessToken },
+    )
+    const data = response?.data ?? {}
+    rows.push(...(data.items ?? []))
+    last = data.pagination?.last_page ?? 1
+    current += 1
+  } while (current <= last && current <= FILTER_MAX_PAGES)
+
+  return { rows, truncated: last > FILTER_MAX_PAGES }
+}
+
+// Paging inside a client-filtered set shouldn't refetch on every page step.
+let statusCache = { key: '', rows: [] }
+const filterTruncated = ref(false)
+
+function invalidateStatusCache() {
+  statusCache = { key: '', rows: [] }
+}
+
+async function loadItems() {
+  loading.value = true
+  error.value = ''
+  try {
+    if (availability.value === 'all') {
+      const response = await apiFetch(`/admin/stock?${listParams().toString()}`, {
+        token: auth.accessToken,
+      })
+      const data = response?.data ?? {}
+      items.value = (data.items ?? []).map(mapItem)
+
+      const pagination = data.pagination ?? {}
+      total.value = pagination.total ?? items.value.length
+      lastPage.value = pagination.last_page ?? 1
+      filterTruncated.value = false
+    } else {
+      // The endpoint has no stock-status parameter, so narrow client-side and
+      // page over the result — that keeps the total and the page count honest
+      // rather than paginating a server set the table then filters down.
+      const key = JSON.stringify([query.value.trim(), availability.value])
+      if (statusCache.key !== key) {
+        const { rows, truncated } = await fetchAllMatching()
+        statusCache = {
+          key,
+          rows: rows.filter((row) => deriveStockStatus(row) === availability.value),
+        }
+        filterTruncated.value = truncated
+      }
+
+      const matched = statusCache.rows
+      const start = (page.value - 1) * PER_PAGE
+      items.value = matched.slice(start, start + PER_PAGE).map(mapItem)
+      total.value = matched.length
+      lastPage.value = Math.max(1, Math.ceil(matched.length / PER_PAGE))
+    }
+  } catch (err) {
+    error.value = err.message || 'Unable to load stock. Please try again.'
+    items.value = []
+    total.value = 0
+    lastPage.value = 1
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadSummary() {
+  // Tracked products only, matching what this table lists.
+  summary.value = await fetchStockSummary({
+    token: auth.accessToken,
+    totalPath: '/admin/stock?page=1&per_page=1',
+  })
+}
+
+// Any filter change resets to page 1. Reload directly only when the page is
+// already 1, otherwise the page watcher does it (avoids a double fetch).
+function applyFilters() {
+  if (page.value !== 1) {
+    page.value = 1
+  } else {
+    loadItems()
+  }
+}
+
+// Debounce search; the dropdown applies immediately.
+let searchTimer
+watch(query, () => {
+  invalidateStatusCache()
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(applyFilters, 350)
+})
+
+watch(availability, () => {
+  invalidateStatusCache()
+  applyFilters()
+})
+
+watch(page, loadItems)
+
+const rangeStart = computed(() => (total.value === 0 ? 0 : (page.value - 1) * PER_PAGE + 1))
+const rangeEnd = computed(() => (page.value - 1) * PER_PAGE + items.value.length)
+
+function prevPage() {
+  if (page.value > 1) page.value -= 1
+}
+function nextPage() {
+  if (page.value < lastPage.value) page.value += 1
+}
+
 function setFilter(value) {
-  lowStockOnly.value = value
+  availability.value = value
   filterOpen.value = false
   if (page.value !== 1) {
     page.value = 1
@@ -169,20 +313,29 @@ watch([updatedFrom, updatedTo, sortBy, sortDirection], () => {
 function closeMenus() {
   filterOpen.value = false
 }
+<<<<<<< HEAD
 
+=======
+>>>>>>> ff8c258 (update and improve code)
 onMounted(() => {
   document.addEventListener('click', closeMenus)
   loadItems()
   loadSummary()
 })
+<<<<<<< HEAD
 
+=======
+>>>>>>> ff8c258 (update and improve code)
 onBeforeUnmount(() => {
   document.removeEventListener('click', closeMenus)
   clearTimeout(searchTimer)
 })
 
-function openItem(id) {
-  router.push({ name: 'stock-detail', params: { id } })
+// NOTE: StockDetailView still renders from its own hardcoded records keyed by
+// 1..6, so it falls back to the first record whatever it is handed. The uuid is
+// what a wired-up detail page would need — it is the API's route key.
+function openItem(uuid) {
+  router.push({ name: 'stock-detail', params: { id: uuid } })
 }
 
 const brokenThumbs = ref(new Set())
@@ -228,7 +381,7 @@ function nextPage() {
           <button
             type="button"
             class="select"
-            :class="{ 'select--active': lowStockOnly }"
+            :class="{ 'select--active': availability !== 'all' }"
             :aria-expanded="filterOpen"
             @click="filterOpen = !filterOpen"
           >
@@ -238,15 +391,34 @@ function nextPage() {
                 <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
               </svg>
             </span>
-            {{ lowStockOnly ? 'Low Stock Only' : 'All Stock' }}
+            {{ filterLabel }}
             <svg class="select__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
 
-          <div v-if="filterOpen" class="filter__popup">
-            <button type="button" class="filter__item" @click="setFilter(false)">All Stock</button>
-            <button type="button" class="filter__item" @click="setFilter(true)">Low Stock Only</button>
+          <div v-if="filterOpen" class="filter__popup" role="listbox">
+            <button
+              v-for="option in availabilityOptions"
+              :key="option.value"
+              type="button"
+              class="filter__item"
+              :class="{ 'filter__item--selected': availability === option.value }"
+              role="option"
+              :aria-selected="availability === option.value"
+              @click="setFilter(option.value)"
+            >
+              {{ option.label }}
+              <svg
+                v-if="availability === option.value"
+                class="filter__check"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path d="m5 12.5 4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -300,7 +472,7 @@ function nextPage() {
           </span>
           <div class="stat__meta">
             <p class="stat__label">{{ stat.label }}</p>
-            <p class="stat__value">{{ stat.value }}</p>
+            <p class="stat__value">{{ formatCount(stat.value) }}</p>
             <p class="stat__note">{{ stat.note }}</p>
           </div>
         </article>
@@ -331,7 +503,7 @@ function nextPage() {
               v-else
               :key="item.id"
               class="table__row"
-              @click="openItem(item.id)"
+              @click="openItem(item.uuid)"
             >
               <td>
                 <div class="product">
@@ -481,8 +653,6 @@ function nextPage() {
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
-  &__spacer { flex: 1; }
-
   input {
     flex: 1;
     min-width: 0;
@@ -540,6 +710,10 @@ function nextPage() {
 }
 
 .filter__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   width: 100%;
   padding: 0.55rem 0.6rem;
   font-size: 0.84rem;
@@ -552,6 +726,16 @@ function nextPage() {
   border-radius: 7px;
   cursor: pointer;
   &:hover { background: var(--surface-alt); }
+
+  &--selected { color: var(--accent-ink); font-weight: 600; }
+}
+
+.filter__check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  stroke-width: 2.2;
 }
 
 .stats {
@@ -799,8 +983,60 @@ function nextPage() {
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--healthy { background: var(--success-bg); color: var(--success); }
+  &--in-stock { background: var(--success-bg); color: var(--success); }
   &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
   &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
+}
+
+/* Alerts */
+.alert {
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+
+  &--warning {
+    color: var(--accent-ink);
+    background: rgb(var(--accent-rgb) / 0.14);
+  }
+}
+
+/* Pagination — matches the Products list. */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border-top: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+
+  &__info { margin: 0; font-size: 0.82rem; color: var(--text-subtle); }
+  &__controls { display: flex; gap: 0.4rem; }
+}
+
+.page-btn {
+  min-width: 36px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) { background: var(--surface-alt); }
+
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  &--active {
+    background: rgb(var(--accent-rgb));
+    border-color: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
+  }
 }
 </style>

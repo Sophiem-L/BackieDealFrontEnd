@@ -1,18 +1,33 @@
 <script setup>
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { slides, removeSlide } from '@/data/slides'
+import { deleteSlide as removeSlide, fetchSlides, saveSlideOrder } from '@/services/slides'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
-// This screen still reads mock data, but its create/edit/delete controls
-// are gated on the real permissions the API reports.
 const auth = useAuthStore()
+
+const slides = ref([])
+const loading = ref(false)
+const error = ref('')
+const deletingId = ref(null)
+
+// Reordering is a `banners.update` action, same as the edit pencil.
+const canReorder = computed(() => auth.hasPermission('banners.update'))
+
+// Rows are only draggable while the pointer is down on their grip, so the
+// buttons and text inside a row still behave normally.
+const grabbedId = ref(null)
+const dragFrom = ref(null)
+const dragOver = ref(null)
+const savingOrder = ref(false)
 
 const statusLabels = {
   active: 'Active',
   scheduled: 'Scheduled',
+  expired: 'Expired',
   draft: 'Draft',
 }
 
@@ -28,10 +43,82 @@ function editSlide(slide) {
   router.push(`/slides/${slide.id}/edit`)
 }
 
-function deleteSlide(slide) {
-  if (!window.confirm(`Delete slide "${slide.title}"? This cannot be undone.`)) return
-  removeSlide(slide.id)
+function grab(slide) {
+  if (canReorder.value) grabbedId.value = slide.id
 }
+
+function onDragStart(index, event) {
+  dragFrom.value = index
+  event.dataTransfer.effectAllowed = 'move'
+  // Firefox refuses to start a drag unless some data is attached.
+  event.dataTransfer.setData('text/plain', String(index))
+}
+
+function onDragOver(index, event) {
+  if (dragFrom.value === null) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'move'
+  dragOver.value = index
+}
+
+function onDragEnd() {
+  grabbedId.value = null
+  dragFrom.value = null
+  dragOver.value = null
+}
+
+async function onDrop(index) {
+  const from = dragFrom.value
+  onDragEnd()
+  if (from === null || from === index) return
+
+  const previous = slides.value
+  const next = [...previous]
+  const [moved] = next.splice(from, 1)
+  next.splice(index, 0, moved)
+
+  // Show the new order straight away, then roll back if the save fails.
+  slides.value = next
+  savingOrder.value = true
+  error.value = ''
+  try {
+    slides.value = await saveSlideOrder(next, auth.accessToken)
+  } catch (err) {
+    slides.value = previous
+    error.value = err.message || 'Could not save the new order.'
+  } finally {
+    savingOrder.value = false
+  }
+}
+
+async function loadSlides() {
+  loading.value = true
+  error.value = ''
+  try {
+    slides.value = await fetchSlides(auth.accessToken)
+  } catch (err) {
+    error.value = err.message || 'Could not load slides.'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function deleteSlide(slide) {
+  if (!window.confirm(`Delete slide "${slide.title}"? This cannot be undone.`)) return
+
+  deletingId.value = slide.id
+  error.value = ''
+  try {
+    await removeSlide(slide.id, auth.accessToken)
+    slides.value = slides.value.filter((item) => item.id !== slide.id)
+  } catch (err) {
+    error.value = err.message || 'Could not delete the slide.'
+  } finally {
+    deletingId.value = null
+  }
+}
+
+onMounted(loadSlides)
 </script>
 
 <template>
@@ -56,10 +143,35 @@ function deleteSlide(slide) {
         </BaseButton>
       </section>
 
+      <p v-if="error" class="slides__error" role="alert">{{ error }}</p>
+
       <!-- Slides list -->
       <section class="slides">
-        <article v-for="slide in slides" :key="slide.id" class="slide">
-          <span class="slide__handle" aria-hidden="true">
+        <p v-if="loading" class="slides__empty">Loading slides…</p>
+
+        <article
+          v-for="(slide, index) in slides"
+          :key="slide.id"
+          class="slide"
+          :class="{
+            'slide--dragging': dragFrom === index,
+            'slide--drop-target': dragOver === index && dragFrom !== index,
+          }"
+          :draggable="grabbedId === slide.id"
+          @dragstart="onDragStart(index, $event)"
+          @dragover="onDragOver(index, $event)"
+          @drop="onDrop(index)"
+          @dragend="onDragEnd"
+        >
+          <span
+            v-if="canReorder"
+            class="slide__handle"
+            :class="{ 'slide__handle--busy': savingOrder }"
+            :title="`Drag to reorder ${slide.title}`"
+            :aria-label="`Drag to reorder ${slide.title}`"
+            @mousedown="grab(slide)"
+            @mouseup="onDragEnd"
+          >
             <svg viewBox="0 0 24 24" fill="none">
               <circle cx="9" cy="6" r="1.4" fill="currentColor" stroke="none" />
               <circle cx="15" cy="6" r="1.4" fill="currentColor" stroke="none" />
@@ -95,7 +207,6 @@ function deleteSlide(slide) {
           </div>
 
           <div class="slide__cta">
-            <span class="slide__cta-label">CTA Button</span>
             <span class="slide__cta-pill">{{ slide.cta }}</span>
           </div>
 
@@ -117,6 +228,7 @@ function deleteSlide(slide) {
               v-if="auth.hasPermission('banners.delete')"
               type="button"
               class="icon-btn icon-btn--danger"
+              :disabled="deletingId === slide.id"
               :aria-label="`Delete ${slide.title}`"
               @click="deleteSlide(slide)"
             >
@@ -128,7 +240,7 @@ function deleteSlide(slide) {
           </div>
         </article>
 
-        <p v-if="slides.length === 0" class="slides__empty">No slides yet.</p>
+        <p v-if="!loading && slides.length === 0" class="slides__empty">No slides yet.</p>
       </section>
     </div>
   </div>
@@ -187,6 +299,12 @@ function deleteSlide(slide) {
     border: 1px solid var(--border-subtle);
     border-radius: 14px;
   }
+
+  &__error {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--danger);
+  }
 }
 
 .slide {
@@ -209,7 +327,23 @@ function deleteSlide(slide) {
     display: inline-flex;
     color: var(--text-faint);
     cursor: grab;
+    transition: color 0.15s ease;
     svg { width: 22px; height: 22px; }
+
+    &:hover { color: var(--text-body); }
+    &:active { cursor: grabbing; }
+
+    &--busy { cursor: progress; }
+  }
+
+  &--dragging {
+    opacity: 0.45;
+  }
+
+  /* Where the row will land if dropped now. */
+  &--drop-target {
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 1px rgb(var(--accent-rgb));
   }
 
   &__thumb {
@@ -266,17 +400,7 @@ function deleteSlide(slide) {
   &__cta {
     flex-shrink: 0;
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.4rem;
-  }
-
-  &__cta-label {
-    font-size: 0.64rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--text-subtle);
+    align-items: center;
   }
 
   &__cta-pill {
@@ -320,6 +444,7 @@ function deleteSlide(slide) {
 
   &--active { color: var(--success); background: var(--success-bg); }
   &--scheduled { color: var(--info); background: var(--info-bg); }
+  &--expired { color: var(--danger); background: var(--danger-bg); }
   &--draft { color: var(--text-muted); background: var(--surface-track); }
 }
 

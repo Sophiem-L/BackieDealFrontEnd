@@ -29,6 +29,15 @@ const statusLabels = {
   cancelled: 'Cancelled',
 }
 
+// The `shipping_status` column, which the API returns under `tracking`. It is
+// set on the create form and shown read-only here; moving an order along after
+// creation is still done through the order status above.
+const DELIVERY_STATUS_LABELS = {
+  pending: 'Pending',
+  shipped: 'Shipped',
+  delivered: 'Delivered',
+}
+
 const PAYMENT_METHOD_LABELS = {
   cod: 'Cash on Delivery',
   bank_transfer: 'Bank Transfer',
@@ -45,6 +54,9 @@ const items = ref([])
 const totals = ref({ subtotal: '—', discount: '—', tax: '—', shipping: '—', total: '—' })
 const customer = ref({ name: '—', email: '—', phone: '—', address: '—' })
 const payment = ref({ method: '—', status: '—', transactionId: '—', totalPaid: '—' })
+// Orders created before delivery was tracked, and the client checkout flow,
+// both leave this at the column default.
+const delivery = ref({ status: 'Pending', isDelivered: false })
 // `notes` has no column on the orders table, so there is nothing to load yet.
 const notes = ref([])
 
@@ -144,6 +156,12 @@ function applyOrder(data) {
     totalPaid: paid ? money(data?.total) : '—',
   }
 
+  const deliveryStatus = data?.tracking?.status || 'pending'
+  delivery.value = {
+    status: DELIVERY_STATUS_LABELS[deliveryStatus] ?? statusLabel(deliveryStatus),
+    isDelivered: deliveryStatus === 'delivered',
+  }
+
   savedStatus.value = order.value.status
 }
 
@@ -213,8 +231,15 @@ function goBack() {
 }
 
 function viewCustomer() {
-  // Open the customer in the Customers section for full detail.
-  router.push({ name: 'customers' })
+  // Open this customer's page in the Customers section. `customer.id` is the
+  // users row, which the API nulls out once the account behind an order is
+  // deleted — there is no page to open then, so fall back to the directory.
+  if (!customer.value.id) {
+    router.push({ name: 'customers' })
+    return
+  }
+
+  router.push({ name: 'customer-detail', params: { id: customer.value.id } })
 }
 
 /* ---------------------------------------------------------------------------
@@ -496,6 +521,10 @@ async function editOrder() {
               <div class="kv__row">
                 <dt>Status</dt>
                 <dd :class="payment.isPaid ? 'kv__ok' : 'kv__pending'">{{ payment.status }}</dd>
+              </div>
+              <div class="kv__row">
+                <dt>Delivery</dt>
+                <dd :class="delivery.isDelivered ? 'kv__ok' : 'kv__pending'">{{ delivery.status }}</dd>
               </div>
               <div class="kv__row"><dt>Transaction ID</dt><dd class="kv__mono">{{ payment.transactionId }}</dd></div>
               <div class="kv__row kv__row--total"><dt>Total Paid</dt><dd class="kv__total">{{ payment.totalPaid }}</dd></div>

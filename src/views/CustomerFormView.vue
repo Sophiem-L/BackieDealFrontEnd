@@ -1,21 +1,19 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import {
-  customerAccounts,
-  findCustomerAccount,
-  nextCustomerId,
-  randomTone,
-} from '@/data/customerAccounts'
+import { fetchCustomer, initials as initialsOf, saveCustomer, toneFor } from '@/services/customers'
+import { ACCEPT_ATTR, uploadImage } from '@/services/media'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
 // Edit when the route carries a customer id; otherwise we're creating.
-const isEdit = computed(() => Boolean(route.params.id))
-const existing = computed(() => (isEdit.value ? findCustomerAccount(route.params.id) : null))
+const customerId = computed(() => route.params.id || null)
+const isEdit = computed(() => Boolean(customerId.value))
 
 const statuses = [
   { key: 'active', label: 'Active' },
@@ -29,75 +27,97 @@ const form = reactive({
   phone: '',
   address: '',
   status: 'active',
-  // New customers get a random colour; an uploaded photo overrides it.
-  tone: randomTone(),
   avatar: '',
 })
 
-// Prefill from the selected customer in edit mode.
-if (existing.value) {
-  Object.assign(form, {
-    name: existing.value.name,
-    email: existing.value.email,
-    phone: existing.value.phone || '',
-    address: existing.value.address || '',
-    status: existing.value.status,
-    tone: existing.value.tone || 'blue',
-    avatar: existing.value.avatar || '',
-  })
-}
+// The saved record, for the read-only account summary. Spend and order count
+// are aggregates the API derives from orders — this screen cannot set them.
+const existing = ref(null)
+const loading = ref(false)
+const saving = ref(false)
+const uploading = ref(false)
+const error = ref('')
+// Per-field messages from a 422, keyed by the API's field names.
+const fieldErrors = ref({})
+
+onMounted(async () => {
+  if (!isEdit.value) return
+
+  loading.value = true
+  try {
+    const customer = await fetchCustomer(customerId.value, auth.accessToken)
+    existing.value = customer
+    Object.assign(form, {
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone,
+      address: customer.address,
+      status: customer.status,
+      avatar: customer.avatar,
+    })
+  } catch (err) {
+    error.value = err.message || 'Could not load this customer.'
+  } finally {
+    loading.value = false
+  }
+})
+
+// New customers have no id yet, so their placeholder colour is fixed rather
+// than derived — it settles once the record is saved.
+const tone = computed(() => (existing.value ? existing.value.tone : toneFor(0)))
 
 const fileInput = ref(null)
 function pickPhoto() {
   fileInput.value?.click()
 }
-function onPhotoChange(event) {
+
+/**
+ * Upload straight away and keep the URL that comes back.
+ *
+ * An object URL would only live as long as this tab, so the photo has to reach
+ * the media endpoint before it can be saved against the customer.
+ */
+async function onPhotoChange(event) {
   const file = event.target.files?.[0]
-  if (file) form.avatar = URL.createObjectURL(file)
+  event.target.value = ''
+  if (!file) return
+
+  uploading.value = true
+  error.value = ''
+  try {
+    const { url } = await uploadImage(file, { token: auth.accessToken, folder: 'customers' })
+    form.avatar = url
+  } catch (err) {
+    error.value = err.message || 'Could not upload the photo.'
+  } finally {
+    uploading.value = false
+  }
 }
+
 function removePhoto() {
   form.avatar = ''
 }
 
 const pageTitle = computed(() => (isEdit.value ? 'Edit Customer' : 'New Customer'))
 
-const initials = computed(() => {
-  const source = form.name.trim() || '?'
-  return source
-    .split(' ')
-    .map((part) => part.charAt(0))
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
-})
+const initials = computed(() => initialsOf(form.name) || '?')
 
-function save() {
-  if (isEdit.value && existing.value) {
-    // Mutate the shared record so the list reflects the change.
-    Object.assign(existing.value, {
-      name: form.name,
-      email: form.email,
-      phone: form.phone,
-      address: form.address,
-      status: form.status,
-      tone: form.tone,
-      avatar: form.avatar,
-    })
-  } else {
-    customerAccounts.push({
-      id: nextCustomerId(),
-      name: form.name || 'Unnamed Customer',
-      email: form.email,
-      phone: form.phone,
-      address: form.address,
-      spent: '$0.00',
-      orders: 0,
-      status: form.status,
-      tone: form.tone,
-      avatar: form.avatar,
-    })
+async function save() {
+  saving.value = true
+  error.value = ''
+  fieldErrors.value = {}
+  try {
+    await saveCustomer(customerId.value, form, auth.accessToken)
+    router.push({ name: 'customers' })
+  } catch (err) {
+    error.value = err.message || 'Could not save the customer.'
+    // `errors` is Laravel's validation bag: { field: [message, ...] }.
+    fieldErrors.value = Object.fromEntries(
+      Object.entries(err.errors ?? {}).map(([field, messages]) => [field, messages[0]]),
+    )
+  } finally {
+    saving.value = false
   }
-  router.push({ name: 'customers' })
 }
 </script>
 
@@ -122,7 +142,7 @@ function save() {
         <!-- Left column -->
         <div class="col col--side">
           <section class="card card--avatar">
-            <span class="avatar" :class="form.avatar ? 'avatar--photo' : `avatar--${form.tone}`">
+            <span class="avatar" :class="form.avatar ? 'avatar--photo' : `avatar--${tone}`">
               <img v-if="form.avatar" :src="form.avatar" alt="Customer photo" />
               <span v-else aria-hidden="true">{{ initials }}</span>
             </span>
@@ -130,21 +150,21 @@ function save() {
             <p class="avatar__email">{{ form.email || 'email@example.com' }}</p>
 
             <div class="avatar__actions">
-              <button type="button" class="photo-btn" @click="pickPhoto">
+              <button type="button" class="photo-btn" :disabled="uploading" @click="pickPhoto">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M12 15V3m0 0L8 7m4-4 4 4" stroke-linecap="round" stroke-linejoin="round" />
                   <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
                 </svg>
-                {{ form.avatar ? 'Change Photo' : 'Upload Photo' }}
+                {{ uploading ? 'Uploading…' : form.avatar ? 'Change Photo' : 'Upload Photo' }}
               </button>
               <button v-if="form.avatar" type="button" class="photo-btn photo-btn--ghost" @click="removePhoto">
                 Remove
               </button>
             </div>
-            <input ref="fileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden @change="onPhotoChange" />
+            <input ref="fileInput" type="file" :accept="ACCEPT_ATTR" hidden @change="onPhotoChange" />
           </section>
 
-          <section v-if="isEdit && existing" class="card">
+          <section v-if="existing" class="card">
             <h3 class="card__title">Account Summary</h3>
             <div class="summary">
               <span class="summary__label">Total Spent</span>
@@ -163,20 +183,24 @@ function save() {
             <div class="field">
               <label for="name">Full Name</label>
               <input id="name" v-model="form.name" type="text" placeholder="e.g. John Doe" />
+              <p v-if="fieldErrors.name" class="field__error">{{ fieldErrors.name }}</p>
             </div>
             <div class="row">
               <div class="field">
                 <label for="email">Email Address</label>
                 <input id="email" v-model="form.email" type="email" placeholder="you@example.com" />
+                <p v-if="fieldErrors.email" class="field__error">{{ fieldErrors.email }}</p>
               </div>
               <div class="field">
                 <label for="phone">Phone</label>
-                <input id="phone" v-model="form.phone" type="tel" placeholder="+1 (555) 000-0000" />
+                <input id="phone" v-model="form.phone" type="tel" placeholder="+855 12 000 000" />
+                <p v-if="fieldErrors.phone" class="field__error">{{ fieldErrors.phone }}</p>
               </div>
             </div>
             <div class="field">
               <label for="address">Address</label>
-              <textarea id="address" v-model="form.address" rows="2" placeholder="Street, city, state, ZIP"></textarea>
+              <textarea id="address" v-model="form.address" rows="2" placeholder="Street, district, city, postcode"></textarea>
+              <p v-if="fieldErrors.address" class="field__error">{{ fieldErrors.address }}</p>
             </div>
           </section>
 
@@ -208,9 +232,10 @@ function save() {
 
         <!-- Form actions -->
         <div class="actions">
+          <p v-if="error" class="actions__error" role="alert">{{ error }}</p>
           <BaseButton variant="ghost" :to="{ name: 'customers' }">Cancel</BaseButton>
-          <BaseButton variant="primary" type="submit">
-            {{ isEdit ? 'Edit' : 'Create Customer' }}
+          <BaseButton variant="primary" type="submit" :disabled="saving || loading || uploading">
+            {{ saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Customer' }}
           </BaseButton>
         </div>
       </form>
@@ -293,8 +318,16 @@ function save() {
   grid-column: 1 / -1;
   order: 3;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 0.6rem;
+
+  /* Pushed left of the buttons so a long message wraps into the free space. */
+  &__error {
+    margin: 0 auto 0 0;
+    font-size: 0.82rem;
+    color: var(--danger);
+  }
 }
 
 .card {
@@ -401,6 +434,12 @@ function save() {
   gap: 0.4rem;
 
   & + .field { margin-top: 1rem; }
+
+  &__error {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--danger);
+  }
 
   label {
     font-size: 0.72rem;
