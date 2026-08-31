@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -14,15 +14,9 @@ const auth = useAuthStore()
 // so the two screens never show each other's rows.
 const TYPE = 'page'
 
-// GET /admin/content hard-codes paginate(15) and honours ?page. A site has a
-// handful of standing pages, so walk them all and filter in the browser.
+// GET /admin/content returns { items, pagination } and honours ?page and
+// ?per_page. The list pages server-side rather than pulling every row.
 const PER_PAGE = 15
-
-// The walk stops on the first short page. It cannot read `meta.last_page`:
-// ContentItemResource::collection() is nested inside the success envelope, so
-// Laravel drops the pagination wrapper and `data` arrives as a bare array.
-// MAX_PAGES caps a runaway loop; `truncated` tells the user when it bit.
-const MAX_PAGES = 10
 
 const statusLabels = {
   published: 'Published',
@@ -45,9 +39,11 @@ const error = ref('')
 // out the list the user is looking at.
 const actionError = ref('')
 const busyId = ref(null)
-// True when the walk hit MAX_PAGES with a full page still coming back, so the
-// list is not everything the API holds.
-const truncated = ref(false)
+
+// Server-side paging state, fed by the `pagination` block of each response.
+const page = ref(1)
+const lastPage = ref(1)
+const total = ref(0)
 
 function formatDate(value) {
   if (!value) return '—'
@@ -89,45 +85,75 @@ function mapPage(row) {
   }
 }
 
+function buildQuery() {
+  const params = new URLSearchParams({
+    type: TYPE,
+    page: String(page.value),
+    per_page: String(PER_PAGE),
+  })
+  if (statusFilter.value !== 'all') params.set('status', statusFilter.value)
+  return params.toString()
+}
+
 async function loadPages() {
   loading.value = true
   error.value = ''
   actionError.value = ''
-  truncated.value = false
   try {
-    const collected = []
-    let current = 1
-    let more = true
-    while (more && current <= MAX_PAGES) {
-      const response = await apiFetch(`/admin/content?type=${TYPE}&page=${current}`, {
-        token: auth.accessToken,
-      })
-      // `data` is the bare array of resources; tolerate a wrapped shape too in
-      // case the envelope ever starts passing the paginator through.
-      const payload = response?.data
-      const rows = Array.isArray(payload) ? payload : (payload?.data ?? [])
-      collected.push(...rows)
-      more = rows.length === PER_PAGE
-      current += 1
-    }
-    truncated.value = more
+    const response = await apiFetch(`/admin/content?${buildQuery()}`, {
+      token: auth.accessToken,
+    })
+    // The envelope wraps { items, pagination }; tolerate a bare array too in
+    // case an older backend passes the resource collection straight through.
+    const payload = response?.data
+    const rows = Array.isArray(payload) ? payload : (payload?.items ?? [])
+    const pagination = Array.isArray(payload) ? {} : (payload?.pagination ?? {})
 
-    pages.value = collected.filter((row) => row?.id != null).map(mapPage)
+    pages.value = rows.filter((row) => row?.id != null).map(mapPage)
+    total.value = pagination.total ?? pages.value.length
+    lastPage.value = Math.max(1, pagination.last_page ?? 1)
+
+    // A stale page number (last row on the page just deleted, or a filter that
+    // shrank the set) can land past the end — pull back and refetch.
+    if (page.value > lastPage.value) {
+      page.value = lastPage.value
+    }
   } catch (err) {
     error.value = err.message || 'Unable to load pages. Please try again.'
     pages.value = []
+    total.value = 0
+    lastPage.value = 1
   } finally {
     loading.value = false
   }
 }
 
 onMounted(loadPages)
+watch(page, loadPages)
 
-const filtered = computed(() =>
-  statusFilter.value === 'all'
-    ? pages.value
-    : pages.value.filter((page) => page.status === statusFilter.value),
-)
+// Changing the filter restarts from page 1. Reload directly only when already
+// on page 1, otherwise the page watcher does it (avoids a double fetch).
+watch(statusFilter, () => {
+  if (page.value !== 1) {
+    page.value = 1
+  } else {
+    loadPages()
+  }
+})
+
+// The list is already the filtered set — the server applied `status`.
+const filtered = computed(() => pages.value)
+
+const rangeStart = computed(() => (total.value === 0 ? 0 : (page.value - 1) * PER_PAGE + 1))
+const rangeEnd = computed(() => (page.value - 1) * PER_PAGE + pages.value.length)
+
+function prevPage() {
+  if (page.value > 1) page.value -= 1
+}
+
+function nextPage() {
+  if (page.value < lastPage.value) page.value += 1
+}
 
 function statusLabel(value) {
   return statusLabels[value] ?? value
@@ -137,42 +163,46 @@ function addPage() {
   router.push({ name: 'page-create' })
 }
 
-function editPage(page) {
-  router.push({ name: 'page-edit', params: { id: page.id } })
+function editPage(row) {
+  router.push({ name: 'page-edit', params: { id: row.id } })
 }
 
 // publish and archive are dedicated endpoints rather than a status PATCH:
 // publish also stamps published_at server-side.
-async function setStatus(page, action) {
+async function setStatus(row, action) {
   actionError.value = ''
-  busyId.value = page.id
+  busyId.value = row.id
   try {
-    const response = await apiFetch(`/admin/content/${page.id}/${action}`, {
+    const response = await apiFetch(`/admin/content/${row.id}/${action}`, {
       method: 'POST',
       token: auth.accessToken,
     })
     const updated = response?.data
-    if (updated?.id != null) {
-      pages.value = pages.value.map((row) => (row.id === updated.id ? mapPage(updated) : row))
+    // A status change can move the row out of the active filter, so when one is
+    // set the list is refetched rather than patched in place.
+    if (statusFilter.value === 'all' && updated?.id != null) {
+      pages.value = pages.value.map((item) => (item.id === updated.id ? mapPage(updated) : item))
     } else {
       await loadPages()
     }
   } catch (err) {
-    actionError.value = err.message || `Unable to ${action} "${page.title}".`
+    actionError.value = err.message || `Unable to ${action} "${row.title}".`
   } finally {
     busyId.value = null
   }
 }
 
-async function deletePage(page) {
-  if (!window.confirm(`Delete page "${page.title}"? This action cannot be undone.`)) return
+async function deletePage(row) {
+  if (!window.confirm(`Delete page "${row.title}"? This action cannot be undone.`)) return
   actionError.value = ''
-  busyId.value = page.id
+  busyId.value = row.id
   try {
-    await apiFetch(`/admin/content/${page.id}`, { method: 'DELETE', token: auth.accessToken })
-    pages.value = pages.value.filter((row) => row.id !== page.id)
+    await apiFetch(`/admin/content/${row.id}`, { method: 'DELETE', token: auth.accessToken })
+    // Refetch so the row that slides up from the next page fills the gap and the
+    // total / `last_page` stay honest.
+    await loadPages()
   } catch (err) {
-    actionError.value = err.message || `Unable to delete "${page.title}".`
+    actionError.value = err.message || `Unable to delete "${row.title}".`
   } finally {
     busyId.value = null
   }
@@ -309,18 +339,39 @@ async function deletePage(page) {
             </div>
           </article>
 
-          <p v-if="truncated" class="notice">
-            Showing the first {{ pages.length }} pages. Narrow the list on the website side if you
-            need to reach older ones.
-          </p>
-
           <p v-if="filtered.length === 0" class="pages__empty">
             {{
-              pages.length === 0
+              statusFilter === 'all'
                 ? 'No pages yet. Add one to get started.'
                 : 'No pages match this filter.'
             }}
           </p>
+
+          <!-- Pagination -->
+          <footer v-if="total > 0" class="pagination">
+            <p class="pagination__info">
+              Showing {{ rangeStart }}–{{ rangeEnd }} of {{ total.toLocaleString() }} pages
+            </p>
+            <div class="pagination__controls">
+              <button
+                type="button"
+                class="page-btn"
+                :disabled="page <= 1 || loading"
+                @click="prevPage"
+              >
+                Previous
+              </button>
+              <button type="button" class="page-btn page-btn--active">{{ page }}</button>
+              <button
+                type="button"
+                class="page-btn"
+                :disabled="page >= lastPage || loading"
+                @click="nextPage"
+              >
+                Next
+              </button>
+            </div>
+          </footer>
         </template>
       </section>
     </div>
@@ -402,14 +453,40 @@ async function deletePage(page) {
   border-radius: 10px;
 }
 
-.notice {
-  margin: 0;
-  padding: 0.7rem 1rem;
-  font-size: 0.8rem;
-  color: var(--text-subtle);
-  background: var(--surface-alt);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.25rem;
+  flex-wrap: wrap;
+
+  &__info { margin: 0; font-size: 0.82rem; color: var(--text-subtle); }
+  &__controls { display: flex; gap: 0.4rem; }
+}
+
+.page-btn {
+  min-width: 36px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) { background: var(--surface-alt); }
+
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  &--active {
+    background: rgb(var(--accent-rgb));
+    border-color: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
+  }
 }
 
 /* Pages list */

@@ -29,15 +29,6 @@ const statusLabels = {
   cancelled: 'Cancelled',
 }
 
-// The `shipping_status` column, which the API returns under `tracking`. It is
-// set on the create form and shown read-only here; moving an order along after
-// creation is still done through the order status above.
-const DELIVERY_STATUS_LABELS = {
-  pending: 'Pending',
-  shipped: 'Shipped',
-  delivered: 'Delivered',
-}
-
 const PAYMENT_METHOD_LABELS = {
   cod: 'Cash on Delivery',
   bank_transfer: 'Bank Transfer',
@@ -52,11 +43,11 @@ const error = ref('')
 const order = ref({ id: '—', status: '', createdAt: '—', updatedAgo: '—' })
 const items = ref([])
 const totals = ref({ subtotal: '—', discount: '—', tax: '—', shipping: '—', total: '—' })
+// The coupon / promotion applied at checkout, or null. `code` is always set
+// when one was used; `name`/`type`/`value` are null once the coupon is deleted.
+const coupon = ref(null)
 const customer = ref({ name: '—', email: '—', phone: '—', address: '—' })
 const payment = ref({ method: '—', status: '—', transactionId: '—', totalPaid: '—' })
-// Orders created before delivery was tracked, and the client checkout flow,
-// both leave this at the column default.
-const delivery = ref({ status: 'Pending', isDelivered: false })
 // `notes` has no column on the orders table, so there is nothing to load yet.
 const notes = ref([])
 
@@ -127,8 +118,25 @@ function applyOrder(data) {
     sku: item?.product?.sku ?? '—',
     qty: Number(item?.qty ?? 0),
     unitPrice: Number(item?.unit_price ?? 0),
+    salePrice: item?.sale_price == null ? null : Number(item.sale_price),
+    discount: Number(item?.discount ?? 0),
     lineTotal: Number(item?.line_total ?? 0),
   }))
+
+  coupon.value = data?.coupon?.code
+    ? {
+        code: data.coupon.code,
+        name: data.coupon.name || '',
+        // 'fixed' → "$10", 'percentage' → "20%"; blank when the coupon is gone.
+        rate:
+          data.coupon.type === 'percentage'
+            ? `${Number(data.coupon.value)}%`
+            : data.coupon.type === 'fixed'
+              ? money(data.coupon.value)
+              : '',
+        discount: money(data.coupon.discount_total ?? data?.discount_total),
+      }
+    : null
 
   totals.value = {
     subtotal: money(data?.subtotal),
@@ -154,12 +162,6 @@ function applyOrder(data) {
     isPaid: paid,
     transactionId: data?.payment?.transaction_id || '—',
     totalPaid: paid ? money(data?.total) : '—',
-  }
-
-  const deliveryStatus = data?.tracking?.status || 'pending'
-  delivery.value = {
-    status: DELIVERY_STATUS_LABELS[deliveryStatus] ?? statusLabel(deliveryStatus),
-    isDelivered: deliveryStatus === 'delivered',
   }
 
   savedStatus.value = order.value.status
@@ -375,6 +377,9 @@ async function editOrder() {
                       <div>
                         <p class="product__name">{{ item.name }}</p>
                         <p class="product__sku">{{ item.sku }}</p>
+                        <p v-if="item.discount > 0" class="product__promo">
+                          Promo −{{ money(item.discount) }}
+                        </p>
                       </div>
                     </div>
                   </td>
@@ -399,7 +404,15 @@ async function editOrder() {
 
             <dl class="summary">
               <div class="summary__row"><dt>Subtotal</dt><dd>{{ totals.subtotal }}</dd></div>
-              <div class="summary__row"><dt>Discount</dt><dd>{{ totals.discount }}</dd></div>
+              <div class="summary__row">
+                <dt>
+                  Discount
+                  <span v-if="coupon" class="summary__coupon">
+                    {{ coupon.code }}<template v-if="coupon.rate"> · {{ coupon.rate }}</template>
+                  </span>
+                </dt>
+                <dd>{{ totals.discount }}</dd>
+              </div>
               <div class="summary__row"><dt>Tax</dt><dd>{{ totals.tax }}</dd></div>
               <div class="summary__row"><dt>Shipping</dt><dd>{{ totals.shipping }}</dd></div>
               <div class="summary__row summary__row--total"><dt>Total</dt><dd>{{ totals.total }}</dd></div>
@@ -522,10 +535,6 @@ async function editOrder() {
                 <dt>Status</dt>
                 <dd :class="payment.isPaid ? 'kv__ok' : 'kv__pending'">{{ payment.status }}</dd>
               </div>
-              <div class="kv__row">
-                <dt>Delivery</dt>
-                <dd :class="delivery.isDelivered ? 'kv__ok' : 'kv__pending'">{{ delivery.status }}</dd>
-              </div>
               <div class="kv__row"><dt>Transaction ID</dt><dd class="kv__mono">{{ payment.transactionId }}</dd></div>
               <div class="kv__row kv__row--total"><dt>Total Paid</dt><dd class="kv__total">{{ payment.totalPaid }}</dd></div>
             </dl>
@@ -587,6 +596,7 @@ async function editOrder() {
 </template>
 
 <style scoped lang="scss">
+@use "sass:list";
 
 .page {
   display: flex;
@@ -775,6 +785,16 @@ async function editOrder() {
 
   &__name { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--text-strong); }
   &__sku { margin: 0.1rem 0 0; font-size: 0.72rem; color: var(--text-subtle); }
+  &__promo {
+    display: inline-block;
+    margin: 0.25rem 0 0;
+    padding: 0.05rem 0.4rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    border-radius: 999px;
+    background: var(--success-bg);
+    color: var(--success);
+  }
 }
 
 .summary {
@@ -799,6 +819,19 @@ async function editOrder() {
       dt { font-weight: 700; color: var(--text-strong); font-size: 0.95rem; }
       dd { font-weight: 800; font-size: 1.1rem; color: var(--accent-ink); }
     }
+  }
+
+  &__coupon {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0.45rem;
+    padding: 0.05rem 0.45rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    border-radius: 999px;
+    background: rgb(var(--accent-rgb) / 0.16);
+    color: var(--accent-ink);
   }
 }
 
@@ -916,9 +949,9 @@ $status-colors: (
 
   // Trigger reflects the selected status colour.
   @each $name, $c in $status-colors {
-    $text: nth($c, 1);
-    $bg: nth($c, 2);
-    $dot: nth($c, 3);
+    $text: list.nth($c, 1);
+    $bg: list.nth($c, 2);
+    $dot: list.nth($c, 3);
 
     &__trigger--#{$name} {
       color: $text;
@@ -969,9 +1002,9 @@ $status-colors: (
 
   // Each option carries its own status colour dot; selected row is tinted.
   @each $name, $c in $status-colors {
-    $text: nth($c, 1);
-    $bg: nth($c, 2);
-    $dot: nth($c, 3);
+    $text: list.nth($c, 1);
+    $bg: list.nth($c, 2);
+    $dot: list.nth($c, 3);
 
     &__option--#{$name} .status-dd__dot { background: $dot; }
 

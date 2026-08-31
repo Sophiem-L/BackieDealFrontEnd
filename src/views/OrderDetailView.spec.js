@@ -74,6 +74,40 @@ describe('OrderDetailView customer link', () => {
   })
 })
 
+describe('OrderDetailView coupon', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  function summaryRow(wrapper, label) {
+    return wrapper.findAll('.summary__row').find((row) => row.find('dt').text().startsWith(label))
+  }
+
+  it('shows the coupon code and rate beside the discount line', async () => {
+    const data = order({ status: 'pending' })
+    data.discount_total = 10
+    data.coupon = { code: 'SAVE10', name: 'Ten off', type: 'fixed', value: '10.00', discount_total: '10.00' }
+    apiFetch.mockResolvedValue({ data })
+
+    const wrapper = mount(OrderDetailView, { global: { stubs } })
+    await flushPromises()
+
+    const row = summaryRow(wrapper, 'Discount')
+    expect(row.find('.summary__coupon').text()).toContain('SAVE10')
+    expect(row.find('.summary__coupon').text()).toContain('$10.00')
+  })
+
+  it('omits the coupon chip when no coupon was applied', async () => {
+    apiFetch.mockResolvedValue({ data: order({ status: 'pending' }) })
+
+    const wrapper = mount(OrderDetailView, { global: { stubs } })
+    await flushPromises()
+
+    expect(wrapper.find('.summary__coupon').exists()).toBe(false)
+  })
+})
+
 describe('OrderDetailView delivery status', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
