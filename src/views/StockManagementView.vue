@@ -1,15 +1,27 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ArrowDown, ArrowUp } from '@lucide/vue'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { fetchStockList, fetchStockAlerts } from '@/services/stock'
+import { Button } from '@/components/ui/button'
+import { apiFetch } from '@/services/api'
+import {
+  deriveStockStatus,
+  fetchStockSummary,
+  formatStockDate,
+  usableImage,
+} from '@/services/stock'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const auth = useAuthStore()
 
 const PER_PAGE = 20
+// A status filter can't be pushed to the endpoint, so it's applied client-side by
+// walking the search result. Cap the walk so a huge catalog can't hang the page.
+const FILTER_PER_PAGE = 100
+const FILTER_MAX_PAGES = 20
 
 const items = ref([])
 const loading = ref(false)
@@ -20,8 +32,9 @@ const lastPage = ref(1)
 const total = ref(0)
 
 const query = ref('')
-const lowStockOnly = ref(false)
+const availability = ref('all')
 const filterOpen = ref(false)
+const filterTruncated = ref(false)
 
 const updatedFrom = ref('')
 const updatedTo = ref('')
@@ -30,15 +43,36 @@ const sortDirection = ref('desc')
 
 const summary = ref({ total: null, low: null, out: null, inStock: null })
 
+const availabilityOptions = [
+  { value: 'all', label: 'All Stock' },
+  { value: 'in-stock', label: 'In Stock' },
+  { value: 'low-stock', label: 'Low Stock' },
+  { value: 'out-of-stock', label: 'Out of Stock' },
+]
+
+const availabilityLabels = {
+  'in-stock': 'In Stock',
+  'low-stock': 'Low Stock',
+  'out-of-stock': 'Out of Stock',
+}
+
+const filterLabel = computed(
+  () =>
+    availabilityOptions.find((option) => option.value === availability.value)?.label ??
+    'All Stock',
+)
+
 function countLabel(value) {
   return value == null ? '—' : Number(value).toLocaleString()
 }
+// The stat cards format their raw counts through this.
+const formatCount = countLabel
 
 const stats = computed(() => [
   {
     key: 'total',
     label: 'Total Items',
-    value: countLabel(summary.value.total),
+    value: summary.value.total,
     note: 'All tracked products',
     icon: 'box',
     tone: 'neutral',
@@ -46,7 +80,7 @@ const stats = computed(() => [
   {
     key: 'low',
     label: 'Low Stock Items',
-    value: countLabel(summary.value.low),
+    value: summary.value.low,
     note: 'Action required',
     icon: 'warning',
     tone: 'warning',
@@ -54,7 +88,7 @@ const stats = computed(() => [
   {
     key: 'out',
     label: 'Out of Stock',
-    value: countLabel(summary.value.out),
+    value: summary.value.out,
     note: 'Inactive listings',
     icon: 'forbidden',
     tone: 'danger',
@@ -62,16 +96,12 @@ const stats = computed(() => [
   {
     key: 'in-stock',
     label: 'In Stock',
-    value: countLabel(summary.value.inStock),
+    value: summary.value.inStock,
     note: 'Available to sell',
     icon: 'check',
     tone: 'success',
   },
 ])
-
-function formatCount(value) {
-  return value == null ? '—' : Number(value).toLocaleString()
-}
 
 function thumbInitials(name) {
   return String(name ?? '')
@@ -80,88 +110,37 @@ function thumbInitials(name) {
     .toUpperCase()
 }
 
-async function loadSummary() {
-  try {
-    const [catalog, alerts] = await Promise.all([
-      fetchStockList({ page: 1, per_page: 1 }, auth.accessToken),
-      fetchStockAlerts(auth.accessToken),
-    ])
-
-    const catalogTotal = catalog.pagination.total ?? 0
-    const out = alerts.filter((r) => Number(r.stock_quantity ?? 0) <= 0).length
-    const low = alerts.filter((r) => Number(r.stock_quantity ?? 0) > 0).length
-
-    summary.value = {
-      total: catalogTotal,
-      low,
-      out,
-      inStock: Math.max(0, catalogTotal - (low + out)),
-    }
-  } catch {
-    summary.value = { total: null, low: null, out: null, inStock: null }
-  }
-}
-
-async function loadItems() {
-  loading.value = true
-  error.value = ''
-  try {
-    const result = await fetchStockList({
-      page: page.value,
-      per_page: PER_PAGE,
-      q: query.value.trim() || undefined,
-      low_stock: lowStockOnly.value || undefined,
-      updated_from: updatedFrom.value || undefined,
-      updated_to: updatedTo.value || undefined,
-      sort: sortBy.value,
-      direction: sortDirection.value,
-    }, auth.accessToken)
-
-    items.value = result.items
-    total.value = result.pagination.total ?? items.value.length
-    lastPage.value = result.pagination.last_page ?? 1
-  } catch (err) {
-    error.value = err.message || 'Unable to load stock items. Please try again.'
-    items.value = []
-    total.value = 0
-    lastPage.value = 1
-  } finally {
-    loading.value = false
-  }
-}
-
-function formatDate(value) {
-  if (!value) return '—'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '—' : dateFormatter.format(date)
-}
-
 function mapItem(row) {
   return {
     id: row.id,
     uuid: row.uuid,
     name: row.name ?? '',
     sku: row.sku ?? '',
-    startDate: formatDate(row.created_at),
+    startDate: formatStockDate(row.created_at),
+    lastUpdated: formatStockDate(row.updated_at),
     onHand: Number(row.stock_quantity ?? 0),
     threshold: Number(row.min_stock_alert ?? 0),
     availability: deriveStockStatus(row),
+    thumbnail: usableImage(row.thumbnail),
   }
 }
 
-// GET /admin/stock takes `search` (not `q`, as the products endpoint does).
+// GET /admin/stock accepts `search`, `sort`/`direction`, and an updated-at range.
 function listParams({ page: targetPage = page.value, perPage = PER_PAGE } = {}) {
   const params = new URLSearchParams({
     page: String(targetPage),
     per_page: String(perPage),
+    sort: sortBy.value,
+    direction: sortDirection.value,
   })
   const q = query.value.trim()
   if (q) params.set('search', q)
+  if (updatedFrom.value) params.set('updated_from', updatedFrom.value)
+  if (updatedTo.value) params.set('updated_to', updatedTo.value)
   return params
 }
 
-// Walk every page of the current search, for the client-side availability
-// filter. Returns raw API rows.
+// Walk every page of the current search, for the client-side status filter.
 async function fetchAllMatching() {
   const rows = []
   let current = 1
@@ -182,10 +161,20 @@ async function fetchAllMatching() {
 
 // Paging inside a client-filtered set shouldn't refetch on every page step.
 let statusCache = { key: '', rows: [] }
-const filterTruncated = ref(false)
 
 function invalidateStatusCache() {
   statusCache = { key: '', rows: [] }
+}
+
+function statusCacheKey() {
+  return JSON.stringify([
+    query.value.trim(),
+    availability.value,
+    updatedFrom.value,
+    updatedTo.value,
+    sortBy.value,
+    sortDirection.value,
+  ])
 }
 
 async function loadItems() {
@@ -207,7 +196,7 @@ async function loadItems() {
       // The endpoint has no stock-status parameter, so narrow client-side and
       // page over the result — that keeps the total and the page count honest
       // rather than paginating a server set the table then filters down.
-      const key = JSON.stringify([query.value.trim(), availability.value])
+      const key = statusCacheKey()
       if (statusCache.key !== key) {
         const { rows, truncated } = await fetchAllMatching()
         statusCache = {
@@ -234,15 +223,18 @@ async function loadItems() {
 }
 
 async function loadSummary() {
-  // Tracked products only, matching what this table lists.
-  summary.value = await fetchStockSummary({
-    token: auth.accessToken,
-    totalPath: '/admin/stock?page=1&per_page=1',
-  })
+  try {
+    summary.value = await fetchStockSummary({
+      token: auth.accessToken,
+      totalPath: '/admin/stock?page=1&per_page=1',
+    })
+  } catch {
+    summary.value = { total: null, low: null, out: null, inStock: null }
+  }
 }
 
-// Any filter change resets to page 1. Reload directly only when the page is
-// already 1, otherwise the page watcher does it (avoids a double fetch).
+// Any filter change resets to page 1. Reload directly only when already on
+// page 1, otherwise the page watcher does it (avoids a double fetch).
 function applyFilters() {
   if (page.value !== 1) {
     page.value = 1
@@ -251,7 +243,12 @@ function applyFilters() {
   }
 }
 
-// Debounce search; the dropdown applies immediately.
+function setFilter(value) {
+  availability.value = value
+  filterOpen.value = false
+}
+
+// Debounce search; the dropdown applies immediately through its watcher.
 let searchTimer
 watch(query, () => {
   invalidateStatusCache()
@@ -266,66 +263,21 @@ watch(availability, () => {
 
 watch(page, loadItems)
 
-const rangeStart = computed(() => (total.value === 0 ? 0 : (page.value - 1) * PER_PAGE + 1))
-const rangeEnd = computed(() => (page.value - 1) * PER_PAGE + items.value.length)
-
-function prevPage() {
-  if (page.value > 1) page.value -= 1
-}
-function nextPage() {
-  if (page.value < lastPage.value) page.value += 1
-}
-
-function setFilter(value) {
-  availability.value = value
-  filterOpen.value = false
-  if (page.value !== 1) {
-    page.value = 1
-  } else {
-    loadItems()
-  }
-}
-
-let searchTimer
-watch(query, () => {
-  clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => {
-    if (page.value !== 1) {
-      page.value = 1
-    } else {
-      loadItems()
-    }
-  }, 350)
-})
-
-watch(page, () => {
-  loadItems()
-})
-
 watch([updatedFrom, updatedTo, sortBy, sortDirection], () => {
-  if (page.value !== 1) {
-    page.value = 1
-  } else {
-    loadItems()
-  }
+  invalidateStatusCache()
+  applyFilters()
 })
 
 function closeMenus() {
   filterOpen.value = false
 }
-<<<<<<< HEAD
 
-=======
->>>>>>> ff8c258 (update and improve code)
 onMounted(() => {
   document.addEventListener('click', closeMenus)
   loadItems()
   loadSummary()
 })
-<<<<<<< HEAD
 
-=======
->>>>>>> ff8c258 (update and improve code)
 onBeforeUnmount(() => {
   document.removeEventListener('click', closeMenus)
   clearTimeout(searchTimer)
@@ -346,7 +298,9 @@ function onThumbError(id) {
 }
 
 const rangeStart = computed(() => (total.value === 0 ? 0 : (page.value - 1) * PER_PAGE + 1))
-const rangeEnd = computed(() => Math.min(total.value, (page.value - 1) * PER_PAGE + items.value.length))
+const rangeEnd = computed(() =>
+  Math.min(total.value, (page.value - 1) * PER_PAGE + items.value.length),
+)
 
 function prevPage() {
   if (page.value > 1) page.value -= 1
@@ -377,6 +331,7 @@ function nextPage() {
           />
         </label>
 
+        <div class="toolbar__actions">
         <div class="filter" @click.stop>
           <button
             type="button"
@@ -435,12 +390,18 @@ function nextPage() {
             <option value="name">Sort by Name</option>
             <option value="stock_quantity">Sort by Stock</option>
           </select>
-          <button @click="sortDirection = sortDirection === 'desc' ? 'asc' : 'desc'" class="sort-dir-btn" :title="sortDirection === 'desc' ? 'Descending' : 'Ascending'">
-            {{ sortDirection === 'desc' ? '⬇' : '⬆' }}
-          </button>
+          <Button
+            variant="outline"
+            size="icon"
+            type="button"
+            :title="sortDirection === 'desc' ? 'Sorted descending — click for ascending' : 'Sorted ascending — click for descending'"
+            :aria-label="sortDirection === 'desc' ? 'Sort ascending' : 'Sort descending'"
+            @click="sortDirection = sortDirection === 'desc' ? 'asc' : 'desc'"
+          >
+            <ArrowDown v-if="sortDirection === 'desc'" />
+            <ArrowUp v-else />
+          </Button>
         </div>
-
-        <div class="toolbar__spacer"></div>
 
         <BaseButton variant="primary" :to="{ name: 'stock-adjustment-create' }">
           <template #icon>
@@ -448,6 +409,7 @@ function nextPage() {
           </template>
           Add Stock Adjustment
         </BaseButton>
+        </div>
       </section>
 
       <section class="stats">
@@ -483,6 +445,10 @@ function nextPage() {
           <span>{{ error }}</span>
           <button type="button" class="table__retry" @click="loadItems">Retry</button>
         </div>
+
+        <p v-if="filterTruncated" class="table__alert table__alert--warning">
+          Too many matches to filter in full — showing a partial list. Narrow your search to see everything.
+        </p>
 
         <table class="table">
           <thead>
@@ -594,6 +560,14 @@ function nextPage() {
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
 
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+
   &__dates {
     display: flex;
     align-items: center;
@@ -616,19 +590,6 @@ function nextPage() {
     color: var(--text-strong);
     font-family: inherit;
     &:focus { outline: none; border-color: var(--accent-ink); }
-  }
-
-  .sort-dir-btn {
-    background: var(--surface-alt);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.45rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    color: var(--text-body);
-    &:hover { background: var(--surface-hover); color: var(--text-strong); }
   }
 
   &__search {
@@ -885,6 +846,11 @@ function nextPage() {
     background: var(--danger-bg);
     color: var(--danger);
   }
+
+  &--warning {
+    background: rgb(var(--accent-rgb) / 0.14);
+    color: var(--accent-ink);
+  }
 }
 
 .table__retry {
@@ -986,57 +952,5 @@ function nextPage() {
   &--in-stock { background: var(--success-bg); color: var(--success); }
   &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
   &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
-}
-
-/* Alerts */
-.alert {
-  margin: 0;
-  padding: 0.7rem 0.9rem;
-  border-radius: 10px;
-  font-size: 0.82rem;
-  color: var(--danger);
-  background: var(--danger-bg);
-
-  &--warning {
-    color: var(--accent-ink);
-    background: rgb(var(--accent-rgb) / 0.14);
-  }
-}
-
-/* Pagination — matches the Products list. */
-.pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem;
-  border-top: 1px solid var(--border-subtle);
-  flex-wrap: wrap;
-
-  &__info { margin: 0; font-size: 0.82rem; color: var(--text-subtle); }
-  &__controls { display: flex; gap: 0.4rem; }
-}
-
-.page-btn {
-  min-width: 36px;
-  padding: 0.45rem 0.8rem;
-  font-size: 0.82rem;
-  font-weight: 600;
-  font-family: inherit;
-  color: var(--text-body);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  cursor: pointer;
-
-  &:hover:not(:disabled) { background: var(--surface-alt); }
-
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  &--active {
-    background: rgb(var(--accent-rgb));
-    border-color: rgb(var(--accent-rgb));
-    color: var(--ink-on-accent);
-  }
 }
 </style>
