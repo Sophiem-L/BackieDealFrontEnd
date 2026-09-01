@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -13,7 +13,17 @@ import {
 } from '@/components/ui/select'
 import { FORM_SELECT } from '@/lib/selectPresets'
 import { uploadImage } from '@/services/media'
-import { fetchPromotion, promotionToForm, savePromotion } from '@/services/promotions'
+import {
+  DEFAULT_FLASH_HOURS,
+  DISCOUNT_TYPES,
+  FLASH_SALE_KIND,
+  PROMOTION_KINDS,
+  STANDARD_KIND,
+  fetchPromotion,
+  promotionToForm,
+  savePromotion,
+  toDateTimeLocal,
+} from '@/services/promotions'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -22,14 +32,15 @@ const auth = useAuthStore()
 
 const isEdit = computed(() => Boolean(route.params.id))
 
-const promotionTypes = [
-  'Percentage Discount',
-  'Fixed Amount',
-]
+// What the campaign is, and separately how its money works out. Keeping them
+// apart is what lets a flash sale or a BOGO take a flat amount off.
+const promotionKinds = PROMOTION_KINDS.map((kind) => kind.label)
+const discountTypes = DISCOUNT_TYPES
 
 const form = reactive({
   name: '',
   code: '',
+  kind: STANDARD_KIND,
   type: 'Percentage Discount',
   description: '',
   active: true,
@@ -39,6 +50,10 @@ const form = reactive({
   minimumSpend: '0.00',
   startDate: '',
   endDate: '',
+  // A flash sale is scheduled as an instant plus a length, not as two dates —
+  // the whole point is a window measured in hours.
+  startDateTime: '',
+  flashDurationHours: String(DEFAULT_FLASH_HOURS),
   totalLimit: '',
   perCustomerLimit: '',
   currentUsage: 0,
@@ -47,6 +62,35 @@ const form = reactive({
 const pageTitle = computed(() =>
   isEdit.value ? `Edit Promotion: ${form.name || 'Promotion'}` : 'New Promotion',
 )
+
+const isFlash = computed(() => form.kind === FLASH_SALE_KIND)
+const isPercentage = computed(() => form.type !== 'Fixed Amount')
+
+// Picking "Flash Sale" on a blank form should not leave the admin staring at an
+// empty datetime field — most flash sales start now or shortly after.
+watch(
+  () => form.kind,
+  (kind) => {
+    if (kind === FLASH_SALE_KIND && !form.startDateTime) form.startDateTime = toDateTimeLocal(Date.now())
+  },
+)
+
+// Spells out the moment the window closes, so "3 hours" is never left as
+// arithmetic for the admin to do in their head.
+const flashEndsAt = computed(() => {
+  if (!isFlash.value || !form.startDateTime) return ''
+
+  const start = new Date(form.startDateTime).getTime()
+  const hours = Number(form.flashDurationHours)
+  if (Number.isNaN(start) || !Number.isFinite(hours) || hours <= 0) return ''
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(start + hours * 60 * 60 * 1000))
+})
 
 const bannerInput = ref(null)
 const bannerFile = ref(null)
@@ -151,22 +195,33 @@ async function save() {
               <input id="name" v-model="form.name" :class="{ 'field--invalid': errorFor('name') }" type="text" placeholder="e.g. Black Friday Sale 2023" />
               <span v-if="errorFor('name')" class="field-error">{{ errorFor('name') }}</span>
             </div>
-            <div class="row">
+            <div class="row row--three">
               <div class="field">
                 <label for="code">Promo Code</label>
                 <input id="code" v-model="form.code" :class="{ 'field--invalid': errorFor('code') }" type="text" placeholder="e.g. BLACKFRIDAY23" />
                 <span v-if="errorFor('code')" class="field-error">{{ errorFor('code') }}</span>
               </div>
               <div class="field">
-                <label for="type">Promotion Type</label>
+                <label for="kind">Promotion Type</label>
+                <Select v-model="form.kind">
+                  <SelectTrigger id="kind" :class="FORM_SELECT.trigger">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent :class="FORM_SELECT.content">
+                    <SelectItem v-for="k in promotionKinds" :key="k" :value="k" :class="FORM_SELECT.item">
+                      {{ k }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="field">
+                <label for="type">Discount</label>
                 <Select v-model="form.type">
-                  <!-- id keeps the <label for="type"> association: a <button>
-                       is a labelable element, so the label still focuses it. -->
                   <SelectTrigger id="type" :class="FORM_SELECT.trigger">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent :class="FORM_SELECT.content">
-                    <SelectItem v-for="t in promotionTypes" :key="t" :value="t" :class="FORM_SELECT.item">
+                    <SelectItem v-for="t in discountTypes" :key="t" :value="t" :class="FORM_SELECT.item">
                       {{ t }}
                     </SelectItem>
                   </SelectContent>
@@ -184,9 +239,10 @@ async function save() {
             <div class="row">
               <div class="field">
                 <label for="discount">Discount Value</label>
-                <div class="affix affix--suffix">
+                <div class="affix" :class="isPercentage ? 'affix--suffix' : null">
+                  <span v-if="!isPercentage">$</span>
                   <input id="discount" v-model="form.discountValue" :class="{ 'field--invalid': errorFor('value') }" type="text" placeholder="0" />
-                  <span>%</span>
+                  <span v-if="isPercentage">%</span>
                 </div>
                 <span v-if="errorFor('value')" class="field-error">{{ errorFor('value') }}</span>
               </div>
@@ -199,12 +255,23 @@ async function save() {
               </div>
             </div>
             <div class="row">
-              <div class="field">
+              <div v-if="isFlash" class="field">
+                <label for="flashStart">Starts At</label>
+                <input id="flashStart" v-model="form.startDateTime" :class="{ 'field--invalid': errorFor('starts_at') }" type="datetime-local" />
+                <span v-if="errorFor('starts_at')" class="field-error">{{ errorFor('starts_at') }}</span>
+              </div>
+              <div v-else class="field">
                 <label for="start">Start Date</label>
                 <input id="start" v-model="form.startDate" :class="{ 'field--invalid': errorFor('starts_at') }" type="date" />
                 <span v-if="errorFor('starts_at')" class="field-error">{{ errorFor('starts_at') }}</span>
               </div>
-              <div class="field">
+              <div v-if="isFlash" class="field">
+                <label for="flashDuration">Duration (hours)</label>
+                <input id="flashDuration" v-model="form.flashDurationHours" :class="{ 'field--invalid': errorFor('expires_at') }" type="number" min="0.5" step="0.5" placeholder="3" />
+                <span v-if="errorFor('expires_at')" class="field-error">{{ errorFor('expires_at') }}</span>
+                <span v-else-if="flashEndsAt" class="field-hint">Ends {{ flashEndsAt }}</span>
+              </div>
+              <div v-else class="field">
                 <label for="end">End Date</label>
                 <input id="end" v-model="form.endDate" :class="{ 'field--invalid': errorFor('expires_at') }" type="date" />
                 <span v-if="errorFor('expires_at')" class="field-error">{{ errorFor('expires_at') }}</span>
@@ -435,6 +502,7 @@ async function save() {
 
 .field--invalid { border-color: var(--danger) !important; }
 .field-error, .submit-error { font-size: 0.75rem; color: var(--danger); }
+.field-hint { font-size: 0.75rem; color: var(--text-subtle); }
 .submit-error { margin: 0; }
 
 .row {
@@ -442,6 +510,15 @@ async function save() {
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
   margin-top: 1rem;
+
+  // The code plus the two classification dropdowns, which are narrow enough to
+  // share a line and belong side by side.
+  &--three { grid-template-columns: 1fr 1fr 1fr; }
+
+  @media (max-width: 700px) {
+    grid-template-columns: 1fr;
+    &--three { grid-template-columns: 1fr; }
+  }
 
   .field + .field { margin-top: 0; }
 

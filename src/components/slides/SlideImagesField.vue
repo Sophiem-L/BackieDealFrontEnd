@@ -1,5 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, ref } from 'vue'
+import { ACCEPT_ATTR, uploadImage, validateImageFile } from '@/services/media'
+import { useAuthStore } from '@/stores/auth'
 
 // Editor for a slide's ordered image list. Frame 1 is the cover, so order
 // matters; playback settings only appear once there is something to play.
@@ -17,11 +19,11 @@ const transitions = [
   { value: 'cut', label: 'Cut' },
 ]
 
-// Object URLs this component handed out. Only these get revoked — the list may
-// also hold plain URLs that came from elsewhere and are not ours to release.
-const created = new Set()
+const auth = useAuthStore()
 
 const fileInput = ref(null)
+const uploading = ref(0)
+const error = ref('')
 
 const summary = computed(() => {
   const count = props.images.length
@@ -30,34 +32,64 @@ const summary = computed(() => {
   return `${count} ${noun} · plays for ${(count * props.durationMs) / 1000}s`
 })
 
+const uploadLabel = computed(() => {
+  if (uploading.value > 0) {
+    return `Uploading ${uploading.value} image${uploading.value === 1 ? '' : 's'}…`
+  }
+  return props.images.length ? 'Add more images' : 'Upload images'
+})
+
 function pickFiles() {
   fileInput.value?.click()
 }
 
-function onFiles(event) {
+/**
+ * Upload the picked files and append whatever landed.
+ *
+ * Frames are stored as hosted URLs, not blob:/data: — the src outlives this
+ * component the moment the slide is saved, so it has to be something the
+ * browser can still fetch afterwards.
+ *
+ * Uploads run one at a time so the frames keep the order they were picked in,
+ * and a failure part-way keeps the frames that did land rather than discarding
+ * the whole batch.
+ */
+async function onFiles(event) {
   const files = Array.from(event.target.files ?? [])
+  event.target.value = '' // so the same file can be picked again
   if (!files.length) return
 
-  const urls = files.map((file) => {
-    const url = URL.createObjectURL(file)
-    created.add(url)
-    return url
-  })
+  error.value = ''
+  uploading.value += files.length
 
-  emit('update:images', [...props.images, ...urls])
-  event.target.value = '' // so the same file can be picked again
-}
+  const uploaded = []
+  const failures = []
 
-function release(url) {
-  if (!created.has(url)) return
-  URL.revokeObjectURL(url)
-  created.delete(url)
+  for (const file of files) {
+    const problem = validateImageFile(file)
+    if (problem) {
+      failures.push(`${file.name}: ${problem}`)
+      uploading.value -= 1
+      continue
+    }
+
+    try {
+      const { url } = await uploadImage(file, { token: auth.accessToken, folder: 'banners' })
+      uploaded.push(url)
+    } catch (err) {
+      failures.push(`${file.name}: ${err.message || 'Upload failed.'}`)
+    } finally {
+      uploading.value -= 1
+    }
+  }
+
+  if (uploaded.length) emit('update:images', [...props.images, ...uploaded])
+  if (failures.length) error.value = failures.join(' ')
 }
 
 function removeImage(index) {
   const next = [...props.images]
-  const [removed] = next.splice(index, 1)
-  release(removed)
+  next.splice(index, 1)
   emit('update:images', next)
 }
 
@@ -67,31 +99,28 @@ function moveImage(index, offset) {
   ;[next[index], next[target]] = [next[target], next[index]]
   emit('update:images', next)
 }
-
-onBeforeUnmount(() => {
-  created.forEach((url) => URL.revokeObjectURL(url))
-  created.clear()
-})
 </script>
 
 <template>
   <div class="images">
-    <button type="button" class="uploader" @click="pickFiles">
+    <button type="button" class="uploader" :disabled="uploading > 0" @click="pickFiles">
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M12 15V4m0 0L8 8m4-4 4 4" stroke-linecap="round" stroke-linejoin="round" />
         <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
       </svg>
-      {{ images.length ? 'Add more images' : 'Upload images' }}
+      {{ uploadLabel }}
     </button>
 
     <input
       ref="fileInput"
       type="file"
-      accept="image/*"
+      :accept="ACCEPT_ATTR"
       multiple
       class="images__input"
       @change="onFiles"
     />
+
+    <p v-if="error" class="images__error" role="alert">{{ error }}</p>
 
     <ul v-if="images.length" class="images__strip">
       <li v-for="(src, i) in images" :key="`${i}-${src}`" class="images__thumb">
@@ -270,6 +299,12 @@ onBeforeUnmount(() => {
     font-size: 0.72rem;
     color: var(--text-subtle);
   }
+
+  &__error {
+    margin: 0;
+    font-size: 0.72rem;
+    color: var(--danger);
+  }
 }
 
 .uploader {
@@ -289,9 +324,14 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     border-color: rgb(var(--accent-rgb));
     color: var(--text-strong);
+  }
+
+  &:disabled {
+    cursor: progress;
+    opacity: 0.65;
   }
 
   svg {

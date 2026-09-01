@@ -5,6 +5,49 @@ import { apiFetch, resetUnauthenticatedHandler } from '@/services/api'
 
 // Persisted so a page reload keeps the admin signed in.
 const STORAGE_KEY = 'beckie_admin_auth'
+const STAFF_ALLOWED_PERMISSIONS = new Set([
+  'admin.auth.logout',
+  'admin.profile.view',
+  'admin.profile.update',
+  'products.view',
+  'products.create',
+  'products.update',
+  'categories.view',
+  'categories.create',
+  'categories.update',
+  'content.view',
+  'content.create',
+  'content.update',
+  'promotions.view',
+  'promotions.create',
+  'promotions.update',
+  'media.view',
+  'media.create',
+])
+const MANAGER_ALLOWED_PERMISSIONS = new Set([
+  'admin.auth.logout',
+  'admin.profile.view',
+  'admin.profile.update',
+  'orders.view',
+  'orders.approve',
+  'products.view',
+  'products.create',
+  'products.update',
+  'categories.view',
+  'categories.create',
+  'categories.update',
+  'banners.view',
+  'banners.create',
+  'banners.update',
+  'content.view',
+  'content.create',
+  'content.update',
+  'promotions.view',
+  'promotions.create',
+  'promotions.update',
+  'media.view',
+  'media.create',
+])
 
 function loadPersisted() {
   try {
@@ -12,6 +55,14 @@ function loadPersisted() {
   } catch {
     return {}
   }
+}
+
+function getUserRoles(user) {
+  if (!user) return []
+  if (Array.isArray(user.roles)) return user.roles
+  if (Array.isArray(user.role)) return user.role
+  if (user.role) return [user.role]
+  return []
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -30,10 +81,32 @@ export const useAuthStore = defineStore('auth', () => {
   const permissions = computed(() => user.value?.permissions ?? [])
 
   function hasPermission(permission) {
-    return can(permissions.value, permission)
+    if (!can(permissions.value, permission)) return false
+
+    const roles = getUserRoles(user.value)
+    if (permission && roles.includes('staff')) {
+      return STAFF_ALLOWED_PERMISSIONS.has(permission)
+    }
+    if (permission && roles.includes('manager')) {
+      return MANAGER_ALLOWED_PERMISSIONS.has(permission)
+    }
+
+    return true
   }
 
   function hasAnyPermission(required) {
+    const roles = getUserRoles(user.value)
+    if (roles.includes('staff') || roles.includes('manager')) {
+      return Array.isArray(required)
+        ? required.some((permission) => {
+            const allowedPermissions = roles.includes('manager')
+              ? MANAGER_ALLOWED_PERMISSIONS
+              : STAFF_ALLOWED_PERMISSIONS
+            return allowedPermissions.has(permission) && can(permissions.value, permission)
+          })
+        : false
+    }
+
     return canAny(permissions.value, required)
   }
 

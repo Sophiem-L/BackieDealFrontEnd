@@ -8,6 +8,46 @@ export function deriveAvailability(item) {
   return 'healthy'
 }
 
+// Same buckets as deriveAvailability, but with the API-facing label set the
+// stock table uses ('in-stock' rather than 'healthy'). A missing row reads as
+// out of stock rather than throwing. The threshold itself counts as low.
+export function deriveStockStatus(row) {
+  const stock = Number(row?.stock_quantity ?? 0)
+  if (stock <= 0) return 'out-of-stock'
+  const threshold = Number(row?.min_stock_alert ?? 0)
+  if (threshold > 0 && stock <= threshold) return 'low-stock'
+  return 'in-stock'
+}
+
+// The summary cards degrade one at a time: a forbidden alerts endpoint must not
+// blank a catalog total that loaded fine, and vice versa.
+export async function fetchStockSummary({ token, totalPath = '/admin/stock?page=1&per_page=1' } = {}) {
+  const [totalResult, alertsResult] = await Promise.allSettled([
+    apiFetch(totalPath, { token }),
+    apiFetch('/admin/stock/alerts', { token }),
+  ])
+
+  const total =
+    totalResult.status === 'fulfilled'
+      ? (totalResult.value?.data?.pagination?.total ?? 0)
+      : null
+
+  let low = null
+  let out = null
+  if (alertsResult.status === 'fulfilled') {
+    const rows = Array.isArray(alertsResult.value?.data) ? alertsResult.value.data : []
+    out = rows.filter((r) => Number(r.stock_quantity ?? 0) <= 0).length
+    low = rows.filter((r) => Number(r.stock_quantity ?? 0) > 0).length
+  }
+
+  // The alerts list isn't filtered by track_inventory, so it can outrun a
+  // tracked-only total — never report a negative in-stock count.
+  const inStock =
+    total === null || low === null ? null : Math.max(0, total - (low + out))
+
+  return { total, low, out, inStock }
+}
+
 export function formatStockDate(value) {
   if (!value) return '—'
   const d = new Date(value)

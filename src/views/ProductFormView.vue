@@ -1,12 +1,13 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import ProductImageGallery from '@/components/products/ProductImageGallery.vue'
 import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
-import { ACCEPT_ATTR, uploadImage } from '@/services/media'
+import { fetchPromotions } from '@/services/promotions'
 import { fromApiVariant, toApiVariants } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
@@ -28,27 +29,27 @@ const error = ref('')
 // Loaded from GET /admin/categories to populate the dropdown.
 const categories = ref([])
 
-// NOTE: there is no product↔promotion relation in the API (the promotions table
-// has no product link and Product exposes no promotion relationship), so this
-// list stays static and is NOT persisted on save. Flagged for the backend team.
-const promotions = [
-  { id: 1, name: 'Black Friday Sale', benefit: 'Up to 30% OFF', period: 'Nov 20 - Nov 30' },
-  { id: 2, name: 'Intel 14th Gen Launch', benefit: 'Flat $50 OFF', period: 'Oct 15 - Oct 31' },
-  { id: 3, name: 'Student Special', benefit: '10% OFF Storewide', period: 'Permanent' },
-]
+// Loaded from GET /admin/promotions. The selection persists through the
+// `coupon_product` pivot, sent as `promotion_ids[]` on save.
+const promotions = ref([])
+const promotionsError = ref('')
 
 const form = reactive({
   name: '',
   sku: '',
   categoryId: '',
   description: '',
-  imageUrl: '',
+  // Gallery entries: `{ url, isPrimary }`. Sent as `images[]`; the primary
+  // entry's URL also goes out as `thumbnail`, which is what the product list
+  // and the storefront read.
+  images: [],
   stock: 0,
   lowStockThreshold: 5,
   availableForOrder: true,
   basePrice: '',
   costPrice: '',
-  promotionId: '',
+  // Multiple promotions can apply to one product; ids of the checked rows.
+  promotionIds: [],
   // SKU-level variants, sent nested under `variants[]` on both create and update.
   variants: [],
 })
@@ -83,6 +84,39 @@ async function loadCategories() {
   }
 }
 
+async function loadPromotions() {
+  promotionsError.value = ''
+  try {
+    promotions.value = await fetchPromotions(auth.accessToken)
+  } catch (err) {
+    // Non-fatal: the rest of the form still saves. Surfaced rather than
+    // swallowed, because an empty picker would otherwise read as "there are no
+    // promotions" when the request simply failed.
+    promotions.value = []
+    promotionsError.value = err.message || 'Could not load promotions.'
+  }
+}
+
+/**
+ * Build the gallery from an API product.
+ *
+ * Products created before the gallery existed have a `thumbnail` and no
+ * `images` rows, so fall back to it — otherwise opening one of them would show
+ * an empty gallery and silently wipe the thumbnail on the next save.
+ */
+function toGalleryEntries(product) {
+  const images = Array.isArray(product?.images) ? product.images : []
+
+  if (images.length) {
+    return images.map((image) => ({
+      url: image.url || image.image,
+      isPrimary: Boolean(image.is_primary),
+    }))
+  }
+
+  return product?.thumbnail ? [{ url: product.thumbnail, isPrimary: true }] : []
+}
+
 async function loadProduct() {
   if (!isEdit.value) return
   loading.value = true
@@ -97,13 +131,14 @@ async function loadProduct() {
       sku: p.sku ?? '',
       categoryId: p.category_id ?? '',
       description: p.description ?? '',
-      imageUrl: p.thumbnail ?? '',
+      images: toGalleryEntries(p),
       stock: p.stock_quantity ?? 0,
       lowStockThreshold: p.min_stock_alert ?? 5,
       availableForOrder: Boolean(p.is_active),
       basePrice: formatMoney(p.price),
       costPrice: formatMoney(p.cost_price),
       variants: (p.variants ?? []).map(fromApiVariant),
+      promotionIds: (p.promotion_ids ?? []).map(Number),
     })
   } catch (err) {
     error.value = err.message || 'Unable to load this product.'
@@ -113,7 +148,7 @@ async function loadProduct() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadProduct()])
+  await Promise.all([loadCategories(), loadPromotions(), loadProduct()])
 })
 
 const pageTitle = computed(() => {
@@ -127,41 +162,91 @@ const variantMode = computed(() => {
   return isEdit.value ? 'edit' : 'create'
 })
 
-const selectedPromotion = computed(
-  () => promotions.find((p) => p.id === form.promotionId) || null,
+const selectedPromotions = computed(() =>
+  promotions.value.filter((p) => form.promotionIds.includes(p.id)),
 )
 
-const fileInput = ref(null)
-const uploadingImage = ref(false)
-const imageError = ref('')
-
-function pickImage() {
-  fileInput.value?.click()
+function isPromotionSelected(id) {
+  return form.promotionIds.includes(id)
 }
 
-/**
- * Upload straight away and keep the stored URL, rather than holding a `blob:`
- * preview that could never be saved.
- */
-async function onFileChange(event) {
-  const file = event.target.files?.[0]
-  event.target.value = ''
-  if (!file) return
+function togglePromotion(id) {
+  const index = form.promotionIds.indexOf(id)
+  if (index === -1) form.promotionIds.push(id)
+  else form.promotionIds.splice(index, 1)
+}
 
-  uploadingImage.value = true
-  imageError.value = ''
-  try {
-    const { url } = await uploadImage(file, { token: auth.accessToken, folder: 'products' })
-    form.imageUrl = url
-  } catch (err) {
-    imageError.value = err.message || 'Unable to upload that image.'
-  } finally {
-    uploadingImage.value = false
+// Dropdown state. The panel stays open across clicks so several promotions can
+// be checked in one go — it closes on an outside click, on Escape, or on the
+// trigger itself.
+const promoOpen = ref(false)
+const promoRoot = ref(null)
+const promoTrigger = ref(null)
+// The Promotions card sits at the end of a long form, so the panel would
+// usually open past the bottom of the viewport. Flip it above the trigger when
+// there isn't room below but there is above.
+const promoFlipUp = ref(false)
+
+// Keep in sync with `.promo-select__panel`'s max-height.
+const PROMO_PANEL_MAX_HEIGHT = 272
+
+function togglePromotionPanel() {
+  if (promoOpen.value) {
+    promoOpen.value = false
+    return
   }
+
+  const rect = promoTrigger.value?.getBoundingClientRect()
+  if (rect) {
+    const below = window.innerHeight - rect.bottom
+    promoFlipUp.value = below < PROMO_PANEL_MAX_HEIGHT && rect.top > below
+  }
+  promoOpen.value = true
 }
 
-// Offered for reuse on variant rows.
-const seedImages = computed(() => (form.imageUrl ? [form.imageUrl] : []))
+const promoSummary = computed(() => {
+  const names = selectedPromotions.value.map((p) => p.name)
+  if (names.length === 0) return 'No promotions selected'
+  if (names.length <= 2) return names.join(', ')
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2} more`
+})
+
+function closePromotions({ focusTrigger = false } = {}) {
+  promoOpen.value = false
+  if (focusTrigger) promoTrigger.value?.focus()
+}
+
+function onPromoDocumentPointerDown(event) {
+  if (promoOpen.value && !promoRoot.value?.contains(event.target)) closePromotions()
+}
+
+function onPromoDocumentKeydown(event) {
+  if (event.key === 'Escape') closePromotions({ focusTrigger: true })
+}
+
+onMounted(() => {
+  // pointerdown, not click: a click listener would fire after the trigger's own
+  // handler had already toggled the panel back open.
+  document.addEventListener('pointerdown', onPromoDocumentPointerDown)
+  document.addEventListener('keydown', onPromoDocumentKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onPromoDocumentPointerDown)
+  document.removeEventListener('keydown', onPromoDocumentKeydown)
+})
+
+// The gallery's primary image, which doubles as the product `thumbnail`.
+const primaryImageUrl = computed(
+  () => (form.images.find((image) => image.isPrimary) ?? form.images[0])?.url ?? '',
+)
+
+// Every gallery image is offered for reuse on variant rows, primary first.
+const seedImages = computed(() => {
+  const urls = form.images.map((image) => image.url).filter(Boolean)
+  const primary = primaryImageUrl.value
+  return primary ? [primary, ...urls.filter((url) => url !== primary)] : urls
+})
 
 async function save() {
   saving.value = true
@@ -180,9 +265,27 @@ async function save() {
   }
 
   if (form.categoryId) body.category_id = Number(form.categoryId)
-  // The picker now uploads before setting this, so it holds a stored URL. The
+
+  // Always sent, so unchecking every promotion in the UI actually detaches
+  // them server side — the API leaves them alone when the key is absent.
+  body.promotion_ids = form.promotionIds.map(Number)
+
+  // The gallery uploads before adding an entry, so these are stored URLs. The
   // `blob:` guard stays as a backstop — such a URL resolves for nobody else.
-  if (form.imageUrl && !form.imageUrl.startsWith('blob:')) body.thumbnail = form.imageUrl
+  const galleryImages = form.images.filter(
+    (image) => image.url && !image.url.startsWith('blob:'),
+  )
+
+  // Always sent, so clearing the gallery in the UI actually clears it server
+  // side. `thumbnail` goes along explicitly: the API would derive it from the
+  // primary row anyway, but sending it keeps a product whose gallery was
+  // emptied from holding on to a thumbnail that is no longer in the list.
+  body.images = galleryImages.map((image, index) => ({
+    image: image.url,
+    is_primary: image.isPrimary,
+    sort_order: index,
+  }))
+  body.thumbnail = primaryImageUrl.value || null
 
   // Both paths send the nested `variants[]` array; POST /admin/products creates
   // the product and its variants in one transaction.
@@ -245,41 +348,12 @@ function cancel() {
         <!-- Left column -->
         <div class="col col--side">
           <section class="card">
-            <h3 class="card__title">Product Image</h3>
-            <!-- View mode: static preview, no upload affordance -->
-            <div v-if="isView" class="image image--view">
-              <img v-if="form.imageUrl" :src="form.imageUrl" alt="Product image" />
-              <span v-else class="image__placeholder">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <rect x="3" y="4" width="18" height="16" rx="2" />
-                  <circle cx="8.5" cy="9.5" r="1.5" />
-                  <path d="m4 18 5-4 4 3 3-2 4 3" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-                <span>No image</span>
-              </span>
-            </div>
-
-            <!-- Edit/create mode: clickable upload -->
-            <template v-else>
-              <button type="button" class="image" :disabled="uploadingImage" @click="pickImage">
-                <span v-if="uploadingImage" class="image__placeholder">
-                  <span class="image__spinner" aria-hidden="true"></span>
-                  <span>Uploading…</span>
-                </span>
-                <img v-else-if="form.imageUrl" :src="form.imageUrl" alt="Product preview" />
-                <span v-else class="image__placeholder">
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <rect x="3" y="4" width="18" height="16" rx="2" />
-                    <circle cx="8.5" cy="9.5" r="1.5" />
-                    <path d="m4 18 5-4 4 3 3-2 4 3" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  <span>Click to upload</span>
-                </span>
-              </button>
-              <input ref="fileInput" type="file" :accept="ACCEPT_ATTR" hidden @change="onFileChange" />
-              <p v-if="imageError" class="image__error">{{ imageError }}</p>
-              <p v-else class="card__hint">Recommended: 1000x1000px. Up to 5MB.</p>
-            </template>
+            <h3 class="card__title">Product Images</h3>
+            <ProductImageGallery
+              :images="form.images"
+              :readonly="isView"
+              @update:images="form.images = $event"
+            />
           </section>
 
           <section class="card">
@@ -372,29 +446,80 @@ function cancel() {
           </section>
 
           <section class="card">
-            <h3 class="card__title">Promotion</h3>
-            <div v-if="!isView" class="field">
-              <label for="promotion">Applied Promotion</label>
-              <div class="select-wrap">
-                <select id="promotion" v-model="form.promotionId">
-                  <option value="">No promotion</option>
-                  <option v-for="promo in promotions" :key="promo.id" :value="promo.id">
-                    {{ promo.name }} — {{ promo.benefit }}
-                  </option>
-                </select>
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              </div>
-            </div>
+            <h3 class="card__title">Promotions</h3>
+            <fieldset v-if="!isView" ref="promoRoot" class="promo-picker">
+              <legend class="promo-picker__legend">Applied Promotions</legend>
+              <p v-if="promotionsError" class="promo-picker__error">{{ promotionsError }}</p>
+              <p v-else-if="promotions.length === 0" class="promo-picker__hint">
+                No promotions have been created yet.
+              </p>
 
-            <p v-if="isView && !selectedPromotion" class="card__hint">No promotion applied.</p>
+              <div v-else class="promo-select">
+                <button
+                  ref="promoTrigger"
+                  type="button"
+                  class="promo-select__trigger"
+                  :class="{ 'is-open': promoOpen }"
+                  aria-haspopup="true"
+                  :aria-expanded="promoOpen"
+                  @click="togglePromotionPanel"
+                >
+                  <span
+                    class="promo-select__summary"
+                    :class="{ 'is-placeholder': form.promotionIds.length === 0 }"
+                  >
+                    {{ promoSummary }}
+                  </span>
+                  <span v-if="form.promotionIds.length" class="promo-select__count">
+                    {{ form.promotionIds.length }}
+                  </span>
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
 
-            <div v-if="selectedPromotion" class="promo-preview">
-              <span class="promo-preview__badge">{{ selectedPromotion.benefit }}</span>
-              <div class="promo-preview__meta">
-                <p class="promo-preview__name">{{ selectedPromotion.name }}</p>
-                <p class="promo-preview__period">{{ selectedPromotion.period }}</p>
+                <div
+                  v-if="promoOpen"
+                  class="promo-select__panel"
+                  :class="{ 'is-above': promoFlipUp }"
+                >
+                  <ul class="promo-picker__list">
+                    <li v-for="promo in promotions" :key="promo.id">
+                      <label
+                        class="promo-option"
+                        :class="{ 'is-selected': isPromotionSelected(promo.id) }"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="isPromotionSelected(promo.id)"
+                          @change="togglePromotion(promo.id)"
+                        />
+                        <span class="promo-option__meta">
+                          <span class="promo-option__name">{{ promo.name }}</span>
+                          <span class="promo-option__period">{{ promo.period }}</span>
+                        </span>
+                        <span class="promo-option__benefit">{{ promo.benefit }}</span>
+                      </label>
+                    </li>
+                  </ul>
+                </div>
               </div>
-            </div>
+            </fieldset>
+
+            <!-- The checkbox rows already carry benefit and period, so the
+                 preview cards are for view mode only. -->
+            <template v-if="isView">
+              <p v-if="selectedPromotions.length === 0" class="card__hint">
+                No promotions applied.
+              </p>
+              <div v-for="promo in selectedPromotions" :key="promo.id" class="promo-preview">
+                <span class="promo-preview__badge">{{ promo.benefit }}</span>
+                <div class="promo-preview__meta">
+                  <p class="promo-preview__name">{{ promo.name }}</p>
+                  <p class="promo-preview__period">{{ promo.period }}</p>
+                </div>
+              </div>
+            </template>
           </section>
         </div>
       </fieldset>
@@ -547,68 +672,6 @@ function cancel() {
   }
 }
 
-.image {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--switch-track);
-  border-radius: 12px;
-  background: var(--surface-sunken);
-  overflow: hidden;
-  cursor: pointer;
-  padding: 0;
-
-  &:hover { border-color: rgb(var(--accent-rgb)); }
-
-  // View mode: solid border, no pointer/hover affordance.
-  &--view {
-    border-style: solid;
-    cursor: default;
-    &:hover { border-color: var(--switch-track); }
-  }
-
-  img { width: 100%; height: 100%; object-fit: cover; }
-
-  &__placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--text-subtle);
-    font-size: 0.8rem;
-
-    svg { width: 34px; height: 34px; stroke: currentColor; stroke-width: 1.5; }
-  }
-
-  &__spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid rgb(var(--accent-rgb) / 0.3);
-    border-top-color: rgb(var(--accent-rgb));
-    border-radius: 50%;
-    animation: image-spin 0.7s linear infinite;
-  }
-
-  &__error {
-    margin: 0.75rem 0 0;
-    font-size: 0.75rem;
-    color: var(--danger);
-    text-align: center;
-  }
-
-  &:disabled { cursor: progress; }
-}
-
-@keyframes image-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .image__spinner { animation-duration: 2s; }
-}
-
 .field {
   display: flex;
   flex-direction: column;
@@ -736,11 +799,180 @@ function cancel() {
   &--on &__status { color: var(--success-ink); }
 }
 
+.promo-picker {
+  // Block, not the .field flex box: a <legend> inside a flex container renders
+  // inconsistently across browsers.
+  display: block;
+  border: none;
+  margin: 0;
+  padding: 0;
+
+  // Matches the <label> styling the sibling fields use.
+  &__legend {
+    padding: 0;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-body);
+  }
+
+  &__hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.72rem;
+    color: var(--text-subtle);
+  }
+
+  &__error {
+    margin: 0.35rem 0 0;
+    font-size: 0.72rem;
+    color: var(--danger);
+  }
+
+  &__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+}
+
+.promo-select {
+  position: relative;
+  margin-top: 0.5rem;
+
+  &__trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    font-family: inherit;
+    font-size: 0.9rem;
+    color: var(--text-strong);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+    &:hover { border-color: rgb(var(--accent-rgb) / 0.6); }
+
+    &:focus-visible,
+    &.is-open {
+      outline: none;
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+    }
+
+    svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      stroke: var(--text-muted);
+      stroke-width: 2;
+      transition: transform 0.15s ease;
+    }
+
+    &.is-open svg { transform: rotate(180deg); }
+  }
+
+  // Truncated rather than wrapped, so a long selection can't grow the control
+  // and shove the panel down the page.
+  &__summary {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &.is-placeholder { color: var(--text-faint); }
+  }
+
+  &__count {
+    flex-shrink: 0;
+    padding: 0.1rem 0.45rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent-ink);
+    background: rgb(var(--accent-rgb) / 0.28);
+    border-radius: 999px;
+  }
+
+  &__panel {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    right: 0;
+
+    &.is-above {
+      top: auto;
+      bottom: calc(100% + 0.35rem);
+    }
+    max-height: 17rem;
+    overflow-y: auto;
+    // Room for the rows' focus rings, which the overflow would otherwise clip.
+    padding: 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 12px 28px rgb(0 0 0 / 0.18);
+  }
+}
+
+.promo-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--surface);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+
+  &:hover { border-color: var(--border); background: var(--surface-sunken); }
+
+  &.is-selected {
+    border-color: rgb(var(--accent-rgb));
+    background: rgb(var(--accent-rgb) / 0.1);
+  }
+
+  input[type='checkbox'] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    flex-shrink: 0;
+    accent-color: rgb(var(--accent-rgb));
+    cursor: pointer;
+  }
+
+  &__meta { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
+  &__name { font-size: 0.86rem; font-weight: 600; color: var(--text-strong); }
+  &__period { font-size: 0.74rem; color: var(--text-subtle); }
+
+  &__benefit {
+    padding: 0.28rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent-ink);
+    background: rgb(var(--accent-rgb) / 0.28);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+}
+
 .promo-preview {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-top: 1rem;
+  margin-top: 0.6rem;
   padding: 0.7rem 0.85rem;
   border: 1px solid rgb(var(--accent-rgb) / 0.4);
   background: rgb(var(--accent-rgb) / 0.1);

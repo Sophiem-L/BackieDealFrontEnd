@@ -3,7 +3,16 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { FORM_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
+import { fetchCustomers } from '@/services/customers'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -38,21 +47,22 @@ const customerList = ref([])
 const loadingRefs = ref(false)
 const refsError = ref('')
 
-// GET /admin/customers pages at a fixed 15 with no search, so this is what the
-// picker can offer today. See docs/orders-api-gaps.md for the same limitation
-// on the orders list.
+// Customers come through the same service the Customers directory uses, so the
+// picker offers the whole directory rather than the first page the bare
+// endpoint returns. See docs/orders-api-gaps.md for the paging limitation that
+// still applies to the orders list.
 async function loadReferenceData() {
   loadingRefs.value = true
   refsError.value = ''
   try {
-    const [productsRes, customersRes] = await Promise.all([
+    const [productsRes, customers] = await Promise.all([
       apiFetch('/admin/products?per_page=200&sort=name&direction=asc', {
         token: auth.accessToken,
       }),
-      apiFetch('/admin/customers', { token: auth.accessToken }),
+      fetchCustomers(auth.accessToken),
     ])
 
-    // Products come back as { items, pagination }; customers as a flat array.
+    // Products come back as { items, pagination }.
     const productItems = productsRes?.data?.items ?? productsRes?.data ?? []
     catalog.value = productItems.map((p) => ({
       id: p.id,
@@ -60,15 +70,14 @@ async function loadReferenceData() {
       price: Number(p.price ?? 0),
     }))
 
-    const customerItems = Array.isArray(customersRes?.data)
-      ? customersRes.data
-      : (customersRes?.data?.items ?? [])
-    customerList.value = customerItems.map((c) => ({
+    // fetchCustomers already flattens the resource — name, email, phone and a
+    // formatted address — so nothing is re-mapped here.
+    customerList.value = customers.map((c) => ({
       id: c.id,
       name: c.name || c.email,
-      email: c.email ?? '',
-      phone: c.phone ?? '',
-      address: formatAddress(c.address),
+      email: c.email,
+      phone: c.phone,
+      address: c.address,
     }))
   } catch (err) {
     refsError.value = err.message || 'Could not load products and customers.'
@@ -83,6 +92,16 @@ const selectedCustomer = computed(
   () => customerList.value.find((c) => c.id === customerId.value) ?? null,
 )
 
+// The Select speaks strings; `customerId` stays the number the API expects and
+// `selectedCustomer` matches on. This is the .number modifier the native
+// <select> used to apply, made explicit.
+const customerChoice = computed({
+  get: () => (customerId.value === '' ? undefined : String(customerId.value)),
+  set: (value) => {
+    customerId.value = value === undefined || value === '' ? '' : Number(value)
+  },
+})
+
 // Live totals — mirrors how the API computes grand_total.
 const subtotal = computed(() =>
   items.value.reduce((sum, i) => sum + (Number(i.qty) || 0) * (Number(i.unitPrice) || 0), 0),
@@ -94,22 +113,6 @@ const total = computed(
 
 function money(value) {
   return `$${(Number(value) || 0).toFixed(2)}`
-}
-
-// The customer's default address, keyed the same way as an order's
-// address_snapshot. Null when they have none on file.
-function formatAddress(address) {
-  if (!address) return ''
-  if (typeof address === 'string') return address
-  const parts = [
-    address.address_line_1,
-    address.address_line_2,
-    address.state,
-    address.city,
-    address.postal_code,
-    address.country,
-  ].filter(Boolean)
-  return parts.join(', ')
 }
 
 function addItem() {
@@ -333,23 +336,32 @@ async function createOrder() {
               </h3>
             </header>
             <div class="form-stack">
-              <label class="field-group">
-                <span class="field-group__label">Select Customer *</span>
-                <select
-                  v-model.number="customerId"
-                  class="field"
-                  :class="{ 'field--invalid': errorFor('customer_id') }"
-                  :disabled="loadingRefs"
-                >
-                  <option value="" disabled>
-                    {{ loadingRefs ? 'Loading customers…' : 'Choose a customer' }}
-                  </option>
-                  <option v-for="c in customerList" :key="c.id" :value="c.id">{{ c.name }}</option>
-                </select>
+              <div class="field-group">
+                <label class="field-group__label" for="customer">Select Customer *</label>
+                <Select v-model="customerChoice" :disabled="loadingRefs">
+                  <SelectTrigger
+                    id="customer"
+                    :class="[FORM_SELECT.trigger, { 'field--invalid': errorFor('customer_id') }]"
+                  >
+                    <SelectValue
+                      :placeholder="loadingRefs ? 'Loading customers…' : 'Choose a customer'"
+                    />
+                  </SelectTrigger>
+                  <SelectContent :class="FORM_SELECT.content">
+                    <SelectItem
+                      v-for="c in customerList"
+                      :key="c.id"
+                      :value="String(c.id)"
+                      :class="FORM_SELECT.item"
+                    >
+                      {{ c.name }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
                 <span v-if="errorFor('customer_id')" class="field-error">
                   {{ errorFor('customer_id') }}
                 </span>
-              </label>
+              </div>
 
               <!-- Contact details come from the chosen customer record; the
                    order stores only customer_id, so these are not editable. -->
@@ -379,15 +391,24 @@ async function createOrder() {
               </h3>
             </header>
             <div class="form-stack">
-              <label class="field-group">
-                <span class="field-group__label">Method *</span>
-                <select v-model="payment.method" class="field">
-                  <option value="" disabled>Select method</option>
-                  <option v-for="m in PAYMENT_METHODS" :key="m.value" :value="m.value">
-                    {{ m.label }}
-                  </option>
-                </select>
-              </label>
+              <div class="field-group">
+                <label class="field-group__label" for="payment-method">Method *</label>
+                <Select v-model="payment.method">
+                  <SelectTrigger id="payment-method" :class="FORM_SELECT.trigger">
+                    <SelectValue placeholder="Select method" />
+                  </SelectTrigger>
+                  <SelectContent :class="FORM_SELECT.content">
+                    <SelectItem
+                      v-for="m in PAYMENT_METHODS"
+                      :key="m.value"
+                      :value="m.value"
+                      :class="FORM_SELECT.item"
+                    >
+                      {{ m.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <!-- No Payment Status or Transaction ID here. A new order is
                    always payment-pending: cash is collected on delivery, and a
                    transaction id is issued by the gateway. Payment is recorded

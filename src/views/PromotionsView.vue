@@ -1,9 +1,11 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { deletePromotion as removePromotion, fetchPromotions } from '@/services/promotions'
+import PromotionCountdown from '@/components/promotions/PromotionCountdown.vue'
+import { useNow } from '@/lib/countdown'
+import { deletePromotion as removePromotion, fetchPromotions, liveStatus } from '@/services/promotions'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -16,15 +18,50 @@ const error = ref('')
 const deletingId = ref(null)
 const search = ref('')
 
+const statusLabels = { active: 'Active', paused: 'Paused', expired: 'Expired' }
+
+// Status filter, mirroring the availability dropdown on Stock Management:
+// 'all' plus one entry per status a promotion card can render.
+const status = ref('all')
+const filterOpen = ref(false)
+
+const statusOptions = [
+  { value: 'all', label: 'All Promotions' },
+  ...Object.entries(statusLabels).map(([value, label]) => ({ value, label })),
+]
+
+const filterLabel = computed(
+  () => statusOptions.find((option) => option.value === status.value)?.label ?? 'All Promotions',
+)
+
+function setFilter(value) {
+  status.value = value
+  filterOpen.value = false
+}
+
+// Close the filter dropdown when clicking elsewhere
+function closeMenus() {
+  filterOpen.value = false
+}
+
+const now = useNow()
+
+// The fetch settles each promotion's status once. That is fine for a month-long
+// campaign and wrong for a three-hour one, which can lapse while the admin is
+// still looking at the list — so the badge (and the filter behind it) reads the
+// status off the clock instead.
+function displayStatus(promo) {
+  return liveStatus(promo, now.value)
+}
+
 const filteredPromotions = computed(() => {
   const term = search.value.trim().toLowerCase()
-  if (!term) return promotions.value
-  return promotions.value.filter((promotion) =>
-    [promotion.name, promotion.code].some((value) => value?.toLowerCase().includes(term)),
-  )
+  return promotions.value.filter((promotion) => {
+    if (status.value !== 'all' && displayStatus(promotion) !== status.value) return false
+    if (!term) return true
+    return [promotion.name, promotion.code].some((value) => value?.toLowerCase().includes(term))
+  })
 })
-
-const statusLabels = { active: 'Active', paused: 'Paused', expired: 'Expired' }
 
 function usageText(promo) {
   return `${promo.used}/${promo.limit ?? '∞'}`
@@ -65,7 +102,14 @@ async function deletePromotion(promo) {
   }
 }
 
-onMounted(loadPromotions)
+onMounted(() => {
+  document.addEventListener('click', closeMenus)
+  loadPromotions()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeMenus)
+})
 </script>
 
 <template>
@@ -85,15 +129,49 @@ onMounted(loadPromotions)
           <input v-model="search" type="search" placeholder="Search promotion name or code..." />
         </label>
 
-        <div class="select">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" stroke-linejoin="round" />
-          </svg>
-          Active Only
-          <svg class="select__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-        </div>
+        <div class="filter" @click.stop>
+          <button
+            type="button"
+            class="select"
+            :class="{ 'select--active': status !== 'all' }"
+            :aria-expanded="filterOpen"
+            @click="filterOpen = !filterOpen"
+          >
+            <span class="select__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" stroke-linejoin="round" />
+              </svg>
+            </span>
+            {{ filterLabel }}
+            <svg class="select__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
 
-        <div class="toolbar__spacer"></div>
+          <div v-if="filterOpen" class="filter__popup" role="listbox">
+            <button
+              v-for="option in statusOptions"
+              :key="option.value"
+              type="button"
+              class="filter__item"
+              :class="{ 'filter__item--selected': status === option.value }"
+              role="option"
+              :aria-selected="status === option.value"
+              @click="setFilter(option.value)"
+            >
+              {{ option.label }}
+              <svg
+                v-if="status === option.value"
+                class="filter__check"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path d="m5 12.5 4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
+        </div>
 
         <BaseButton
           v-if="auth.hasPermission('promotions.create')"
@@ -122,8 +200,8 @@ onMounted(loadPromotions)
           @keydown.enter="viewPromotion(promo)"
         >
           <div class="promo__banner" :style="{ background: promo.banner }">
-            <span class="promo__status" :class="`promo__status--${promo.status}`">
-              {{ statusLabels[promo.status] }}
+            <span class="promo__status" :class="`promo__status--${displayStatus(promo)}`">
+              {{ statusLabels[displayStatus(promo)] }}
             </span>
             <div class="promo__overlay">
               <h3 class="promo__name">{{ promo.name }}</h3>
@@ -141,6 +219,7 @@ onMounted(loadPromotions)
                   </svg>
                   {{ promo.period }}
                 </span>
+                <PromotionCountdown v-if="promo.isFlash" :expires-at="promo.expiresAt" />
               </div>
             </div>
           </div>
@@ -220,9 +299,11 @@ onMounted(loadPromotions)
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
 
+  /* The only growing item in the row, so it absorbs all the free space and
+     pushes the filter and button into one group against the right edge. */
   &__search {
     flex: 1;
-    min-width: 220px;
+    min-width: 240px;
     display: flex;
     align-items: center;
     background: var(--bg);
@@ -239,8 +320,6 @@ onMounted(loadPromotions)
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
-  &__spacer { flex: 1; }
-
   input {
     flex: 1;
     min-width: 0;
@@ -254,6 +333,8 @@ onMounted(loadPromotions)
   }
 }
 
+.filter { position: relative; }
+
 .select {
   display: inline-flex;
   align-items: center;
@@ -261,6 +342,7 @@ onMounted(loadPromotions)
   padding: 0.55rem 0.8rem;
   font-size: 0.82rem;
   font-weight: 500;
+  font-family: inherit;
   color: var(--text-body);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -268,8 +350,59 @@ onMounted(loadPromotions)
   cursor: pointer;
   white-space: nowrap;
 
-  svg { width: 14px; height: 14px; stroke: var(--text-subtle); stroke-width: 1.8; }
-  &__caret { margin-left: 0.1rem; }
+  &__icon {
+    display: inline-flex;
+    color: var(--accent-ink);
+    svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
+  }
+
+  &__caret { width: 14px; height: 14px; stroke: var(--text-subtle); stroke-width: 1.8; }
+
+  &--active { border-color: rgb(var(--accent-rgb) / 0.7); background: rgb(var(--accent-rgb) / 0.08); }
+}
+
+.filter__popup {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 168px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 23, 28, 0.12);
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.filter__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  font-size: 0.84rem;
+  font-weight: 500;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text-body);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  &:hover { background: var(--surface-alt); }
+
+  &--selected { color: var(--accent-ink); font-weight: 600; }
+}
+
+.filter__check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  stroke-width: 2.2;
 }
 
 /* Cards */

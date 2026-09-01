@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select'
 import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
+import { deriveStockStatus, fetchStockSummary } from '@/services/stock'
 import { downloadCsv, downloadJson } from '@/services/tableExport'
 import { useAuthStore } from '@/stores/auth'
 
@@ -107,12 +108,8 @@ const statusLabels = {
 
 // The API has no explicit list status; derive it the same way the backend's
 // `low_stock` filter does (stock_quantity vs min_stock_alert).
-function deriveStatus(item) {
-  const stock = Number(item.stock_quantity ?? 0)
-  if (stock <= 0) return 'out-of-stock'
-  if (item.min_stock_alert != null && stock <= Number(item.min_stock_alert)) return 'low-stock'
-  return 'in-stock'
-}
+// Shared with the Stock Management screen so both badge rows the same way.
+const deriveStatus = deriveStockStatus
 
 // Product thumbnails are Cloudinary `secure_url` values (see MediaController),
 // so only absolute/rooted URLs are renderable — a bare storage path can't be
@@ -236,38 +233,14 @@ async function loadProducts() {
   }
 }
 
-// Catalog totals for the stat cards. `/admin/stock/alerts` returns every product
-// at or below its min_stock_alert (unpaginated); stock <= 0 is Out of Stock and
-// the rest is Low Stock, matching deriveStatus() above. In Stock is the
-// remainder of the catalog. A failure here leaves the cards at '—'.
+// Catalog totals for the stat cards, shared with the Stock Management screen —
+// see fetchStockSummary for how the low/out split and the degrade-to-null
+// behaviour work. Here the catalog size is the whole product list.
 async function loadSummary() {
-  // allSettled, not all: a role without stock.view gets a 403 from
-  // /admin/stock/alerts, and Promise.all would reject the pair and blank the
-  // catalog total that had already loaded fine. Each card degrades on its own.
-  const [catalogResult, alertsResult] = await Promise.allSettled([
-    apiFetch('/admin/products?page=1&per_page=1', { token: auth.accessToken }),
-    apiFetch('/admin/stock/alerts', { token: auth.accessToken }),
-  ])
-
-  const catalogTotal =
-    catalogResult.status === 'fulfilled'
-      ? (catalogResult.value?.data?.pagination?.total ?? null)
-      : null
-
-  if (alertsResult.status !== 'fulfilled') {
-    summary.value = { total: catalogTotal, low: null, out: null, inStock: null }
-    return
-  }
-
-  const rows = Array.isArray(alertsResult.value?.data) ? alertsResult.value.data : []
-  const out = rows.filter((row) => Number(row.stock_quantity ?? 0) <= 0).length
-
-  summary.value = {
-    total: catalogTotal,
-    low: rows.length - out,
-    out,
-    inStock: catalogTotal == null ? null : Math.max(0, catalogTotal - rows.length),
-  }
+  summary.value = await fetchStockSummary({
+    token: auth.accessToken,
+    totalPath: '/admin/products?page=1&per_page=1',
+  })
 }
 
 // Category options for the filter. GET /admin/categories hard-codes paginate(20)
