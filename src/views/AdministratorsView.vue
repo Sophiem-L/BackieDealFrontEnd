@@ -4,8 +4,12 @@ import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { administrators, nextAdministratorId } from '@/data/administrators'
 import { roles } from '@/data/roles'
+import { resetAdministratorPassword } from '@/services/administrators'
+import { useAuthStore } from '@/stores/auth'
 
 const search = ref('')
+const auth = useAuthStore()
+const canResetPassword = computed(() => auth.hasPermission('administrators.password-reset'))
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -25,8 +29,44 @@ function initials(name) {
 }
 
 function manageAdmin(admin) {
-  // TODO: open settings flow for `admin`
-  void admin
+  if (!canResetPassword.value) return
+  resetForm.target = admin
+  resetForm.password = ''
+  resetForm.confirmation = ''
+  resetError.value = ''
+  resetMessage.value = ''
+  showReset.value = true
+}
+
+const showReset = ref(false)
+const resetting = ref(false)
+const resetError = ref('')
+const resetMessage = ref('')
+const resetForm = reactive({ target: null, password: '', confirmation: '' })
+
+const canReset = computed(
+  () => resetForm.password.length >= 8 && resetForm.password === resetForm.confirmation,
+)
+
+function closeReset() {
+  if (!resetting.value) showReset.value = false
+}
+
+async function submitReset() {
+  if (!canReset.value || !resetForm.target) return
+  resetting.value = true
+  resetError.value = ''
+  resetMessage.value = ''
+
+  try {
+    await resetAdministratorPassword(resetForm.target.id, resetForm.password, auth.accessToken)
+    resetMessage.value = `Password reset for ${resetForm.target.name}.`
+    showReset.value = false
+  } catch (err) {
+    resetError.value = err.errors?.password?.[0] || err.message || 'Unable to reset the password.'
+  } finally {
+    resetting.value = false
+  }
 }
 
 /* Create-user modal */
@@ -64,6 +104,8 @@ function submitCreate() {
     <AppHeader title="Manage Administrators" />
 
     <div class="page__body">
+      <p v-if="resetMessage" class="alert alert--success" role="status">{{ resetMessage }}</p>
+      <p v-if="resetError && !showReset" class="alert alert--error" role="alert">{{ resetError }}</p>
       <!-- Toolbar: search + invite -->
       <section class="toolbar">
         <label class="search">
@@ -112,6 +154,19 @@ function submitCreate() {
           </div>
 
           <div class="card__actions">
+            <button
+              v-if="canResetPassword"
+              type="button"
+              class="icon-btn"
+              :aria-label="`Reset password for ${admin.name}`"
+              title="Reset password"
+              @click="manageAdmin(admin)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="7.5" cy="15.5" r="3.5" />
+                <path d="m10 13 8-8M15 5l4 4M18 3l3 3" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
             <button
               type="button"
               class="icon-btn"
@@ -172,6 +227,40 @@ function submitCreate() {
             <footer class="modal__foot">
               <BaseButton variant="ghost" type="button" @click="closeCreate">Cancel</BaseButton>
               <BaseButton variant="primary" type="submit" :disabled="!canSubmit">Create User</BaseButton>
+            </footer>
+          </form>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Super-admin password reset modal -->
+    <Teleport to="body">
+      <div v-if="showReset" class="modal" @click.self="closeReset">
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="reset-password-title">
+          <header class="modal__head">
+            <h2 id="reset-password-title" class="modal__title">Reset Administrator Password</h2>
+            <button type="button" class="modal__close" aria-label="Close" :disabled="resetting" @click="closeReset">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" /></svg>
+            </button>
+          </header>
+
+          <form class="modal__body" @submit.prevent="submitReset">
+            <p class="reset-copy">Set a new password for <strong>{{ resetForm.target?.name }}</strong>. Their active admin sessions will be signed out.</p>
+            <p v-if="resetError" class="alert alert--error" role="alert">{{ resetError }}</p>
+            <label class="field">
+              <span class="field__label">New password</span>
+              <input v-model="resetForm.password" type="password" class="field__input" minlength="8" autocomplete="new-password" autofocus />
+            </label>
+            <label class="field">
+              <span class="field__label">Confirm password</span>
+              <input v-model="resetForm.confirmation" type="password" class="field__input" minlength="8" autocomplete="new-password" />
+            </label>
+            <p v-if="resetForm.confirmation && resetForm.password !== resetForm.confirmation" class="field-error">Passwords do not match.</p>
+            <footer class="modal__foot">
+              <BaseButton variant="ghost" type="button" :disabled="resetting" @click="closeReset">Cancel</BaseButton>
+              <BaseButton variant="primary" type="submit" :disabled="!canReset || resetting">
+                {{ resetting ? 'Resetting…' : 'Reset Password' }}
+              </BaseButton>
             </footer>
           </form>
         </div>
@@ -360,6 +449,9 @@ function submitCreate() {
   border-radius: 6px;
   white-space: nowrap;
 }
+
+.reset-copy { margin: 0; color: var(--text-body); line-height: 1.5; }
+.field-error { margin: -0.5rem 0 0; color: var(--danger); font-size: 0.78rem; }
 
 .icon-btn {
   display: inline-flex;

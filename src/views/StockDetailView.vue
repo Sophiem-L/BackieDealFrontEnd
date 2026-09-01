@@ -282,8 +282,8 @@ watch(() => route.params.id, () => {
 
 .product {
   display: flex;
-  align-items: center;
-  gap: 0.8rem;
+  align-items: flex-start;
+  gap: 1rem;
   padding-bottom: 1rem;
   border-bottom: 1px solid var(--border-subtle);
 
@@ -291,21 +291,23 @@ watch(() => route.params.id, () => {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 46px;
-    height: 46px;
-    border-radius: 10px;
+    width: 84px;
+    height: 84px;
+    border-radius: 12px;
     background: var(--border-subtle);
     color: var(--text-muted);
     font-size: 0.78rem;
     font-weight: 700;
     flex-shrink: 0;
+    overflow: hidden;
 
     &--img {
+      display: block;
       object-fit: cover;
     }
   }
 
-  &__name { margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--text-strong); }
+  &__name { margin: 0.15rem 0 0; font-size: 0.95rem; font-weight: 700; line-height: 1.35; color: var(--text-strong); }
   &__sku { margin: 0.2rem 0 0; font-size: 0.74rem; color: var(--text-subtle); }
 }
 
