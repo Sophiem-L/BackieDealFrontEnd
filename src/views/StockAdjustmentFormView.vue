@@ -29,15 +29,9 @@ const form = reactive({
   reason: '',
 })
 
-function step(delta) {
-  const current = product.value ? product.value.currentStock : 0
-  const next = form.quantityChange + delta
-  if (current + next < 0) return
-  form.quantityChange = next
-}
-
-const signedChange = computed(() =>
-  form.quantityChange > 0 ? `+${form.quantityChange}` : `${form.quantityChange}`,
+const isProductLocked = computed(() => Boolean(route.query.product_id || route.query.id))
+const quantityIsValid = computed(
+  () => Number.isInteger(form.quantityChange) && form.quantityChange > 0,
 )
 
 function thumbInitials(name) {
@@ -99,8 +93,8 @@ function cancel() {
 
 async function complete() {
   if (!product.value) return
-  if (form.quantityChange === 0) {
-    submitError.value = 'Please specify a non-zero quantity change.'
+  if (!quantityIsValid.value) {
+    submitError.value = 'Quantity must be a positive whole number.'
     return
   }
 
@@ -167,10 +161,10 @@ onMounted(() => {
           <section class="card">
             <h3 class="card__title">Adjustment Details</h3>
 
-            <div class="field">
+            <div v-if="!isProductLocked" class="field">
               <label for="productSelect">Select Product</label>
               <div class="select-wrap">
-                <select id="productSelect" :value="product?.id || ''" @change="e => selectProductById(e.target.value)">
+                <select id="productSelect" :value="product?.id || ''" :disabled="isProductLocked" @change="e => selectProductById(e.target.value)">
                   <option value="" disabled>Select a product to adjust...</option>
                   <option v-for="item in catalog" :key="item.id" :value="item.id">
                     {{ item.name }} (SKU: {{ item.sku }}) — {{ item.currentStock }} in stock
@@ -210,15 +204,18 @@ onMounted(() => {
               </div>
 
               <div class="field">
-                <label>Quantity Change</label>
-                <div class="stepper">
-                  <button type="button" class="stepper__btn" aria-label="Decrease" @click="step(-1)">
-                    <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14" stroke-linecap="round" /></svg>
-                  </button>
-                  <span class="stepper__value" :class="{ 'stepper__value--neg': form.quantityChange < 0 }">{{ signedChange }}</span>
-                  <button type="button" class="stepper__btn" aria-label="Increase" @click="step(1)">
-                    <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-                  </button>
+                <label for="quantityChange">Quantity Change</label>
+                <div class="quantity-input">
+                  <input
+                    id="quantityChange"
+                    v-model.number="form.quantityChange"
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputmode="numeric"
+                    required
+                  />
+                  <span>units</span>
                 </div>
               </div>
             </div>
@@ -239,7 +236,7 @@ onMounted(() => {
 
       <div class="actions">
         <BaseButton variant="ghost" :disabled="submitting" @click="cancel">Cancel</BaseButton>
-        <BaseButton variant="primary" :disabled="!product || form.quantityChange === 0 || submitting" @click="complete">
+        <BaseButton variant="primary" :disabled="!product || !quantityIsValid || submitting" @click="complete">
           {{ submitting ? 'Saving...' : 'Create' }}
         </BaseButton>
       </div>
@@ -464,6 +461,43 @@ onMounted(() => {
   }
 
   textarea { resize: vertical; }
+}
+
+.quantity-input {
+  position: relative;
+
+  input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.65rem 4rem 0.65rem 0.8rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-strong);
+    background: var(--surface);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    appearance: textfield;
+
+    &::-webkit-inner-spin-button,
+    &::-webkit-outer-spin-button { appearance: none; margin: 0; }
+
+    &:focus {
+      outline: none;
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+    }
+  }
+
+  span {
+    position: absolute;
+    top: 50%;
+    right: 0.85rem;
+    transform: translateY(-50%);
+    color: var(--text-subtle);
+    font-size: 0.78rem;
+    pointer-events: none;
+  }
 }
 
 .select-wrap {

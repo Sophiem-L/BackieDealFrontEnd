@@ -1,8 +1,7 @@
 import { apiFetch } from '@/services/api'
 
-// Sold Products report API. The Reports page's granularity tabs map 1:1 onto the
-// presets the backend accepts, so the consumer never has to learn the API's
-// vocabulary. The remaining report tabs have no production endpoint today and
+// Report API: Sold Products and Customer Orders have production endpoints.
+// The remaining report tabs have no production endpoint today and
 // keep reading mock data (see src/data/reports.js).
 
 const PRESET_BY_GRANULARITY = {
@@ -36,6 +35,26 @@ export function normalizeSoldProductsPayload(data) {
   }
 }
 
+/**
+ * Normalise the customer-orders payload into the shape CustomerOrdersReport.vue
+ * renders.
+ */
+export function normalizeCustomerOrdersPayload(data) {
+  const table = Array.isArray(data?.table) ? data.table : []
+
+  return {
+    rows: table.map((row) => ({
+      period: row.period ?? 'Unknown',
+      orders: Number(row.orders ?? 0),
+      uniqueCustomers: Number(row.uniqueCustomers ?? 0),
+      newCustomers: Number(row.newCustomers ?? 0),
+      returningCustomers: Number(row.returningCustomers ?? 0),
+      avgItems: Number(row.avgItems ?? 0),
+    })),
+    meta: data?.meta ?? {},
+  }
+}
+
 export async function fetchSoldProductsReport(
   { granularity = 'monthly', date_from, date_to } = {},
   token,
@@ -49,4 +68,19 @@ export async function fetchSoldProductsReport(
   const response = await apiFetch(`/admin/reports/sold-products?${params.toString()}`, { token })
 
   return normalizeSoldProductsPayload(response?.data)
+}
+
+export async function fetchCustomerOrdersReport(
+  { granularity = 'monthly', date_from, date_to } = {},
+  token,
+) {
+  const params = new URLSearchParams({
+    preset: PRESET_BY_GRANULARITY[granularity] ?? 'custom',
+  })
+  if (date_from) params.set('date_from', date_from)
+  if (date_to) params.set('date_to', date_to)
+
+  const response = await apiFetch(`/admin/reports/customer-orders?${params.toString()}`, { token })
+
+  return normalizeCustomerOrdersPayload(response?.data)
 }

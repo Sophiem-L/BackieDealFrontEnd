@@ -216,6 +216,11 @@ const router = createRouter({
       component: () => import('@/views/LogsView.vue'),
     },
     {
+      path: '/notifications',
+      name: 'notifications',
+      component: () => import('@/views/NotificationsView.vue'),
+    },
+    {
       path: '/profile',
       name: 'profile',
       meta: { permission: 'admin.profile.view' },
