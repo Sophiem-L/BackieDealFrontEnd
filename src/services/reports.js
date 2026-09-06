@@ -84,3 +84,69 @@ export async function fetchCustomerOrdersReport(
 
   return normalizeCustomerOrdersPayload(response?.data)
 }
+
+export function normalizeSalesReportPayload(data) {
+  const summary = data?.summary ?? {}
+  const number = (value) => Number(value ?? 0)
+
+  return {
+    summary: {
+      revenue: number(summary.revenue),
+      cogs: number(summary.cogs),
+      profit: number(summary.profit),
+      margin: number(summary.margin),
+      orders: number(summary.orders),
+      revenueChange: number(summary.revenue_change),
+      cogsChange: number(summary.cogs_change),
+      profitChange: number(summary.profit_change),
+      marginChange: number(summary.margin_change),
+    },
+    chart: Array.isArray(data?.chart)
+      ? data.chart.map((point) => ({
+          label: point.label ?? '',
+          revenue: number(point.revenue),
+          profit: number(point.profit),
+        }))
+      : [],
+    dailyBreakdown: Array.isArray(data?.daily_breakdown)
+      ? data.daily_breakdown.map((point) => ({
+          label: point.label ?? '',
+          revenue: number(point.revenue),
+          profit: number(point.profit),
+        }))
+      : [],
+    topProducts: Array.isArray(data?.top_products)
+      ? data.top_products.map((product) => ({
+          name: product.name ?? 'Unknown product',
+          units: number(product.units),
+          revenue: number(product.revenue),
+        }))
+      : [],
+    table: Array.isArray(data?.table)
+      ? data.table.map((row) => ({
+          period: row.period ?? '',
+          dateRange: row.date_range ?? '',
+          orders: number(row.orders),
+          revenue: number(row.revenue),
+          cogs: number(row.cogs),
+          profit: number(row.profit),
+          margin: number(row.margin),
+        }))
+      : [],
+    meta: data?.meta ?? {},
+  }
+}
+
+export async function fetchSalesReport(
+  { granularity = 'weekly', date_from, date_to } = {},
+  token,
+) {
+  const params = new URLSearchParams({
+    preset: PRESET_BY_GRANULARITY[granularity] ?? 'weekly',
+  })
+  if (date_from) params.set('date_from', date_from)
+  if (date_to) params.set('date_to', date_to)
+
+  const response = await apiFetch(`/admin/reports/sales?${params.toString()}`, { token })
+  return normalizeSalesReportPayload(response?.data)
+}
