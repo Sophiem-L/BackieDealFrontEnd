@@ -184,7 +184,7 @@ watch(period, loadReport)
 
 <style scoped lang="scss">
 .sales-page { min-height: 100vh; background: var(--bg); }
-.sales-page__body { max-width: 1440px; margin: 0 auto; padding: 1.6rem 1.5rem 2.5rem; }
+.sales-page__body { padding: 1.6rem 1.5rem 2.5rem; }
 .report-heading, .toolbar, .panel__header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .report-heading { margin-bottom: 1.35rem; }
 .eyebrow { margin: 0 0 0.2rem; color: var(--accent-ink); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }

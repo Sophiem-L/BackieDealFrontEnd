@@ -25,8 +25,8 @@ const MAX_PAGES = 10
 // Cover gradients, picked by id so a category keeps the same cover on reload.
 const TONES = ['slate', 'blue', 'green', 'violet', 'cyan', 'amber', 'neutral', 'teal', 'warm']
 
-// The API returns no icon, so match one off the slug/name. CategoryIcon falls
-// back to a generic glyph, so an unmatched category still renders.
+// The API returns no icon field, so match one off the slug/name. CategoryIcon
+// falls back to a generic glyph, so an unmatched category still renders.
 const ICON_RULES = [
   [/graphic|gpu|vga/, 'gpu'],
   [/processor|cpu/, 'cpu'],
@@ -67,6 +67,7 @@ function mapCategory(row) {
     id: row.id,
     name: row.name ?? `Category ${row.id}`,
     slug: row.slug ?? '',
+    image: row.image || null,
     icon: iconFor(row.slug, row.name),
     tone: TONES[Math.abs(Number(row.id) || 0) % TONES.length],
     updated: relativeTime(row.updated_at),
