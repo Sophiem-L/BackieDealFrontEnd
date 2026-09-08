@@ -49,7 +49,8 @@ const coupon = ref(null)
 const customer = ref({ name: '—', email: '—', phone: '—', address: '—' })
 const payment = ref({ method: '—', status: '—', transactionId: '—', totalPaid: '—' })
 // `notes` has no column on the orders table, so there is nothing to load yet.
-const notes = ref([])
+const notes = ref('')
+
 
 const dateTimeFormat = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -163,6 +164,8 @@ function applyOrder(data) {
     transactionId: data?.payment?.transaction_id || '—',
     totalPaid: paid ? money(data?.total) : '—',
   }
+
+  notes.value = data?.notes ?? ''
 
   savedStatus.value = order.value.status
 }
@@ -565,12 +568,10 @@ async function editOrder() {
                 Notes
               </h3>
             </header>
-            <div v-for="note in notes" :key="note.id" class="note">
-              <p class="note__body">{{ note.body }}</p>
-              <p class="note__by">{{ note.author }} · {{ note.at }}</p>
+            <div v-if="notes" class="note">
+              <p class="note__body">{{ notes }}</p>
             </div>
-            <!-- The orders table has no notes column yet, so this stays empty. -->
-            <p v-if="notes.length === 0" class="note note__empty">No notes on this order.</p>
+            <p v-if="!notes" class="note note__empty">No notes on this order.</p>
           </section>
 
           <div v-if="isEditMode && canEditStatus" class="detail-actions">

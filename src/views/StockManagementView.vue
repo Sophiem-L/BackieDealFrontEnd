@@ -121,7 +121,9 @@ function mapItem(row) {
     onHand: Number(row.stock_quantity ?? 0),
     threshold: Number(row.min_stock_alert ?? 0),
     availability: deriveStockStatus(row),
-    thumbnail: usableImage(row.thumbnail),
+    thumbnail: usableImage(
+      row.thumbnail || row.image || row.image_url || row.product?.thumbnail,
+    ),
   }
 }
 
@@ -288,6 +290,10 @@ onBeforeUnmount(() => {
 // what a wired-up detail page would need — it is the API's route key.
 function openItem(uuid) {
   router.push({ name: 'stock-detail', params: { id: uuid } })
+}
+
+function openAdjustment(uuid) {
+  router.push({ name: 'stock-adjustment-create', query: { product_id: uuid } })
 }
 
 const brokenThumbs = ref(new Set())
@@ -458,11 +464,12 @@ function nextPage() {
               <th>Last Updated</th>
               <th>On Hand</th>
               <th>Availability</th>
+              <th aria-label="Actions"></th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading && items.length === 0">
-              <td colspan="4" class="table__empty">Loading inventory data...</td>
+              <td colspan="6" class="table__empty">Loading inventory data...</td>
             </tr>
             <tr
               v-for="item in items"
@@ -478,6 +485,7 @@ function nextPage() {
                     :src="item.thumbnail"
                     :alt="item.name"
                     class="product__thumb product__thumb--img"
+                    loading="lazy"
                     @error="onThumbError(item.id)"
                   />
                   <span v-else class="product__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
@@ -498,9 +506,24 @@ function nextPage() {
                   {{ availabilityLabels[item.availability] }}
                 </span>
               </td>
+              <td class="table__actions">
+                <BaseButton
+                  variant="outline"
+                  size="sm"
+                  title="Adjust stock"
+                  @click.stop="openAdjustment(item.uuid)"
+                >
+                  <template #icon>
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+                    </svg>
+                  </template>
+                  Adjust
+                </BaseButton>
+              </td>
             </tr>
             <tr v-if="!loading && items.length === 0 && !error">
-              <td colspan="4" class="table__empty">No products match your filters.</td>
+              <td colspan="6" class="table__empty">No products match your filters.</td>
             </tr>
           </tbody>
         </table>
@@ -816,6 +839,7 @@ function nextPage() {
     flex-shrink: 0;
 
     &--img {
+      display: block;
       object-fit: cover;
     }
   }

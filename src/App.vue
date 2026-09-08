@@ -1,13 +1,15 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppSidebar from '@/components/AppSidebar.vue'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
 
 const route = useRoute()
 const ui = useUiStore()
 const auth = useAuthStore()
+const notifications = useNotificationsStore()
 
 // The persisted session carries whatever permissions it held when it was
 // stored. Re-reading the profile on boot means a grant changed server-side
@@ -15,6 +17,15 @@ const auth = useAuthStore()
 onMounted(() => {
   if (auth.isAuthenticated) auth.refreshProfile()
 })
+
+watch(
+  [() => auth.isAuthenticated, () => auth.user?.id],
+  ([isAuthenticated, userId]) => {
+    if (isAuthenticated && userId) notifications.initialize(auth.accessToken, userId)
+    if (!isAuthenticated) notifications.reset()
+  },
+  { immediate: true },
+)
 // Routes with meta.layout === 'blank' (e.g. login) render full-bleed, no sidebar.
 const isBlank = computed(() => route.meta.layout === 'blank')
 </script>

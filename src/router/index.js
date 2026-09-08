@@ -216,10 +216,20 @@ const router = createRouter({
       component: () => import('@/views/LogsView.vue'),
     },
     {
+      path: '/notifications',
+      name: 'notifications',
+      component: () => import('@/views/NotificationsView.vue'),
+    },
+    {
       path: '/profile',
       name: 'profile',
       meta: { permission: 'admin.profile.view' },
       component: () => import('@/views/ProfileView.vue'),
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/StoreSettingsView.vue'),
     },
     {
       path: '/login',

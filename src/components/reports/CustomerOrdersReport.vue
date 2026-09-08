@@ -1,13 +1,18 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import ReportPanel from './ReportPanel.vue'
 import ReportTable from './ReportTable.vue'
 import GranularityTabs from './GranularityTabs.vue'
 import TrendChart from './TrendChart.vue'
 import ReportExportMenu from './ReportExportMenu.vue'
-import { customerOrders } from '@/data/reports'
+import { fetchCustomerOrdersReport } from '@/services/reports'
+import { useAuthStore } from '@/stores/auth'
 
+const auth = useAuthStore()
 const granularity = ref('monthly')
+const loading = ref(true)
+const error = ref('')
+const reportTable = ref([])
 
 const COLUMNS = [
   { key: 'period', label: 'Period' },
@@ -19,7 +24,7 @@ const COLUMNS = [
   { key: 'avgItems', label: 'Avg. Items / Order', align: 'right' },
 ]
 
-const rows = computed(() => customerOrders[granularity.value])
+const rows = computed(() => reportTable.value)
 
 const points = computed(() => rows.value.map((row) => ({ label: row.period, value: row.orders })))
 
@@ -34,6 +39,31 @@ function newPct(row) {
   const unique = row.uniqueCustomers
   return unique ? (row.newCustomers / unique) * 100 : 0
 }
+
+async function loadReport() {
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await fetchCustomerOrdersReport(
+      { granularity: granularity.value },
+      auth.accessToken,
+    )
+    reportTable.value = result.rows
+  } catch (err) {
+    reportTable.value = []
+    error.value = err.message || 'Unable to load the report. Please try again.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadReport()
+})
+
+watch(granularity, () => {
+  loadReport()
+})
 
 const EXPORT_COLUMNS = [
   { key: 'period', label: 'Period', width: 20, value: (r) => r.period },
@@ -53,11 +83,17 @@ const EXPORT_COLUMNS = [
         <span class="legend"><i></i> Orders</span>
       </template>
 
-      <p class="metric">
-        {{ totals.orders.toLocaleString() }}<span> orders across {{ rows.length }} periods</span>
-      </p>
+      <p v-if="loading" class="state">Loading customer orders…</p>
 
-      <TrendChart :points="points" unit="orders" />
+      <p v-else-if="error" class="state state--error">{{ error }}</p>
+
+      <template v-else>
+        <p class="metric">
+          {{ totals.orders.toLocaleString() }}<span> orders across {{ rows.length }} periods</span>
+        </p>
+
+        <TrendChart :points="points" unit="orders" />
+      </template>
     </ReportPanel>
 
     <ReportPanel title="Breakdown" subtitle="New versus returning customers per period.">
@@ -71,31 +107,37 @@ const EXPORT_COLUMNS = [
         />
       </template>
 
-      <ReportTable :columns="COLUMNS" :row-count="rows.length">
-        <tr v-for="row in rows" :key="row.period">
-          <td class="cell-period">{{ row.period }}</td>
-          <td class="table__right num">{{ row.orders.toLocaleString() }}</td>
-          <td class="table__right num">{{ row.uniqueCustomers.toLocaleString() }}</td>
-          <td class="table__right num">{{ row.newCustomers.toLocaleString() }}</td>
-          <td class="table__right num">{{ row.returningCustomers.toLocaleString() }}</td>
-          <td>
-            <div
-              class="split"
-              :title="`${row.newCustomers} new · ${row.returningCustomers} returning`"
-            >
-              <div class="split__new" :style="{ width: newPct(row) + '%' }"></div>
-            </div>
-          </td>
-          <td class="table__right num">{{ row.avgItems.toFixed(1) }}</td>
-        </tr>
-      </ReportTable>
+      <p v-if="loading" class="state">Loading breakdown…</p>
 
-      <p class="footnote">
-        <i class="dot dot--new"></i> New
-        <i class="dot dot--ret"></i> Returning
-        <span>· {{ totals.newCustomers.toLocaleString() }} new and
-          {{ totals.returning.toLocaleString() }} returning in this period</span>
-      </p>
+      <p v-else-if="error" class="state state--error">{{ error }}</p>
+
+      <template v-else>
+        <ReportTable :columns="COLUMNS" :row-count="rows.length">
+          <tr v-for="row in rows" :key="row.period">
+            <td class="cell-period">{{ row.period }}</td>
+            <td class="table__right num">{{ row.orders.toLocaleString() }}</td>
+            <td class="table__right num">{{ row.uniqueCustomers.toLocaleString() }}</td>
+            <td class="table__right num">{{ row.newCustomers.toLocaleString() }}</td>
+            <td class="table__right num">{{ row.returningCustomers.toLocaleString() }}</td>
+            <td>
+              <div
+                class="split"
+                :title="`${row.newCustomers} new · ${row.returningCustomers} returning`"
+              >
+                <div class="split__new" :style="{ width: newPct(row) + '%' }"></div>
+              </div>
+            </td>
+            <td class="table__right num">{{ row.avgItems.toFixed(1) }}</td>
+          </tr>
+        </ReportTable>
+
+        <p class="footnote">
+          <i class="dot dot--new"></i> New
+          <i class="dot dot--ret"></i> Returning
+          <span>· {{ totals.newCustomers.toLocaleString() }} new and
+            {{ totals.returning.toLocaleString() }} returning in this period</span>
+        </p>
+      </template>
     </ReportPanel>
   </div>
 </template>
@@ -191,6 +233,18 @@ const EXPORT_COLUMNS = [
   &--ret {
     background: var(--info);
     margin-left: 0.5rem;
+  }
+}
+
+.state {
+  margin: 0;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-subtle);
+
+  &--error {
+    color: var(--danger);
   }
 }
 </style>

@@ -42,9 +42,6 @@ const form = reactive({
   name: '',
   categoryId: '',
   description: '',
-  // Gallery entries: `{ url, isPrimary }`. Sent as `images[]`; the primary
-  // entry's URL also goes out as `thumbnail`, which is what the product list
-  // and the storefront read.
   images: [],
   // Multiple promotions can apply to one product; ids of the checked rows.
   // Edited from the variant screen — promotions apply across every variant.
@@ -80,11 +77,9 @@ const variantsValid = ref(true)
 async function loadCategories() {
   try {
     const response = await apiFetch('/admin/categories?per_page=100', { token: auth.accessToken })
-    // The endpoint wraps a paginator, so `data` may be the array itself or {data: [...]}.
     const payload = response?.data
     categories.value = Array.isArray(payload) ? payload : (payload?.data ?? [])
   } catch {
-    // A failed category load shouldn't block the form; the dropdown just stays empty.
     categories.value = []
   }
 }
@@ -94,31 +89,19 @@ async function loadPromotions() {
   try {
     promotions.value = await fetchPromotions(auth.accessToken)
   } catch (err) {
-    // Non-fatal: the rest of the form still saves. Surfaced rather than
-    // swallowed, because an empty picker would otherwise read as "there are no
-    // promotions" when the request simply failed.
     promotions.value = []
     promotionsError.value = err.message || 'Could not load promotions.'
   }
 }
 
-/**
- * Build the gallery from an API product.
- *
- * Products created before the gallery existed have a `thumbnail` and no
- * `images` rows, so fall back to it — otherwise opening one of them would show
- * an empty gallery and silently wipe the thumbnail on the next save.
- */
 function toGalleryEntries(product) {
   const images = Array.isArray(product?.images) ? product.images : []
-
   if (images.length) {
     return images.map((image) => ({
       url: image.url || image.image,
       isPrimary: Boolean(image.is_primary),
     }))
   }
-
   return product?.thumbnail ? [{ url: product.thumbnail, isPrimary: true }] : []
 }
 
@@ -134,6 +117,7 @@ async function loadProduct() {
     Object.assign(form, {
       name: p.name ?? '',
       sku: p.sku ?? '',
+      barcode: p.barcode ?? '',
       categoryId: p.category_id ?? '',
       description: p.description ?? '',
       images: toGalleryEntries(p),
@@ -179,7 +163,6 @@ const primaryImageUrl = computed(
   () => (form.images.find((image) => image.isPrimary) ?? form.images[0])?.url ?? '',
 )
 
-// Every gallery image is offered for reuse on variant rows, primary first.
 const seedImages = computed(() => {
   const urls = form.images.map((image) => image.url).filter(Boolean)
   const primary = primaryImageUrl.value
@@ -199,6 +182,7 @@ async function save() {
   const body = {
     name: form.name,
     sku: form.sku,
+    barcode: form.barcode,
     description: form.description || null,
     price: deriveProductPrice(form.variants),
     stock_quantity: productStock,
@@ -208,21 +192,12 @@ async function save() {
   }
 
   if (form.categoryId) body.category_id = Number(form.categoryId)
-
-  // Always sent, so unchecking every promotion in the UI actually detaches
-  // them server side — the API leaves them alone when the key is absent.
   body.promotion_ids = form.promotionIds.map(Number)
 
-  // The gallery uploads before adding an entry, so these are stored URLs. The
-  // `blob:` guard stays as a backstop — such a URL resolves for nobody else.
   const galleryImages = form.images.filter(
     (image) => image.url && !image.url.startsWith('blob:'),
   )
 
-  // Always sent, so clearing the gallery in the UI actually clears it server
-  // side. `thumbnail` goes along explicitly: the API would derive it from the
-  // primary row anyway, but sending it keeps a product whose gallery was
-  // emptied from holding on to a thumbnail that is no longer in the list.
   body.images = galleryImages.map((image, index) => ({
     image: image.url,
     is_primary: image.isPrimary,
@@ -230,14 +205,6 @@ async function save() {
   }))
   body.thumbnail = primaryImageUrl.value || null
 
-  // Both paths send the nested `variants[]` array; POST /admin/products creates
-  // the product and its variants in one transaction.
-  //
-  // On update, `replace_variants: false` is load-bearing. The default update
-  // path soft-deletes every variant then recreates it, which collides with the
-  // soft-delete-ignoring unique index on `sku`/`slug` and 500s. Opting out
-  // matches existing variants by SKU and updates them in place instead. Create
-  // has no such flag — there is nothing to replace yet.
   if (form.variants.length) {
     body.variants = toApiVariants(form.variants)
     if (isEdit.value) body.replace_variants = false
@@ -255,7 +222,6 @@ async function save() {
     }
     router.push('/products')
   } catch (err) {
-    // Surface the first field error from a 422 when there is one.
     const fieldError = Object.values(err.errors ?? {})[0]
     error.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to save this product.'
   } finally {
@@ -272,7 +238,6 @@ function cancel() {
     <AppHeader :title="pageTitle" />
 
     <div class="page__body">
-      <!-- Sub header -->
       <div class="subhead">
         <RouterLink to="/products" class="subhead__back">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -288,7 +253,6 @@ function cancel() {
       <p v-if="loading" class="loading-note">Loading product…</p>
 
       <fieldset v-else class="grid" :disabled="isView">
-        <!-- Left column -->
         <div class="col col--side">
           <section class="card">
             <h3 class="card__title">Product Images</h3>
@@ -300,7 +264,6 @@ function cancel() {
           </section>
         </div>
 
-        <!-- Right column -->
         <div class="col col--main">
           <section class="card">
             <h3 class="card__title">General Information</h3>
@@ -317,10 +280,18 @@ function cancel() {
                 </select>
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </div>
+              <div class="field">
+                <label for="meta-title">Meta Title</label>
+                <input id="meta-title" v-model="form.metaTitle" type="text" placeholder="SEO Title" />
+              </div>
             </div>
             <div class="field field--description">
               <label for="description">Description</label>
               <textarea id="description" v-model="form.description" rows="4" placeholder="Describe the product..."></textarea>
+            </div>
+            <div class="field">
+              <label for="meta-description">Meta Description</label>
+              <textarea id="meta-description" v-model="form.metaDescription" rows="2" placeholder="SEO Description"></textarea>
             </div>
           </section>
 
@@ -348,7 +319,6 @@ function cancel() {
         </div>
       </fieldset>
 
-      <!-- Form actions -->
       <div v-if="!isView && !loading" class="form-footer">
         <p v-if="!variantsValid" class="form-footer__blocked">
           Fix the highlighted variant before saving.
@@ -426,8 +396,6 @@ function cancel() {
 }
 
 .grid {
-  // Rendered as a <fieldset> so view mode can disable every control at once —
-  // reset the element's default border/padding/margin.
   border: 0;
   padding: 0;
   margin: 0;
