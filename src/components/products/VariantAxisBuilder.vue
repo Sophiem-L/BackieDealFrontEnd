@@ -1,13 +1,14 @@
 <script setup>
 /**
- * Collects the axes that define a product's variants — "Color: Red, Blue" —
- * and asks the parent to generate the combinations.
+ * Collects the options that define a product's variants - "Size: 7.5, 8, 8.5" -
+ * and emits them upward. VariantEditor turns the combinations into rows.
  *
- * Owns no variant rows: it emits axes upward and lets VariantEditor decide what
- * to do with them.
+ * A finished option (name + at least one value) collapses to a compact display
+ * row with a drag handle, the way Shopify shows it; clicking the row re-opens it
+ * for editing.
  */
 import { computed, ref } from 'vue'
-import { cartesian, validateAxes } from '@/services/variants'
+import { validateAxes, cartesian } from '@/services/variants'
 
 const props = defineProps({
   axes: { type: Array, required: true },
@@ -15,20 +16,25 @@ const props = defineProps({
 
 const emit = defineEmits(['update:axes'])
 
-// One in-progress chip entry per axis, keyed by index.
+// One in-progress chip entry per option, keyed by index.
 const drafts = ref({})
+// Which option is open for editing (-1 = none). A nameless or valueless option
+// is always treated as open.
+const editingIndex = ref(-1)
 
 const problems = computed(() => validateAxes(props.axes))
 const comboCount = computed(() => cartesian(props.axes).length)
 
-// Which axis to point at when nothing has been generated yet.
-const needsName = computed(() => props.axes.every((axis) => !String(axis?.name ?? '').trim()))
-const firstUnfilled = computed(() => {
-  const axis = props.axes.find(
-    (a) => String(a?.name ?? '').trim() && !(a.values ?? []).some((v) => String(v).trim()),
+function isComplete(axis) {
+  return (
+    Boolean(String(axis?.name ?? '').trim()) &&
+    (axis?.values ?? []).some((v) => String(v).trim())
   )
-  return axis ? String(axis.name).trim() : ''
-})
+}
+
+function isEditing(index) {
+  return editingIndex.value === index || !isComplete(props.axes[index])
+}
 
 function update(next) {
   emit('update:axes', next)
@@ -36,13 +42,11 @@ function update(next) {
 
 function addAxis() {
   update([...props.axes, { name: '', values: [] }])
+  editingIndex.value = props.axes.length
 }
 
 function removeAxis(index) {
   update(props.axes.filter((_, i) => i !== index))
-  // Drafts are keyed by index, so removing an axis has to shift every key above
-  // it down — otherwise the removed axis's half-typed value reappears on its
-  // neighbour.
   const shifted = {}
   for (const key of Object.keys(drafts.value)) {
     const i = Number(key)
@@ -50,16 +54,14 @@ function removeAxis(index) {
     else if (i > index) shifted[i - 1] = drafts.value[i]
   }
   drafts.value = shifted
+  if (editingIndex.value === index) editingIndex.value = -1
 }
 
 function renameAxis(index, name) {
   update(props.axes.map((axis, i) => (i === index ? { ...axis, name } : axis)))
 }
 
-/**
- * Commit the draft text as a chip. Splits on commas so pasting "S, M, L" adds
- * three values at once, and skips anything already on the axis.
- */
+/** Commit the draft text as chips, splitting on commas so "S, M, L" adds three. */
 function commitDraft(index) {
   const raw = drafts.value[index] ?? ''
   const incoming = raw
@@ -89,75 +91,139 @@ function removeValue(index, valueIndex) {
   )
 }
 
-// Backspace on an empty draft removes the last chip — standard tag-input feel.
 function onDraftKeydown(event, index) {
   if (event.key === 'Backspace' && !(drafts.value[index] ?? '')) {
     const axis = props.axes[index]
     if (axis.values.length) removeValue(index, axis.values.length - 1)
   }
 }
+
+function doneEditing(index) {
+  commitDraft(index)
+  if (isComplete(props.axes[index])) editingIndex.value = -1
+}
+
+function openEditing(index) {
+  editingIndex.value = index
+}
+
+/* ------------------------------------------------------------- drag reorder */
+
+const dragFrom = ref(-1)
+
+function onDragStart(index) {
+  dragFrom.value = index
+}
+
+function onDrop(to) {
+  const from = dragFrom.value
+  dragFrom.value = -1
+  if (from === -1 || from === to) return
+  const next = [...props.axes]
+  const [moved] = next.splice(from, 1)
+  next.splice(to, 0, moved)
+  update(next)
+}
 </script>
 
 <template>
   <div class="axes">
-    <div class="axes__head">
-      <h4>Variant Options</h4>
-      <button type="button" class="axes__add" @click="addAxis">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 5v14M5 12h14" stroke-linecap="round" />
-        </svg>
-        Add option
-      </button>
-    </div>
-
-    <p v-if="!axes.length" class="axes__empty">
-      Add an option like <strong>Color</strong> or <strong>Size</strong> and list its values. One
-      variant appears per combination, each with its own image, SKU, price and stock.
-    </p>
-
-    <div v-for="(axis, i) in axes" :key="i" class="axis">
-      <input
-        :value="axis.name"
-        type="text"
-        class="axis__name"
-        placeholder="Option name"
-        :aria-label="`Option ${i + 1} name`"
-        @input="renameAxis(i, $event.target.value)"
-      />
-
-      <div class="axis__values">
-        <span v-for="(value, v) in axis.values" :key="v" class="chip">
-          {{ value }}
-          <button
-            type="button"
-            class="chip__remove"
-            :aria-label="`Remove ${value}`"
-            @click="removeValue(i, v)"
-          >
-            <svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" /></svg>
-          </button>
-        </span>
-        <input
-          v-model="drafts[i]"
-          type="text"
-          class="axis__draft"
-          :placeholder="axis.values.length ? 'Add value…' : 'e.g. Red, Blue'"
-          :aria-label="`Add a value to ${axis.name || `option ${i + 1}`}`"
-          @keydown.enter.prevent="commitDraft(i)"
-          @keydown="onDraftKeydown($event, i)"
-          @blur="commitDraft(i)"
-        />
-      </div>
-
-      <button
-        type="button"
-        class="axis__remove"
-        :aria-label="`Remove option ${axis.name || i + 1}`"
-        @click="removeAxis(i)"
+    <div v-if="axes.length" class="axes__box">
+      <div
+        v-for="(axis, i) in axes"
+        :key="i"
+        class="axis"
+        :class="{ 'axis--editing': isEditing(i), 'axis--drag': dragFrom === i }"
+        @dragover.prevent
+        @drop="onDrop(i)"
       >
-        <svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" /></svg>
-      </button>
+        <span
+          class="axis__handle"
+          draggable="true"
+          aria-label="Drag to reorder"
+          @dragstart="onDragStart(i)"
+          @dragend="dragFrom = -1"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" />
+            <circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" />
+            <circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" />
+          </svg>
+        </span>
+
+        <!-- Display mode: a finished option, collapsed. -->
+        <div v-if="!isEditing(i)" class="axis__done" @click="openEditing(i)">
+          <p class="axis__done-name">{{ axis.name }}</p>
+          <div class="axis__done-values">
+            <span v-for="(value, v) in axis.values" :key="v" class="chip chip--static">{{ value }}</span>
+          </div>
+        </div>
+
+        <!-- Edit mode. -->
+        <div v-else class="axis__edit">
+          <div class="axis__field">
+            <label class="axis__label" :for="`axis-name-${i}`">Option name</label>
+            <input
+              :id="`axis-name-${i}`"
+              :value="axis.name"
+              type="text"
+              class="axis__name"
+              placeholder="Size"
+              :aria-label="`Option ${i + 1} name`"
+              @input="renameAxis(i, $event.target.value)"
+            />
+          </div>
+
+          <div class="axis__field">
+            <label class="axis__label" :for="`axis-values-${i}`">Option values</label>
+            <div class="axis__values">
+            <span v-for="(value, v) in axis.values" :key="v" class="chip">
+              {{ value }}
+              <button
+                type="button"
+                class="chip__remove"
+                :aria-label="`Remove ${value}`"
+                @click="removeValue(i, v)"
+              >
+                <svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" /></svg>
+              </button>
+            </span>
+            <input
+              :id="`axis-values-${i}`"
+              v-model="drafts[i]"
+              type="text"
+              class="axis__draft"
+              :placeholder="axis.values.length ? 'Add another value' : 'Medium'"
+              :aria-label="`Add a value to ${axis.name || `option ${i + 1}`}`"
+              @keydown.enter.prevent="commitDraft(i)"
+              @keydown="onDraftKeydown($event, i)"
+              @blur="commitDraft(i)"
+            />
+            </div>
+          </div>
+
+          <div class="axis__edit-actions">
+            <button type="button" class="axis__delete" @click="removeAxis(i)">Delete</button>
+            <button type="button" class="axis__donebtn" @click="doneEditing(i)">Done</button>
+          </div>
+        </div>
+      </div>
     </div>
+
+    <button v-if="!axes.length" type="button" class="axes__link" @click="addAxis">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v8M8 12h8" stroke-linecap="round" />
+      </svg>
+      Add options like size or color
+    </button>
+    <button v-else type="button" class="axes__link" @click="addAxis">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v8M8 12h8" stroke-linecap="round" />
+      </svg>
+      Add another option
+    </button>
 
     <ul v-if="problems.length" class="axes__problems">
       <li v-for="problem in problems" :key="problem">{{ problem }}</li>
@@ -166,65 +232,34 @@ function onDraftKeydown(event, index) {
     <p v-if="comboCount" class="axes__count">
       {{ comboCount }} variant{{ comboCount === 1 ? '' : 's' }} from these options.
     </p>
-
-    <!--
-      The state that trips people up: an option exists but has no values, so no
-      variant rows (and therefore no image slots) have appeared yet. Say what to
-      do next rather than showing nothing.
-    -->
-    <p v-else-if="axes.length && !problems.length" class="axes__nudge">
-      <template v-if="needsName">Name this option, then type a value and press Enter.</template>
-      <template v-else>
-        Type a value for <strong>{{ firstUnfilled }}</strong> and press Enter — such as
-        <strong>Red</strong>. Variant rows appear here, each with its own image.
-      </template>
-    </p>
   </div>
 </template>
 
 <style scoped lang="scss">
 .axes {
-  &__head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
-
-    h4 {
-      margin: 0;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--text-body);
-    }
+  &__box {
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 0.85rem;
   }
 
-  &__add {
+  &__link {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.3rem 0.5rem;
-    font-size: 0.78rem;
+    gap: 0.4rem;
+    padding: 0;
+    font-size: 0.85rem;
     font-weight: 600;
-    color: var(--accent-ink);
+    font-family: inherit;
+    color: var(--text-strong);
     background: transparent;
     border: none;
     cursor: pointer;
 
-    svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; }
-  }
+    &:hover { color: rgb(var(--accent-rgb)); }
 
-  &__empty {
-    margin: 0;
-    padding: 0.85rem;
-    font-size: 0.8rem;
-    line-height: 1.5;
-    color: var(--text-subtle);
-    background: var(--surface-sunken);
-    border-radius: 10px;
-
-    strong { color: var(--text-body); font-weight: 600; }
+    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; flex: none; }
   }
 
   &__problems {
@@ -242,32 +277,72 @@ function onDraftKeydown(event, index) {
     font-weight: 500;
     color: var(--text-subtle);
   }
-
-  &__nudge {
-    margin: 0.75rem 0 0;
-    padding: 0.55rem 0.75rem;
-    font-size: 0.76rem;
-    line-height: 1.45;
-    color: var(--accent-ink);
-    background: rgb(var(--accent-rgb) / 0.1);
-    border: 1px solid rgb(var(--accent-rgb) / 0.3);
-    border-radius: 9px;
-
-    strong { font-weight: 700; }
-  }
 }
 
 .axis {
-  display: grid;
-  grid-template-columns: 150px 1fr auto;
+  display: flex;
+  align-items: flex-start;
   gap: 0.5rem;
-  align-items: start;
-  margin-top: 0.5rem;
+  padding: 0.85rem 1rem;
 
-  @media (max-width: 620px) {
-    grid-template-columns: 1fr auto;
+  & + & { border-top: 1px solid var(--border-subtle); }
 
-    &__values { grid-column: 1 / -1; }
+  &--drag { opacity: 0.4; }
+
+  &__handle {
+    display: inline-flex;
+    align-items: center;
+    padding-top: 0.15rem;
+    color: var(--text-faint);
+    cursor: grab;
+
+    &:active { cursor: grabbing; }
+
+    svg { width: 18px; height: 18px; fill: currentColor; }
+  }
+
+  &__done {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+    border-radius: 8px;
+    margin: -0.3rem -0.4rem;
+    padding: 0.3rem 0.4rem;
+
+    &:hover { background: var(--surface-sunken); }
+
+    &-name {
+      margin: 0 0 0.4rem;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text-strong);
+    }
+
+    &-values {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+  }
+
+  &__edit {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  &__label {
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--text-subtle);
   }
 
   &__name {
@@ -277,8 +352,7 @@ function onDraftKeydown(event, index) {
     font-size: 0.85rem;
     font-family: inherit;
     color: var(--text-strong);
-    background: var(--surface-sunken);
-    min-width: 0;
+    background: var(--surface);
 
     &::placeholder { color: var(--text-faint); }
 
@@ -320,22 +394,36 @@ function onDraftKeydown(event, index) {
     &:focus { outline: none; }
   }
 
-  &__remove {
-    display: inline-flex;
+  &__edit-actions {
+    display: flex;
     align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    background: transparent;
-    border: 1px solid transparent;
+    justify-content: space-between;
+  }
+
+  &__delete,
+  &__donebtn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-family: inherit;
     border-radius: 8px;
-    color: var(--text-subtle);
     cursor: pointer;
+  }
 
-    &:hover { background: var(--danger-bg); color: var(--danger); }
+  &__delete {
+    color: var(--danger);
+    background: transparent;
+    border: 1px solid var(--danger-border);
 
-    svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.9; }
+    &:hover { background: var(--danger-bg); }
+  }
+
+  &__donebtn {
+    color: #fff;
+    background: rgb(var(--accent-rgb));
+    border: none;
+
+    &:hover { filter: brightness(0.95); }
   }
 }
 
@@ -351,6 +439,8 @@ function onDraftKeydown(event, index) {
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
   white-space: nowrap;
+
+  &--static { padding: 0.22rem 0.6rem; }
 
   &__remove {
     display: inline-flex;
