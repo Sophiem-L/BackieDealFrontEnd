@@ -227,6 +227,11 @@ const router = createRouter({
       component: () => import('@/views/ProfileView.vue'),
     },
     {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/StoreSettingsView.vue'),
+    },
+    {
       path: '/login',
       name: 'login',
       // Auth screens render without the admin sidebar (meta.layout = 'blank').

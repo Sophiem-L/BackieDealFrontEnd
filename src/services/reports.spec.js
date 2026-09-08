@@ -1,5 +1,38 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { normalizeSoldProductsPayload, fetchSoldProductsReport } from '@/services/reports'
+import {
+  fetchSalesReport,
+  fetchSoldProductsReport,
+  normalizeSalesReportPayload,
+  normalizeSoldProductsPayload,
+} from '@/services/reports'
+
+describe('normalizeSalesReportPayload', () => {
+  it('normalizes the sales dashboard contract', () => {
+    const payload = normalizeSalesReportPayload({
+      summary: {
+        revenue: '1200.50',
+        cogs: '700',
+        profit: '500.50',
+        margin: '41.7',
+        orders: 8,
+        revenue_change: '4.2',
+        cogs_change: '-2.1',
+        profit_change: '9.5',
+        margin_change: '1.3',
+      },
+      chart: [{ label: 'W35', revenue: '1200.50', profit: 500.5 }],
+      daily_breakdown: [{ label: 'Mon', revenue: 1200, profit: 500 }],
+      top_products: [{ name: 'Keyboard', units: '3', revenue: '160' }],
+      table: [{ period: 'W35', date_range: '2026-08-01 - 2026-08-07', orders: '8', revenue: 1200, cogs: 700, profit: 500, margin: 41.7 }],
+    })
+
+    expect(payload.summary.revenue).toBe(1200.5)
+    expect(payload.summary.profitChange).toBe(9.5)
+    expect(payload.chart[0].profit).toBe(500.5)
+    expect(payload.topProducts[0].units).toBe(3)
+    expect(payload.table[0].dateRange).toBe('2026-08-01 - 2026-08-07')
+  })
+})
 
 describe('normalizeSoldProductsPayload', () => {
   it('maps camelCase API rows onto the report table shape', () => {
@@ -89,8 +122,10 @@ describe('fetchSoldProductsReport', () => {
 
     const result = await fetchSoldProductsReport({ granularity: 'weekly' }, 'token-123')
 
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      '/api/v1/admin/reports/sold-products?preset=weekly',
+    expect(globalThis.fetch.mock.calls[0][0]).toMatch(
+      /\/api\/v1\/admin\/reports\/sold-products\?preset=weekly$/,
+    )
+    expect(globalThis.fetch.mock.calls[0][1]).toEqual(
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer token-123' }),
       }),
@@ -115,5 +150,29 @@ describe('fetchSoldProductsReport', () => {
     expect(url).toContain('preset=yearly')
     expect(url).toContain('date_from=2024-01-01')
     expect(url).toContain('date_to=2026-12-31')
+  })
+})
+
+describe('fetchSalesReport', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('requests the sales endpoint with the selected preset and token', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: { summary: { revenue: 10 } } }),
+    })
+
+    const result = await fetchSalesReport({ granularity: 'weekly' }, 'token-123')
+
+    expect(globalThis.fetch.mock.calls[0][0]).toMatch(/\/api\/v1\/admin\/reports\/sales\?preset=weekly$/)
+    expect(globalThis.fetch.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer token-123' }),
+      }),
+    )
+    expect(result.summary.revenue).toBe(10)
   })
 })
