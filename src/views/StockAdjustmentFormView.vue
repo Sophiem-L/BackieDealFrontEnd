@@ -52,7 +52,7 @@ async function loadCatalog() {
     const queryProductId = route.query.product_id || route.query.id
     if (queryProductId && !product.value) {
       const match = catalog.value.find(
-        (p) => String(p.id) === String(queryProductId) || p.uuid === String(queryProductId),
+        (p) => String(p.id) === String(queryProductId),
       )
       if (match) {
         selectProduct(match)
@@ -68,7 +68,6 @@ async function loadCatalog() {
 function selectProduct(picked) {
   product.value = {
     id: picked.id,
-    uuid: picked.uuid,
     name: picked.name,
     sku: picked.sku,
     category: picked.category,
