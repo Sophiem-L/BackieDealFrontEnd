@@ -122,6 +122,10 @@ function usableImage(value) {
 function mapProduct(item) {
   return {
     id: item.id,
+    // The admin ProductResource exposes the uuid route key as `id` and ships no
+    // `uuid` field, so `item.uuid` is always undefined. Falling back to `id`
+    // keeps working if the API ever adds the explicit key.
+    uuid: item.uuid ?? item.id,
     name: item.name,
     sku: item.sku,
     category: item.category?.name ?? '—',
