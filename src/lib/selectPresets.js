@@ -37,5 +37,14 @@ export const FORM_SELECT = {
 
   content: 'rounded-[10px] border-0',
 
-  item: 'rounded-[7px] text-[0.9rem] text-[var(--text-body)]',
+  // reka stamps data-state="checked" on the chosen item. Out of the box that
+  // choice is marked only by the small check glyph at the right edge, which is
+  // easy to miss reopening a long list — customers especially. The accent tint
+  // is what makes the current selection findable at a glance; it reads in both
+  // themes because --accent-rgb is redefined per theme.
+  item: [
+    'rounded-[7px] text-[0.9rem] text-[var(--text-body)]',
+    'data-[state=checked]:bg-[rgb(var(--accent-rgb)/0.14)]',
+    'data-[state=checked]:font-semibold data-[state=checked]:text-[var(--text-strong)]',
+  ].join(' '),
 }

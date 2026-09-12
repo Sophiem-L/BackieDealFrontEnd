@@ -1,17 +1,78 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ArrowDown, ArrowUp } from '@lucide/vue'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { Button } from '@/components/ui/button'
+import { apiFetch } from '@/services/api'
+import {
+  deriveStockStatus,
+  fetchStockSummary,
+  formatStockDate,
+  usableImage,
+} from '@/services/stock'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 
-// Summary cards.
-const stats = [
+const PER_PAGE = 20
+// A status filter can't be pushed to the endpoint, so it's applied client-side by
+// walking the search result. Cap the walk so a huge catalog can't hang the page.
+const FILTER_PER_PAGE = 100
+const FILTER_MAX_PAGES = 20
+
+const items = ref([])
+const loading = ref(false)
+const error = ref('')
+
+const page = ref(1)
+const lastPage = ref(1)
+const total = ref(0)
+
+const query = ref('')
+const availability = ref('all')
+const filterOpen = ref(false)
+const filterTruncated = ref(false)
+
+const updatedFrom = ref('')
+const updatedTo = ref('')
+const sortBy = ref('updated_at')
+const sortDirection = ref('desc')
+
+const summary = ref({ total: null, low: null, out: null, inStock: null })
+
+const availabilityOptions = [
+  { value: 'all', label: 'All Stock' },
+  { value: 'in-stock', label: 'In Stock' },
+  { value: 'low-stock', label: 'Low Stock' },
+  { value: 'out-of-stock', label: 'Out of Stock' },
+]
+
+const availabilityLabels = {
+  'in-stock': 'In Stock',
+  'low-stock': 'Low Stock',
+  'out-of-stock': 'Out of Stock',
+}
+
+const filterLabel = computed(
+  () =>
+    availabilityOptions.find((option) => option.value === availability.value)?.label ??
+    'All Stock',
+)
+
+function countLabel(value) {
+  return value == null ? '—' : Number(value).toLocaleString()
+}
+// The stat cards format their raw counts through this.
+const formatCount = countLabel
+
+const stats = computed(() => [
   {
     key: 'total',
     label: 'Total Items',
-    value: '1,284',
+    value: summary.value.total,
     note: 'All tracked products',
     icon: 'box',
     tone: 'neutral',
@@ -19,7 +80,7 @@ const stats = [
   {
     key: 'low',
     label: 'Low Stock Items',
-    value: '18',
+    value: summary.value.low,
     note: 'Action required',
     icon: 'warning',
     tone: 'warning',
@@ -27,7 +88,7 @@ const stats = [
   {
     key: 'out',
     label: 'Out of Stock',
-    value: '5',
+    value: summary.value.out,
     note: 'Inactive listings',
     icon: 'forbidden',
     tone: 'danger',
@@ -35,113 +96,223 @@ const stats = [
   {
     key: 'in-stock',
     label: 'In Stock',
-    value: '1,261',
+    value: summary.value.inStock,
     note: 'Available to sell',
     icon: 'check',
     tone: 'success',
   },
-]
-
-// `availability` drives the badge + the colour of the on-hand count.
-// `startDate` is the stock-in date for the item.
-const items = ref([
-  {
-    id: 1,
-    name: 'NVIDIA RTX 4090 Founders Edition',
-    sku: 'NV-4090-FE',
-    startDate: '23/june/26',
-    onHand: 8,
-    threshold: 5,
-    availability: 'healthy',
-  },
-  {
-    id: 2,
-    name: 'AMD Ryzen 9 7950X',
-    sku: 'AMD-7950X-AM5',
-    startDate: '13/june/26',
-    onHand: 3,
-    threshold: 10,
-    availability: 'low-stock',
-  },
-  {
-    id: 3,
-    name: 'Corsair Vengeance 32GB DDR5',
-    sku: 'COR-32D5-RGB',
-    startDate: '05/june/26',
-    onHand: 45,
-    threshold: 20,
-    availability: 'healthy',
-  },
-  {
-    id: 4,
-    name: 'Samsung 990 Pro 2TB NVMe',
-    sku: 'SAM-990P-2TB',
-    startDate: '08/june/26',
-    onHand: 0,
-    threshold: 15,
-    availability: 'out-of-stock',
-  },
-  {
-    id: 5,
-    name: 'ASUS ROG Thor 1200W PSU',
-    sku: 'AS-THOR-1200',
-    startDate: '01/june/26',
-    onHand: 4,
-    threshold: 3,
-    availability: 'healthy',
-  },
-  {
-    id: 6,
-    name: 'NZXT H9 Flow Case (White)',
-    sku: 'NZXT-H9F-W',
-    startDate: '04/june/26',
-    onHand: 12,
-    threshold: 8,
-    availability: 'healthy',
-  },
 ])
 
-const availabilityLabels = {
-  healthy: 'In Stock',
-  'low-stock': 'Low Stock',
-  'out-of-stock': 'Out of Stock',
+function thumbInitials(name) {
+  return String(name ?? '')
+    .replace(/[^A-Za-z0-9 ]/g, '')
+    .slice(0, 2)
+    .toUpperCase()
 }
 
-// Search + "Low Stock Only" filter
-const query = ref('')
-const lowStockOnly = ref(false)
-const filterOpen = ref(false)
+function mapItem(row) {
+  return {
+    id: row.id,
+    name: row.name ?? '',
+    sku: row.sku ?? '',
+    startDate: formatStockDate(row.created_at),
+    lastUpdated: formatStockDate(row.updated_at),
+    onHand: Number(row.stock_quantity ?? 0),
+    threshold: Number(row.min_stock_alert ?? 0),
+    availability: deriveStockStatus(row),
+    thumbnail: usableImage(
+      row.thumbnail || row.image || row.image_url || row.product?.thumbnail,
+    ),
+  }
+}
 
-const filteredItems = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  return items.value.filter((item) => {
-    const matchesQuery =
-      !q ||
-      item.name.toLowerCase().includes(q) ||
-      item.sku.toLowerCase().includes(q)
-    const matchesLow = !lowStockOnly.value || item.availability !== 'healthy'
-    return matchesQuery && matchesLow
+// GET /admin/stock accepts `search`, `sort`/`direction`, and an updated-at range.
+function listParams({ page: targetPage = page.value, perPage = PER_PAGE } = {}) {
+  const params = new URLSearchParams({
+    page: String(targetPage),
+    per_page: String(perPage),
+    sort: sortBy.value,
+    direction: sortDirection.value,
   })
-})
+  const q = query.value.trim()
+  if (q) params.set('search', q)
+  if (updatedFrom.value) params.set('updated_from', updatedFrom.value)
+  if (updatedTo.value) params.set('updated_to', updatedTo.value)
+  return params
+}
+
+// Walk every page of the current search, for the client-side status filter.
+async function fetchAllMatching() {
+  const rows = []
+  let current = 1
+  let last
+  do {
+    const response = await apiFetch(
+      `/admin/stock?${listParams({ page: current, perPage: FILTER_PER_PAGE }).toString()}`,
+      { token: auth.accessToken },
+    )
+    const data = response?.data ?? {}
+    rows.push(...(data.items ?? []))
+    last = data.pagination?.last_page ?? 1
+    current += 1
+  } while (current <= last && current <= FILTER_MAX_PAGES)
+
+  return { rows, truncated: last > FILTER_MAX_PAGES }
+}
+
+// Paging inside a client-filtered set shouldn't refetch on every page step.
+let statusCache = { key: '', rows: [] }
+
+function invalidateStatusCache() {
+  statusCache = { key: '', rows: [] }
+}
+
+function statusCacheKey() {
+  return JSON.stringify([
+    query.value.trim(),
+    availability.value,
+    updatedFrom.value,
+    updatedTo.value,
+    sortBy.value,
+    sortDirection.value,
+  ])
+}
+
+async function loadItems() {
+  loading.value = true
+  error.value = ''
+  try {
+    if (availability.value === 'all') {
+      const response = await apiFetch(`/admin/stock?${listParams().toString()}`, {
+        token: auth.accessToken,
+      })
+      const data = response?.data ?? {}
+      items.value = (data.items ?? []).map(mapItem)
+
+      const pagination = data.pagination ?? {}
+      total.value = pagination.total ?? items.value.length
+      lastPage.value = pagination.last_page ?? 1
+      filterTruncated.value = false
+    } else {
+      // The endpoint has no stock-status parameter, so narrow client-side and
+      // page over the result — that keeps the total and the page count honest
+      // rather than paginating a server set the table then filters down.
+      const key = statusCacheKey()
+      if (statusCache.key !== key) {
+        const { rows, truncated } = await fetchAllMatching()
+        statusCache = {
+          key,
+          rows: rows.filter((row) => deriveStockStatus(row) === availability.value),
+        }
+        filterTruncated.value = truncated
+      }
+
+      const matched = statusCache.rows
+      const start = (page.value - 1) * PER_PAGE
+      items.value = matched.slice(start, start + PER_PAGE).map(mapItem)
+      total.value = matched.length
+      lastPage.value = Math.max(1, Math.ceil(matched.length / PER_PAGE))
+    }
+  } catch (err) {
+    error.value = err.message || 'Unable to load stock. Please try again.'
+    items.value = []
+    total.value = 0
+    lastPage.value = 1
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadSummary() {
+  try {
+    summary.value = await fetchStockSummary({
+      token: auth.accessToken,
+      totalPath: '/admin/stock?page=1&per_page=1',
+    })
+  } catch {
+    summary.value = { total: null, low: null, out: null, inStock: null }
+  }
+}
+
+// Any filter change resets to page 1. Reload directly only when already on
+// page 1, otherwise the page watcher does it (avoids a double fetch).
+function applyFilters() {
+  if (page.value !== 1) {
+    page.value = 1
+  } else {
+    loadItems()
+  }
+}
 
 function setFilter(value) {
-  lowStockOnly.value = value
+  availability.value = value
   filterOpen.value = false
 }
 
-// Close the filter dropdown when clicking elsewhere
+// Debounce search; the dropdown applies immediately through its watcher.
+let searchTimer
+watch(query, () => {
+  invalidateStatusCache()
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(applyFilters, 350)
+})
+
+watch(availability, () => {
+  invalidateStatusCache()
+  applyFilters()
+})
+
+watch(page, loadItems)
+
+watch([updatedFrom, updatedTo, sortBy, sortDirection], () => {
+  invalidateStatusCache()
+  applyFilters()
+})
+
 function closeMenus() {
   filterOpen.value = false
 }
-onMounted(() => document.addEventListener('click', closeMenus))
-onBeforeUnmount(() => document.removeEventListener('click', closeMenus))
 
+onMounted(() => {
+  document.addEventListener('click', closeMenus)
+  loadItems()
+  loadSummary()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeMenus)
+  clearTimeout(searchTimer)
+})
+
+// NOTE: StockDetailView still renders from its own hardcoded records keyed by
+// 1..6, so it falls back to the first record whatever it is handed. Product id
+// is the UUID route key used by the API.
 function openItem(id) {
   router.push({ name: 'stock-detail', params: { id } })
 }
 
-function thumbInitials(name) {
-  return name.replace(/[^A-Za-z0-9 ]/g, '').slice(0, 2).toUpperCase()
+function openAdjustment(id) {
+  router.push({ name: 'stock-adjustment-create', query: { product_id: id } })
+}
+
+const brokenThumbs = ref(new Set())
+function onThumbError(id) {
+  const next = new Set(brokenThumbs.value)
+  next.add(id)
+  brokenThumbs.value = next
+}
+
+const rangeStart = computed(() => (total.value === 0 ? 0 : (page.value - 1) * PER_PAGE + 1))
+const rangeEnd = computed(() =>
+  Math.min(total.value, (page.value - 1) * PER_PAGE + items.value.length),
+)
+
+function prevPage() {
+  if (page.value > 1) page.value -= 1
+}
+
+function nextPage() {
+  if (page.value < lastPage.value) page.value += 1
 }
 </script>
 
@@ -150,7 +321,6 @@ function thumbInitials(name) {
     <AppHeader title="Inventory & Stock Control" />
 
     <div class="page__body">
-      <!-- Toolbar -->
       <section class="toolbar">
         <label class="toolbar__search">
           <span class="toolbar__search-icon" aria-hidden="true">
@@ -166,11 +336,12 @@ function thumbInitials(name) {
           />
         </label>
 
+        <div class="toolbar__actions">
         <div class="filter" @click.stop>
           <button
             type="button"
             class="select"
-            :class="{ 'select--active': lowStockOnly }"
+            :class="{ 'select--active': availability !== 'all' }"
             :aria-expanded="filterOpen"
             @click="filterOpen = !filterOpen"
           >
@@ -180,19 +351,62 @@ function thumbInitials(name) {
                 <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
               </svg>
             </span>
-            {{ lowStockOnly ? 'Low Stock Only' : 'All Stock' }}
+            {{ filterLabel }}
             <svg class="select__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
 
-          <div v-if="filterOpen" class="filter__popup">
-            <button type="button" class="filter__item" @click="setFilter(false)">All Stock</button>
-            <button type="button" class="filter__item" @click="setFilter(true)">Low Stock Only</button>
+          <div v-if="filterOpen" class="filter__popup" role="listbox">
+            <button
+              v-for="option in availabilityOptions"
+              :key="option.value"
+              type="button"
+              class="filter__item"
+              :class="{ 'filter__item--selected': availability === option.value }"
+              role="option"
+              :aria-selected="availability === option.value"
+              @click="setFilter(option.value)"
+            >
+              {{ option.label }}
+              <svg
+                v-if="availability === option.value"
+                class="filter__check"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path d="m5 12.5 4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
           </div>
         </div>
 
-        <div class="toolbar__spacer"></div>
+        <div class="toolbar__dates">
+          <input type="date" v-model="updatedFrom" placeholder="Updated From" class="date-input" title="Last updated from" />
+          <span>-</span>
+          <input type="date" v-model="updatedTo" placeholder="Updated To" class="date-input" title="Last updated to" />
+        </div>
+
+        <div class="toolbar__sort">
+          <select v-model="sortBy" class="select-input">
+            <option value="updated_at">Sort by Updated</option>
+            <option value="created_at">Sort by Created</option>
+            <option value="name">Sort by Name</option>
+            <option value="stock_quantity">Sort by Stock</option>
+          </select>
+          <Button
+            variant="outline"
+            size="icon"
+            type="button"
+            :title="sortDirection === 'desc' ? 'Sorted descending — click for ascending' : 'Sorted ascending — click for descending'"
+            :aria-label="sortDirection === 'desc' ? 'Sort ascending' : 'Sort descending'"
+            @click="sortDirection = sortDirection === 'desc' ? 'asc' : 'desc'"
+          >
+            <ArrowDown v-if="sortDirection === 'desc'" />
+            <ArrowUp v-else />
+          </Button>
+        </div>
 
         <BaseButton variant="primary" :to="{ name: 'stock-adjustment-create' }">
           <template #icon>
@@ -200,9 +414,9 @@ function thumbInitials(name) {
           </template>
           Add Stock Adjustment
         </BaseButton>
+        </div>
       </section>
 
-      <!-- Summary cards -->
       <section class="stats">
         <article v-for="stat in stats" :key="stat.key" class="stat">
           <span class="stat__icon" :class="`stat__icon--${stat.tone}`" aria-hidden="true">
@@ -225,33 +439,55 @@ function thumbInitials(name) {
           </span>
           <div class="stat__meta">
             <p class="stat__label">{{ stat.label }}</p>
-            <p class="stat__value">{{ stat.value }}</p>
+            <p class="stat__value">{{ formatCount(stat.value) }}</p>
             <p class="stat__note">{{ stat.note }}</p>
           </div>
         </article>
       </section>
 
-      <!-- Table -->
       <section class="table-card">
+        <div v-if="error" class="table__alert table__alert--error">
+          <span>{{ error }}</span>
+          <button type="button" class="table__retry" @click="loadItems">Retry</button>
+        </div>
+
+        <p v-if="filterTruncated" class="table__alert table__alert--warning">
+          Too many matches to filter in full — showing a partial list. Narrow your search to see everything.
+        </p>
+
         <table class="table">
           <thead>
             <tr>
               <th>Product &amp; SKU</th>
               <th>Start-Date</th>
+              <th>Last Updated</th>
               <th>On Hand</th>
               <th>Availability</th>
+              <th aria-label="Actions"></th>
             </tr>
           </thead>
           <tbody>
+            <tr v-if="loading && items.length === 0">
+              <td colspan="6" class="table__empty">Loading inventory data...</td>
+            </tr>
             <tr
-              v-for="item in filteredItems"
+              v-for="item in items"
+              v-else
               :key="item.id"
               class="table__row"
               @click="openItem(item.id)"
             >
               <td>
                 <div class="product">
-                  <span class="product__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
+                  <img
+                    v-if="item.thumbnail && !brokenThumbs.has(item.id)"
+                    :src="item.thumbnail"
+                    :alt="item.name"
+                    class="product__thumb product__thumb--img"
+                    loading="lazy"
+                    @error="onThumbError(item.id)"
+                  />
+                  <span v-else class="product__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
                   <div class="product__meta">
                     <p class="product__name">{{ item.name }}</p>
                     <p class="product__sku">{{ item.sku }}</p>
@@ -259,6 +495,7 @@ function thumbInitials(name) {
                 </div>
               </td>
               <td class="start-date">{{ item.startDate }}</td>
+              <td class="start-date">{{ item.lastUpdated || '—' }}</td>
               <td>
                 <span class="onhand" :class="`onhand--${item.availability}`">{{ item.onHand }}</span>
                 <span class="onhand__unit">units</span>
@@ -268,12 +505,53 @@ function thumbInitials(name) {
                   {{ availabilityLabels[item.availability] }}
                 </span>
               </td>
+              <td class="table__actions">
+                <BaseButton
+                  variant="outline"
+                  size="sm"
+                  title="Adjust stock"
+                  @click.stop="openAdjustment(item.id)"
+                >
+                  <template #icon>
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+                    </svg>
+                  </template>
+                  Adjust
+                </BaseButton>
+              </td>
             </tr>
-            <tr v-if="filteredItems.length === 0">
-              <td colspan="4" class="table__empty">No products match your filters.</td>
+            <tr v-if="!loading && items.length === 0 && !error">
+              <td colspan="6" class="table__empty">No products match your filters.</td>
             </tr>
           </tbody>
         </table>
+
+        <footer v-if="total > 0" class="pagination">
+          <p class="pagination__range">
+            Showing <strong>{{ rangeStart }}</strong> to <strong>{{ rangeEnd }}</strong> of
+            <strong>{{ total.toLocaleString() }}</strong> products
+          </p>
+          <div class="pagination__pages">
+            <button
+              type="button"
+              class="page-btn"
+              :disabled="page <= 1 || loading"
+              @click="prevPage"
+            >
+              Previous
+            </button>
+            <span class="pagination__info">Page {{ page }} of {{ lastPage }}</span>
+            <button
+              type="button"
+              class="page-btn"
+              :disabled="page >= lastPage || loading"
+              @click="nextPage"
+            >
+              Next
+            </button>
+          </div>
+        </footer>
       </section>
     </div>
   </div>
@@ -294,7 +572,6 @@ function thumbInitials(name) {
   }
 }
 
-/* Toolbar */
 .toolbar {
   display: flex;
   align-items: center;
@@ -304,6 +581,38 @@ function thumbInitials(name) {
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+
+  &__dates {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-subtle);
+  }
+
+  &__sort {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .date-input, .select-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.8rem;
+    color: var(--text-strong);
+    font-family: inherit;
+    &:focus { outline: none; border-color: var(--accent-ink); }
+  }
 
   &__search {
     flex: 1;
@@ -326,8 +635,6 @@ function thumbInitials(name) {
     color: var(--text-subtle);
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
-
-  &__spacer { flex: 1; }
 
   input {
     flex: 1;
@@ -386,6 +693,10 @@ function thumbInitials(name) {
 }
 
 .filter__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   width: 100%;
   padding: 0.55rem 0.6rem;
   font-size: 0.84rem;
@@ -398,9 +709,18 @@ function thumbInitials(name) {
   border-radius: 7px;
   cursor: pointer;
   &:hover { background: var(--surface-alt); }
+
+  &--selected { color: var(--accent-ink); font-weight: 600; }
 }
 
-/* Stat cards */
+.filter__check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  stroke-width: 2.2;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -459,7 +779,6 @@ function thumbInitials(name) {
   }
 }
 
-/* Table */
 .table-card {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
@@ -517,6 +836,11 @@ function thumbInitials(name) {
     font-size: 0.72rem;
     font-weight: 700;
     flex-shrink: 0;
+
+    &--img {
+      display: block;
+      object-fit: cover;
+    }
   }
 
   &__name {
@@ -530,6 +854,89 @@ function thumbInitials(name) {
     margin: 0.15rem 0 0;
     font-size: 0.74rem;
     color: var(--text-subtle);
+  }
+}
+
+.table__alert {
+  padding: 0.85rem 1.25rem;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle);
+
+  &--error {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+
+  &--warning {
+    background: rgb(var(--accent-rgb) / 0.14);
+    color: var(--accent-ink);
+  }
+}
+
+.table__retry {
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.25rem;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface);
+  flex-wrap: wrap;
+
+  &__range {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--text-subtle);
+
+    strong {
+      color: var(--text-strong);
+    }
+  }
+
+  &__pages {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  &__info {
+    font-size: 0.82rem;
+    color: var(--text-body);
+  }
+}
+
+.page-btn {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-body);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--surface-alt);
+    color: var(--text-strong);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 }
 
@@ -565,7 +972,7 @@ function thumbInitials(name) {
   text-transform: uppercase;
   border-radius: 999px;
 
-  &--healthy { background: var(--success-bg); color: var(--success); }
+  &--in-stock { background: var(--success-bg); color: var(--success); }
   &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
   &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
 }

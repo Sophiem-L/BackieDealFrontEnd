@@ -3,11 +3,16 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import ProductImageGallery from '@/components/products/ProductImageGallery.vue'
 import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
-import { ACCEPT_ATTR, uploadImage } from '@/services/media'
-import { fromApiVariant, toApiVariants } from '@/services/variants'
+import { fetchPromotions } from '@/services/promotions'
+import {
+  deriveProductPrice,
+  fromApiVariant,
+  sumVariantStock,
+  toApiVariants,
+} from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -15,9 +20,9 @@ const router = useRouter()
 const auth = useAuthStore()
 
 // Edit mode when the route carries a product key; otherwise we're creating.
-// The param holds the product `uuid` — the API's route key.
+// The param holds the product `id` (UUID) — the API's route key.
 const isEdit = computed(() => Boolean(route.params.id))
-const productUuid = computed(() => route.params.id)
+const productId = computed(() => route.params.id)
 // Read-only view mode when opened with ?view=1 (the list's View icon).
 const isView = computed(() => Boolean(route.query.view))
 
@@ -28,59 +33,76 @@ const error = ref('')
 // Loaded from GET /admin/categories to populate the dropdown.
 const categories = ref([])
 
-// NOTE: there is no product↔promotion relation in the API (the promotions table
-// has no product link and Product exposes no promotion relationship), so this
-// list stays static and is NOT persisted on save. Flagged for the backend team.
-const promotions = [
-  { id: 1, name: 'Black Friday Sale', benefit: 'Up to 30% OFF', period: 'Nov 20 - Nov 30' },
-  { id: 2, name: 'Intel 14th Gen Launch', benefit: 'Flat $50 OFF', period: 'Oct 15 - Oct 31' },
-  { id: 3, name: 'Student Special', benefit: '10% OFF Storewide', period: 'Permanent' },
-]
+// Loaded from GET /admin/promotions. The selection persists through the
+// `coupon_product` pivot, sent as `promotion_ids[]` on save.
+const promotions = ref([])
+const promotionsError = ref('')
 
 const form = reactive({
   name: '',
-  sku: '',
   categoryId: '',
   description: '',
-  imageUrl: '',
-  stock: 0,
-  lowStockThreshold: 5,
-  availableForOrder: true,
-  basePrice: '',
-  costPrice: '',
-  promotionId: '',
-  // SKU-level variants, sent nested under `variants[]` on both create and update.
+  images: [],
+  // Multiple promotions can apply to one product; ids of the checked rows.
+  // Edited from the variant screen — promotions apply across every variant.
+  promotionIds: [],
+  // Variants carry all pricing / stock / SKU now. Sent nested under `variants[]`
+  // on both create and update.
   variants: [],
+  // Kept for the API's still-required product columns, not shown in the form.
+  // `sku` is generated on create and preserved from the loaded product on edit;
+  // `price` / `stock` are derived from the variants at save time.
+  sku: '',
+  isActive: true,
 })
+
+/**
+ * The API still requires a unique product `sku` even though the admin no longer
+ * types one. Derive a readable-ish value from the name plus a short time suffix.
+ */
+function makeProductSku(name) {
+  const base = String(name || 'PROD')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+  return `${base || 'PROD'}-${Date.now().toString(36).toUpperCase()}`.slice(0, 64)
+}
 
 // VariantEditor reports whether its rows would pass the API's rules. Duplicate
 // or malformed variant SKUs come back as a raw 500 rather than a 422, so the
 // Create button stays disabled until they're clean.
 const variantsValid = ref(true)
 
-// "1,599.00" <-> 1599.00
-function formatMoney(value) {
-  if (value == null) return ''
-  return Number(value).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-}
-function parseMoney(value) {
-  const n = Number(String(value ?? '').replace(/,/g, '').trim())
-  return Number.isFinite(n) ? n : 0
-}
-
 async function loadCategories() {
   try {
     const response = await apiFetch('/admin/categories?per_page=100', { token: auth.accessToken })
-    // The endpoint wraps a paginator, so `data` may be the array itself or {data: [...]}.
     const payload = response?.data
     categories.value = Array.isArray(payload) ? payload : (payload?.data ?? [])
   } catch {
-    // A failed category load shouldn't block the form; the dropdown just stays empty.
     categories.value = []
   }
+}
+
+async function loadPromotions() {
+  promotionsError.value = ''
+  try {
+    promotions.value = await fetchPromotions(auth.accessToken)
+  } catch (err) {
+    promotions.value = []
+    promotionsError.value = err.message || 'Could not load promotions.'
+  }
+}
+
+function toGalleryEntries(product) {
+  const images = Array.isArray(product?.images) ? product.images : []
+  if (images.length) {
+    return images.map((image) => ({
+      url: image.url || image.image,
+      isPrimary: Boolean(image.is_primary),
+    }))
+  }
+  return product?.thumbnail ? [{ url: product.thumbnail, isPrimary: true }] : []
 }
 
 async function loadProduct() {
@@ -88,22 +110,20 @@ async function loadProduct() {
   loading.value = true
   error.value = ''
   try {
-    const response = await apiFetch(`/admin/products/${productUuid.value}`, {
+    const response = await apiFetch(`/admin/products/${productId.value}`, {
       token: auth.accessToken,
     })
     const p = response?.data ?? {}
     Object.assign(form, {
       name: p.name ?? '',
       sku: p.sku ?? '',
+      barcode: p.barcode ?? '',
       categoryId: p.category_id ?? '',
       description: p.description ?? '',
-      imageUrl: p.thumbnail ?? '',
-      stock: p.stock_quantity ?? 0,
-      lowStockThreshold: p.min_stock_alert ?? 5,
-      availableForOrder: Boolean(p.is_active),
-      basePrice: formatMoney(p.price),
-      costPrice: formatMoney(p.cost_price),
+      images: toGalleryEntries(p),
+      isActive: p.is_active == null ? true : Boolean(p.is_active),
       variants: (p.variants ?? []).map(fromApiVariant),
+      promotionIds: (p.promotion_ids ?? []).map(Number),
     })
   } catch (err) {
     error.value = err.message || 'Unable to load this product.'
@@ -112,8 +132,13 @@ async function loadProduct() {
   }
 }
 
+// Generate the hidden product SKU up front on create: the variant editor seeds
+// each variant's SKU and (globally-unique) slug from it, so it must exist before
+// the first combination is generated.
+if (!isEdit.value) form.sku = makeProductSku(form.name)
+
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadProduct()])
+  await Promise.all([loadCategories(), loadPromotions(), loadProduct()])
 })
 
 const pageTitle = computed(() => {
@@ -121,77 +146,65 @@ const pageTitle = computed(() => {
   return isEdit.value ? `Edit Product: ${form.name || 'Product'}` : 'Add New Product'
 })
 
-// Create gets the axis builder; edit gets API-loaded rows with locked SKUs.
 const variantMode = computed(() => {
   if (isView.value) return 'view'
   return isEdit.value ? 'edit' : 'create'
 })
 
-const selectedPromotion = computed(
-  () => promotions.find((p) => p.id === form.promotionId) || null,
+// Toggled from the variant screen — promotions apply across the whole product.
+function togglePromotion(id) {
+  const index = form.promotionIds.indexOf(id)
+  if (index === -1) form.promotionIds.push(id)
+  else form.promotionIds.splice(index, 1)
+}
+
+// The gallery's primary image, which doubles as the product `thumbnail`.
+const primaryImageUrl = computed(
+  () => (form.images.find((image) => image.isPrimary) ?? form.images[0])?.url ?? '',
 )
 
-const fileInput = ref(null)
-const uploadingImage = ref(false)
-const imageError = ref('')
-
-function pickImage() {
-  fileInput.value?.click()
-}
-
-/**
- * Upload straight away and keep the stored URL, rather than holding a `blob:`
- * preview that could never be saved.
- */
-async function onFileChange(event) {
-  const file = event.target.files?.[0]
-  event.target.value = ''
-  if (!file) return
-
-  uploadingImage.value = true
-  imageError.value = ''
-  try {
-    const { url } = await uploadImage(file, { token: auth.accessToken, folder: 'products' })
-    form.imageUrl = url
-  } catch (err) {
-    imageError.value = err.message || 'Unable to upload that image.'
-  } finally {
-    uploadingImage.value = false
-  }
-}
-
-// Offered for reuse on variant rows.
-const seedImages = computed(() => (form.imageUrl ? [form.imageUrl] : []))
+const seedImages = computed(() => {
+  const urls = form.images.map((image) => image.url).filter(Boolean)
+  const primary = primaryImageUrl.value
+  return primary ? [primary, ...urls.filter((url) => url !== primary)] : urls
+})
 
 async function save() {
   saving.value = true
   error.value = ''
 
+  // Pricing and stock live on the variants now; the product columns the API
+  // still requires are derived from them.
+  const productStock = sumVariantStock(form.variants)
+
+  if (!form.sku) form.sku = makeProductSku(form.name)
+
   const body = {
     name: form.name,
     sku: form.sku,
+    barcode: form.barcode,
     description: form.description || null,
-    price: parseMoney(form.basePrice),
-    cost_price: parseMoney(form.costPrice),
-    stock_quantity: Number(form.stock) || 0,
-    min_stock_alert: Number(form.lowStockThreshold) || 0,
-    in_stock: Number(form.stock) > 0,
-    is_active: form.availableForOrder,
+    price: deriveProductPrice(form.variants),
+    stock_quantity: productStock,
+    min_stock_alert: 0,
+    in_stock: productStock > 0,
+    is_active: form.isActive,
   }
 
   if (form.categoryId) body.category_id = Number(form.categoryId)
-  // The picker now uploads before setting this, so it holds a stored URL. The
-  // `blob:` guard stays as a backstop — such a URL resolves for nobody else.
-  if (form.imageUrl && !form.imageUrl.startsWith('blob:')) body.thumbnail = form.imageUrl
+  body.promotion_ids = form.promotionIds.map(Number)
 
-  // Both paths send the nested `variants[]` array; POST /admin/products creates
-  // the product and its variants in one transaction.
-  //
-  // On update, `replace_variants: false` is load-bearing. The default update
-  // path soft-deletes every variant then recreates it, which collides with the
-  // soft-delete-ignoring unique index on `sku`/`slug` and 500s. Opting out
-  // matches existing variants by SKU and updates them in place instead. Create
-  // has no such flag — there is nothing to replace yet.
+  const galleryImages = form.images.filter(
+    (image) => image.url && !image.url.startsWith('blob:'),
+  )
+
+  body.images = galleryImages.map((image, index) => ({
+    image: image.url,
+    is_primary: image.isPrimary,
+    sort_order: index,
+  }))
+  body.thumbnail = primaryImageUrl.value || null
+
   if (form.variants.length) {
     body.variants = toApiVariants(form.variants)
     if (isEdit.value) body.replace_variants = false
@@ -199,7 +212,7 @@ async function save() {
 
   try {
     if (isEdit.value) {
-      await apiFetch(`/admin/products/${productUuid.value}`, {
+      await apiFetch(`/admin/products/${productId.value}`, {
         method: 'PUT',
         body,
         token: auth.accessToken,
@@ -209,7 +222,6 @@ async function save() {
     }
     router.push('/products')
   } catch (err) {
-    // Surface the first field error from a 422 when there is one.
     const fieldError = Object.values(err.errors ?? {})[0]
     error.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to save this product.'
   } finally {
@@ -226,7 +238,6 @@ function cancel() {
     <AppHeader :title="pageTitle" />
 
     <div class="page__body">
-      <!-- Sub header -->
       <div class="subhead">
         <RouterLink to="/products" class="subhead__back">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -242,67 +253,17 @@ function cancel() {
       <p v-if="loading" class="loading-note">Loading product…</p>
 
       <fieldset v-else class="grid" :disabled="isView">
-        <!-- Left column -->
         <div class="col col--side">
           <section class="card">
-            <h3 class="card__title">Product Image</h3>
-            <!-- View mode: static preview, no upload affordance -->
-            <div v-if="isView" class="image image--view">
-              <img v-if="form.imageUrl" :src="form.imageUrl" alt="Product image" />
-              <span v-else class="image__placeholder">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <rect x="3" y="4" width="18" height="16" rx="2" />
-                  <circle cx="8.5" cy="9.5" r="1.5" />
-                  <path d="m4 18 5-4 4 3 3-2 4 3" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-                <span>No image</span>
-              </span>
-            </div>
-
-            <!-- Edit/create mode: clickable upload -->
-            <template v-else>
-              <button type="button" class="image" :disabled="uploadingImage" @click="pickImage">
-                <span v-if="uploadingImage" class="image__placeholder">
-                  <span class="image__spinner" aria-hidden="true"></span>
-                  <span>Uploading…</span>
-                </span>
-                <img v-else-if="form.imageUrl" :src="form.imageUrl" alt="Product preview" />
-                <span v-else class="image__placeholder">
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <rect x="3" y="4" width="18" height="16" rx="2" />
-                    <circle cx="8.5" cy="9.5" r="1.5" />
-                    <path d="m4 18 5-4 4 3 3-2 4 3" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  <span>Click to upload</span>
-                </span>
-              </button>
-              <input ref="fileInput" type="file" :accept="ACCEPT_ATTR" hidden @change="onFileChange" />
-              <p v-if="imageError" class="image__error">{{ imageError }}</p>
-              <p v-else class="card__hint">Recommended: 1000x1000px. Up to 5MB.</p>
-            </template>
-          </section>
-
-          <section class="card">
-            <h3 class="card__title">Stock &amp; Availability</h3>
-            <div class="field">
-              <label for="stock">Current Stock Quantity</label>
-              <input id="stock" v-model.number="form.stock" type="number" min="0" />
-            </div>
-            <div class="field">
-              <label for="threshold">Low Stock Threshold</label>
-              <input id="threshold" v-model.number="form.lowStockThreshold" type="number" min="0" />
-            </div>
-            <div class="availability" :class="{ 'availability--on': form.availableForOrder }">
-              <span class="availability__dot"></span>
-              <ToggleSwitch v-if="!isView" v-model="form.availableForOrder" label="Available for Order" />
-              <span v-else class="availability__status">
-                {{ form.availableForOrder ? 'Available for Order' : 'Not Available for Order' }}
-              </span>
-            </div>
+            <h3 class="card__title">Product Images</h3>
+            <ProductImageGallery
+              :images="form.images"
+              :readonly="isView"
+              @update:images="form.images = $event"
+            />
           </section>
         </div>
 
-        <!-- Right column -->
         <div class="col col--main">
           <section class="card">
             <h3 class="card__title">General Information</h3>
@@ -310,96 +271,54 @@ function cancel() {
               <label for="name">Product Name</label>
               <input id="name" v-model="form.name" type="text" placeholder="e.g. NVIDIA GeForce RTX 4090" />
             </div>
-            <div class="row">
-              <div class="field">
-                <label for="sku">SKU Number</label>
-                <input id="sku" v-model="form.sku" type="text" placeholder="e.g. NV-RTX4090-FE" />
+            <div class="field">
+              <label for="category">Category</label>
+              <div class="select-wrap">
+                <select id="category" v-model="form.categoryId">
+                  <option value="">Select a category</option>
+                  <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                </select>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </div>
               <div class="field">
-                <label for="category">Category</label>
-                <div class="select-wrap">
-                  <select id="category" v-model="form.categoryId">
-                    <option value="">Select a category</option>
-                    <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-                  </select>
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                </div>
+                <label for="meta-title">Meta Title</label>
+                <input id="meta-title" v-model="form.metaTitle" type="text" placeholder="SEO Title" />
               </div>
             </div>
             <div class="field field--description">
               <label for="description">Description</label>
               <textarea id="description" v-model="form.description" rows="4" placeholder="Describe the product..."></textarea>
             </div>
-          </section>
-
-          <section class="card">
-            <h3 class="card__title">Pricing</h3>
-            <div class="row">
-              <div class="field">
-                <label for="basePrice">Base Price</label>
-                <div class="money">
-                  <span>$</span>
-                  <input id="basePrice" v-model="form.basePrice" type="text" placeholder="0.00" />
-                </div>
-              </div>
-              <div class="field">
-                <label for="costPrice">Cost Price</label>
-                <div class="money">
-                  <span>$</span>
-                  <input id="costPrice" v-model="form.costPrice" type="text" placeholder="0.00" />
-                </div>
-              </div>
+            <div class="field">
+              <label for="meta-description">Meta Description</label>
+              <textarea id="meta-description" v-model="form.metaDescription" rows="2" placeholder="SEO Description"></textarea>
             </div>
-
           </section>
 
           <!--
-            On create the editor offers its axis builder and generates a row per
-            combination; on edit the rows come from the API and the builder is
-            withheld, since regenerating would invent variants the product never
-            had. See VariantEditor for what each mode allows.
+            Media, pricing, SKU/barcode and the product promotions are all set
+            per variant on the full-screen variant screen — see VariantEditor.
           -->
           <section class="card">
             <h3 class="card__title">Variants</h3>
+            <p v-if="promotionsError" class="card__hint card__hint--error">{{ promotionsError }}</p>
             <VariantEditor
               v-model="form.variants"
               v-model:valid="variantsValid"
               :base-sku="form.sku"
-              :base-price="form.basePrice"
               :seed-images="seedImages"
               :mode="variantMode"
+              :promotions="promotions"
+              :promotion-ids="form.promotionIds"
+              :product-name="form.name || 'New product'"
+              :product-image="primaryImageUrl"
+              :product-active="form.isActive"
+              @toggle-promotion="togglePromotion"
             />
-          </section>
-
-          <section class="card">
-            <h3 class="card__title">Promotion</h3>
-            <div v-if="!isView" class="field">
-              <label for="promotion">Applied Promotion</label>
-              <div class="select-wrap">
-                <select id="promotion" v-model="form.promotionId">
-                  <option value="">No promotion</option>
-                  <option v-for="promo in promotions" :key="promo.id" :value="promo.id">
-                    {{ promo.name }} — {{ promo.benefit }}
-                  </option>
-                </select>
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              </div>
-            </div>
-
-            <p v-if="isView && !selectedPromotion" class="card__hint">No promotion applied.</p>
-
-            <div v-if="selectedPromotion" class="promo-preview">
-              <span class="promo-preview__badge">{{ selectedPromotion.benefit }}</span>
-              <div class="promo-preview__meta">
-                <p class="promo-preview__name">{{ selectedPromotion.name }}</p>
-                <p class="promo-preview__period">{{ selectedPromotion.period }}</p>
-              </div>
-            </div>
           </section>
         </div>
       </fieldset>
 
-      <!-- Form actions -->
       <div v-if="!isView && !loading" class="form-footer">
         <p v-if="!variantsValid" class="form-footer__blocked">
           Fix the highlighted variant before saving.
@@ -477,8 +396,6 @@ function cancel() {
 }
 
 .grid {
-  // Rendered as a <fieldset> so view mode can disable every control at once —
-  // reset the element's default border/padding/margin.
   border: 0;
   padding: 0;
   margin: 0;
@@ -494,7 +411,7 @@ function cancel() {
   }
 }
 
-// Main info on the left, image/stock on the right.
+// Main info on the left, images on the right.
 .col--main { order: 1; }
 .col--side { order: 2; }
 
@@ -544,69 +461,14 @@ function cancel() {
     font-size: 0.72rem;
     color: var(--text-subtle);
     text-align: center;
+
+    &--error {
+      margin-top: 0;
+      margin-bottom: 0.75rem;
+      color: var(--danger);
+      text-align: left;
+    }
   }
-}
-
-.image {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--switch-track);
-  border-radius: 12px;
-  background: var(--surface-sunken);
-  overflow: hidden;
-  cursor: pointer;
-  padding: 0;
-
-  &:hover { border-color: rgb(var(--accent-rgb)); }
-
-  // View mode: solid border, no pointer/hover affordance.
-  &--view {
-    border-style: solid;
-    cursor: default;
-    &:hover { border-color: var(--switch-track); }
-  }
-
-  img { width: 100%; height: 100%; object-fit: cover; }
-
-  &__placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--text-subtle);
-    font-size: 0.8rem;
-
-    svg { width: 34px; height: 34px; stroke: currentColor; stroke-width: 1.5; }
-  }
-
-  &__spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid rgb(var(--accent-rgb) / 0.3);
-    border-top-color: rgb(var(--accent-rgb));
-    border-radius: 50%;
-    animation: image-spin 0.7s linear infinite;
-  }
-
-  &__error {
-    margin: 0.75rem 0 0;
-    font-size: 0.75rem;
-    color: var(--danger);
-    text-align: center;
-  }
-
-  &:disabled { cursor: progress; }
-}
-
-@keyframes image-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .image__spinner { animation-duration: 2s; }
 }
 
 .field {
@@ -651,21 +513,6 @@ function cancel() {
   textarea { resize: vertical; }
 }
 
-.row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  margin-top: 1rem;
-
-  &--3 { grid-template-columns: repeat(3, 1fr); }
-
-  .field + .field { margin-top: 0; }
-
-  @media (max-width: 620px) {
-    grid-template-columns: 1fr;
-  }
-}
-
 .select-wrap {
   position: relative;
 
@@ -682,85 +529,6 @@ function cancel() {
     stroke-width: 1.8;
     pointer-events: none;
   }
-}
-
-.money {
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding-left: 0.8rem;
-
-  &:focus-within {
-    border-color: rgb(var(--accent-rgb));
-    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
-  }
-
-  span { color: var(--text-subtle); font-size: 0.9rem; }
-
-  input {
-    border: none;
-    box-shadow: none;
-    &:focus { box-shadow: none; }
-  }
-}
-
-.availability {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 1rem;
-  padding: 0.7rem 0.85rem;
-  border-radius: 10px;
-  background: var(--bg);
-  transition: background-color 0.15s ease;
-
-  &--on { background: var(--success-bg); }
-
-  &__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-faint);
-    order: -1;
-  }
-  &--on &__dot { background: var(--success); }
-
-  &__status {
-    flex: 1;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-muted);
-  }
-  &--on &__status { color: var(--success-ink); }
-}
-
-.promo-preview {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 1rem;
-  padding: 0.7rem 0.85rem;
-  border: 1px solid rgb(var(--accent-rgb) / 0.4);
-  background: rgb(var(--accent-rgb) / 0.1);
-  border-radius: 10px;
-
-  &__badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.28rem 0.6rem;
-    font-size: 0.72rem;
-    font-weight: 700;
-    color: var(--accent-ink);
-    background: rgb(var(--accent-rgb) / 0.28);
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-
-  &__meta { min-width: 0; }
-  &__name { margin: 0; font-size: 0.86rem; font-weight: 600; color: var(--text-strong); }
-  &__period { margin: 0.15rem 0 0; font-size: 0.76rem; color: var(--text-subtle); }
 }
 
 </style>

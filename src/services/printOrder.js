@@ -192,7 +192,9 @@ export function buildOrderHtml(order) {
 
   <div class="totals">
     <div><span class="muted">Subtotal</span><span>${esc(money(order?.subtotal, code))}</span></div>
-    <div><span class="muted">Discount</span><span>${esc(money(order?.discount_total, code))}</span></div>
+    <div><span class="muted">Discount${
+      order?.coupon?.code ? ` (${esc(order.coupon.code)})` : ''
+    }</span><span>${esc(money(order?.discount_total, code))}</span></div>
     <div><span class="muted">Tax</span><span>${esc(money(order?.tax_total, code))}</span></div>
     <div><span class="muted">Shipping</span><span>${esc(money(order?.shipping_total, code))}</span></div>
     <div class="grand"><span>Total</span><span>${esc(money(order?.total, code))}</span></div>

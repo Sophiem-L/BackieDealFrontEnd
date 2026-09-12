@@ -1,22 +1,54 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { customerAccounts } from '@/data/customerAccounts'
+import {
+  deleteCustomer as removeCustomer,
+  fetchCustomers,
+  initials,
+  statusLabels,
+} from '@/services/customers'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
+
+const customers = ref([])
 const search = ref('')
+const loading = ref(false)
+const error = ref('')
+const deletingId = ref(null)
 
-const statusLabels = { active: 'Active', vip: 'VIP', inactive: 'Inactive' }
+const canCreate = computed(() => auth.hasPermission('customers.create'))
+const canUpdate = computed(() => auth.hasPermission('customers.update'))
+const canDelete = computed(() => auth.hasPermission('customers.delete'))
+// The row click opens the detail page, so it only makes sense while a row can
+// still be opened at all.
+const rowActionable = computed(() => canUpdate.value || canDelete.value)
 
-const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return customerAccounts
-  return customerAccounts.filter(
-    (c) => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q),
-  )
+let searchTimer = null
+
+async function loadCustomers() {
+  loading.value = true
+  error.value = ''
+  try {
+    customers.value = await fetchCustomers(auth.accessToken, { search: search.value })
+  } catch (err) {
+    error.value = err.message || 'Could not load customers.'
+  } finally {
+    loading.value = false
+  }
+}
+
+// Search runs on the server, so keystrokes are debounced rather than sent one
+// request per character.
+watch(search, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(loadCustomers, 300)
 })
+
+onMounted(loadCustomers)
 
 function viewCustomer(customer) {
   router.push({ name: 'customer-detail', params: { id: customer.id } })
@@ -26,19 +58,19 @@ function editCustomer(customer) {
   router.push({ name: 'customer-edit', params: { id: customer.id } })
 }
 
-function deleteCustomer(customer) {
+async function deleteCustomer(customer) {
   if (!window.confirm(`Delete ${customer.name}? This cannot be undone.`)) return
-  const index = customerAccounts.indexOf(customer)
-  if (index !== -1) customerAccounts.splice(index, 1)
-}
 
-function initials(name) {
-  return name
-    .split(' ')
-    .map((part) => part.charAt(0))
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
+  deletingId.value = customer.id
+  error.value = ''
+  try {
+    await removeCustomer(customer.id, auth.accessToken)
+    customers.value = customers.value.filter((item) => item.id !== customer.id)
+  } catch (err) {
+    error.value = err.message || 'Could not delete the customer.'
+  } finally {
+    deletingId.value = null
+  }
 }
 </script>
 
@@ -61,7 +93,7 @@ function initials(name) {
 
         <div class="toolbar__spacer"></div>
 
-        <BaseButton variant="primary" :to="{ name: 'customer-create' }">
+        <BaseButton v-if="canCreate" variant="primary" :to="{ name: 'customer-create' }">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none">
               <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" stroke-linecap="round" />
@@ -72,6 +104,8 @@ function initials(name) {
           Add Customer
         </BaseButton>
       </section>
+
+      <p v-if="error" class="page__error" role="alert">{{ error }}</p>
 
       <!-- Table -->
       <section class="table-card">
@@ -87,9 +121,10 @@ function initials(name) {
           </thead>
           <tbody>
             <tr
-              v-for="customer in filtered"
+              v-for="customer in customers"
               :key="customer.id"
               class="table__row"
+              :class="{ 'table__row--busy': deletingId === customer.id }"
               @click="viewCustomer(customer)"
             >
               <td>
@@ -110,14 +145,14 @@ function initials(name) {
                 <span class="badge" :class="`badge--${customer.status}`">{{ statusLabels[customer.status] }}</span>
               </td>
               <td>
-                <div class="row-actions">
-                  <button type="button" class="icon-btn" title="Edit customer" aria-label="Edit customer" @click.stop="editCustomer(customer)">
+                <div v-if="rowActionable" class="row-actions">
+                  <button v-if="canUpdate" type="button" class="icon-btn" title="Edit customer" aria-label="Edit customer" @click.stop="editCustomer(customer)">
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round" />
                       <path d="M13.5 6.5l3 3" stroke-linecap="round" />
                     </svg>
                   </button>
-                  <button type="button" class="icon-btn icon-btn--danger" title="Delete customer" aria-label="Delete customer" @click.stop="deleteCustomer(customer)">
+                  <button v-if="canDelete" type="button" class="icon-btn icon-btn--danger" title="Delete customer" aria-label="Delete customer" :disabled="deletingId === customer.id" @click.stop="deleteCustomer(customer)">
                     <svg viewBox="0 0 24 24" fill="none">
                       <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
@@ -125,8 +160,13 @@ function initials(name) {
                 </div>
               </td>
             </tr>
-            <tr v-if="filtered.length === 0">
-              <td colspan="5" class="table__empty">No customers match your search.</td>
+            <tr v-if="loading">
+              <td colspan="5" class="table__empty">Loading customers…</td>
+            </tr>
+            <tr v-else-if="customers.length === 0">
+              <td colspan="5" class="table__empty">
+                {{ search.trim() ? 'No customers match your search.' : 'No customers yet.' }}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -147,6 +187,12 @@ function initials(name) {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+  }
+
+  &__error {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--danger);
   }
 }
 
@@ -221,6 +267,9 @@ function initials(name) {
   tbody tr:hover { background: var(--surface-sunken); }
 
   &__row { cursor: pointer; }
+
+  /* The row stays in place while its delete is in flight. */
+  &__row--busy { opacity: 0.5; pointer-events: none; }
 
   &__actions-head { text-align: left; }
 

@@ -1,88 +1,106 @@
 <script setup>
-import { computed, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import SlideImagesField from '@/components/slides/SlideImagesField.vue'
 import SlideSequence from '@/components/slides/SlideSequence.vue'
-import { createSlide, findSlide, removeSlide } from '@/data/slides'
+import { DEFAULT_GRADIENT, deleteSlide, fetchSlide, saveSlide } from '@/services/slides'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
 const isEdit = computed(() => Boolean(route.params.id))
 
+// 'Scheduled' only differs from 'Active' by having a future start date, so the
+// date fields below are what make the choice mean anything.
 const statuses = [
   { value: 'active', label: 'Active' },
   { value: 'scheduled', label: 'Scheduled' },
   { value: 'draft', label: 'Draft' },
 ]
 
-// Backdrop for a slide with no images. Not editable here — it only shows
-// through until the first image is added.
-const DEFAULT_GRADIENT = 'linear-gradient(135deg, #1b2a4a 0%, #6d28d9 100%)'
-
 const form = reactive({
   title: '',
   subtitle: '',
   cta: '',
+  ctaUrl: '',
   status: 'draft',
   images: [],
   durationMs: 3000,
   transition: 'fade',
   gradient: DEFAULT_GRADIENT,
+  startDate: '',
+  endDate: '',
 })
 
-// Prefill when editing. `images` is copied so edits don't reach the stored
-// slide until save.
-if (isEdit.value) {
-  const existing = findSlide(route.params.id)
-  if (existing) {
-    Object.assign(form, {
-      title: existing.title,
-      subtitle: existing.subtitle,
-      cta: existing.cta,
-      status: existing.status,
-      images: [...existing.images],
-      durationMs: existing.durationMs,
-      transition: existing.transition,
-      gradient: existing.gradient,
-    })
-  }
-}
+const loading = ref(false)
+const saving = ref(false)
+const error = ref('')
 
 const pageTitle = computed(() =>
   isEdit.value ? `Edit Slide: ${form.title || 'Slide'}` : 'New Slide',
 )
 
-const statusLabels = { active: 'Active', scheduled: 'Scheduled', draft: 'Draft' }
+const statusLabels = { active: 'Active', scheduled: 'Scheduled', expired: 'Expired', draft: 'Draft' }
 
-function save() {
-  const payload = {
-    title: form.title.trim() || 'Untitled Slide',
-    subtitle: form.subtitle.trim(),
-    cta: form.cta.trim() || 'Learn More',
-    status: form.status,
-    images: [...form.images],
-    durationMs: form.durationMs,
-    transition: form.transition,
-    gradient: form.gradient,
-  }
+// The API rejects an end date before the start date, so catch it here rather
+// than on a round trip.
+const dateProblem = computed(() => {
+  if (!form.startDate || !form.endDate) return ''
+  return form.endDate < form.startDate ? 'The end date cannot fall before the start date.' : ''
+})
 
-  if (isEdit.value) {
-    const existing = findSlide(route.params.id)
-    if (existing) Object.assign(existing, payload)
-  } else {
-    createSlide(payload)
+// Prefill when editing. The fetched slide is copied field by field so the
+// reactive form owns its own `images` array.
+async function loadSlide() {
+  loading.value = true
+  error.value = ''
+  try {
+    const existing = await fetchSlide(route.params.id, auth.accessToken)
+    Object.assign(form, { ...existing, images: [...existing.images] })
+  } catch (err) {
+    error.value = err.message || 'Could not load this slide.'
+  } finally {
+    loading.value = false
   }
-  router.push('/slides')
 }
 
-function remove() {
+async function save() {
+  if (dateProblem.value) {
+    error.value = dateProblem.value
+    return
+  }
+
+  saving.value = true
+  error.value = ''
+  try {
+    await saveSlide(isEdit.value ? route.params.id : null, form, auth.accessToken)
+    router.push('/slides')
+  } catch (err) {
+    error.value = err.message || 'Could not save the slide.'
+  } finally {
+    saving.value = false
+  }
+}
+
+async function remove() {
   if (!window.confirm('Delete this slide? This cannot be undone.')) return
-  removeSlide(route.params.id)
-  router.push('/slides')
+
+  error.value = ''
+  try {
+    await deleteSlide(route.params.id, auth.accessToken)
+    router.push('/slides')
+  } catch (err) {
+    error.value = err.message || 'Could not delete the slide.'
+  }
 }
+
+onMounted(() => {
+  if (isEdit.value) loadSlide()
+})
 </script>
 
 <template>
@@ -111,11 +129,13 @@ function remove() {
             </template>
             Delete Slide
           </BaseButton>
-          <BaseButton variant="primary" @click="save">
-            {{ isEdit ? 'Update Slide' : 'Create Slide' }}
+          <BaseButton variant="primary" :disabled="saving || loading" @click="save">
+            {{ saving ? 'Saving…' : isEdit ? 'Update Slide' : 'Create Slide' }}
           </BaseButton>
         </div>
       </div>
+
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
 
       <div class="grid">
         <!-- Main column -->
@@ -133,6 +153,10 @@ function remove() {
             <div class="field">
               <label for="cta">CTA Button Label</label>
               <input id="cta" v-model="form.cta" type="text" placeholder="e.g. Shop Now" />
+            </div>
+            <div class="field">
+              <label for="cta-url">CTA Link</label>
+              <input id="cta-url" v-model="form.ctaUrl" type="text" placeholder="e.g. /products or https://..." />
             </div>
           </section>
 
@@ -169,6 +193,21 @@ function remove() {
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </div>
             </div>
+
+            <div class="field">
+              <label for="start-date">Start Date</label>
+              <input id="start-date" v-model="form.startDate" type="date" />
+            </div>
+            <div class="field">
+              <label for="end-date">End Date</label>
+              <input id="end-date" v-model="form.endDate" type="date" />
+            </div>
+
+            <p v-if="dateProblem" class="card__error" role="alert">{{ dateProblem }}</p>
+            <p v-else class="card__hint">
+              Leave both dates empty to run the slide indefinitely. A start date in the future is
+              what makes a slide &ldquo;Scheduled&rdquo;.
+            </p>
           </section>
 
           <section class="card">
@@ -190,6 +229,12 @@ function remove() {
 </template>
 
 <style scoped lang="scss">
+.form-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+
 
 .page {
   display: flex;
@@ -271,6 +316,13 @@ function remove() {
     font-size: 0.72rem;
     line-height: 1.5;
     color: var(--text-subtle);
+  }
+
+  &__error {
+    margin: 0.75rem 0 0;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: var(--danger);
   }
 }
 

@@ -1,25 +1,30 @@
 <script setup>
-import { computed } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { findCustomerAccount } from '@/data/customerAccounts'
+import { fetchCustomer, initials, statusLabels } from '@/services/customers'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
-const customer = computed(() => findCustomerAccount(route.params.id))
+const customer = ref(null)
+const loading = ref(true)
+const error = ref('')
 
-const statusLabels = { active: 'Active', vip: 'VIP', inactive: 'Inactive' }
-
-function initials(name) {
-  return name
-    .split(' ')
-    .map((part) => part.charAt(0))
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
-}
+onMounted(async () => {
+  try {
+    customer.value = await fetchCustomer(route.params.id, auth.accessToken)
+  } catch (err) {
+    // A deleted or non-customer id comes back as a 404; everything else is
+    // worth showing verbatim.
+    error.value = err.status === 404 ? '' : err.message || 'Could not load this customer.'
+  } finally {
+    loading.value = false
+  }
+})
 
 function goBack() {
   if (window.history.length > 1) router.back()
@@ -40,9 +45,13 @@ function goBack() {
         <h2 class="subhead__title">Customer Detail</h2>
       </div>
 
-      <!-- Not found -->
-      <section v-if="!customer" class="empty">
-        <p>This customer could not be found.</p>
+      <section v-if="loading" class="empty">
+        <p>Loading customer…</p>
+      </section>
+
+      <!-- Not found, or the load failed -->
+      <section v-else-if="!customer" class="empty">
+        <p role="alert">{{ error || 'This customer could not be found.' }}</p>
         <BaseButton variant="ghost" :to="{ name: 'customers' }">Back to Customers</BaseButton>
       </section>
 

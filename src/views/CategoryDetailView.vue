@@ -62,7 +62,6 @@ function usableImage(value) {
 function mapProduct(item) {
   return {
     id: item.id,
-    uuid: item.uuid,
     name: item.name,
     sku: item.sku,
     categoryId: item.category?.id ?? null,
@@ -76,9 +75,9 @@ function mapProduct(item) {
 
 // Thumbnails that fail to load fall back to the initials tile.
 const brokenThumbs = ref(new Set())
-function onThumbError(uuid) {
+function onThumbError(id) {
   const next = new Set(brokenThumbs.value)
-  next.add(uuid)
+  next.add(id)
   brokenThumbs.value = next
 }
 
@@ -167,20 +166,20 @@ const pickerError = ref('')
 const submitting = ref(false)
 const submitError = ref('')
 
-// Keyed by uuid and holding the whole row: the search re-fetches and replaces
+// Keyed by product id and holding the whole row: the search re-fetches and replaces
 // the visible list, so an id-only selection would lose the names needed for the
 // footer count and the failure message.
 const selected = ref(new Map())
 const selectedCount = computed(() => selected.value.size)
 
-function isSelected(uuid) {
-  return selected.value.has(uuid)
+function isSelected(id) {
+  return selected.value.has(id)
 }
 
 function toggleProduct(product) {
   const next = new Map(selected.value)
-  if (next.has(product.uuid)) next.delete(product.uuid)
-  else next.set(product.uuid, product)
+  if (next.has(product.id)) next.delete(product.id)
+  else next.set(product.id, product)
   selected.value = next
 }
 
@@ -253,7 +252,7 @@ async function addSelectedProducts() {
   try {
     const results = await Promise.allSettled(
       picked.map((product) =>
-        apiFetch(`/admin/products/${product.uuid}`, {
+        apiFetch(`/admin/products/${product.id}`, {
           method: 'PUT',
           body: { category_id: categoryId.value },
           token: auth.accessToken,
@@ -272,7 +271,7 @@ async function addSelectedProducts() {
     }
 
     // Keep only the failures selected so a retry doesn't re-send the successes.
-    selected.value = new Map(failed.map((product) => [product.uuid, product]))
+    selected.value = new Map(failed.map((product) => [product.id, product]))
     // Surface the server's reason too — a validation error is otherwise invisible.
     const reason = results.find((r) => r.status === 'rejected')?.reason?.message
     const names = failed.map((p) => p.name).join(', ')
@@ -358,16 +357,16 @@ async function addSelectedProducts() {
                 {{ search ? 'No products match your search.' : 'No products in this category yet.' }}
               </td>
             </tr>
-            <tr v-for="product in filteredProducts" v-else :key="product.uuid">
+            <tr v-for="product in filteredProducts" v-else :key="product.id">
               <td>
                 <div class="product">
                   <span class="product__thumb" aria-hidden="true">
                     <img
-                      v-if="product.thumbnail && !brokenThumbs.has(product.uuid)"
+                      v-if="product.thumbnail && !brokenThumbs.has(product.id)"
                       :src="product.thumbnail"
                       alt=""
                       loading="lazy"
-                      @error="onThumbError(product.uuid)"
+                      @error="onThumbError(product.id)"
                     />
                     <template v-else>{{ thumbInitials(product.name) }}</template>
                   </span>
@@ -433,21 +432,21 @@ async function addSelectedProducts() {
               {{ pickerSearch ? 'No matching products found.' : 'All products are already in this category.' }}
             </p>
             <ul v-else class="picker-list">
-              <li v-for="product in pickerItems" :key="product.uuid">
-                <label class="picker-item" :class="{ 'is-selected': isSelected(product.uuid) }">
+              <li v-for="product in pickerItems" :key="product.id">
+                <label class="picker-item" :class="{ 'is-selected': isSelected(product.id) }">
                   <input
                     type="checkbox"
                     class="picker-item__checkbox"
-                    :checked="isSelected(product.uuid)"
+                    :checked="isSelected(product.id)"
                     @change="toggleProduct(product)"
                   />
                   <span class="picker-item__thumb" aria-hidden="true">
                     <img
-                      v-if="product.thumbnail && !brokenThumbs.has(product.uuid)"
+                      v-if="product.thumbnail && !brokenThumbs.has(product.id)"
                       :src="product.thumbnail"
                       alt=""
                       loading="lazy"
-                      @error="onThumbError(product.uuid)"
+                      @error="onThumbError(product.id)"
                     />
                     <template v-else>{{ thumbInitials(product.name) }}</template>
                   </span>

@@ -1,9 +1,10 @@
 // Mock datasets for the Reports page.
 //
-// Session-only, no backend: of the six reports this page shows, only customer
-// purchase history could be served by the API today (GET /admin/orders?customer_id=).
-// The rest have no endpoint, and `visitor_logs` / `team_activity_logs` are never
-// written to by the backend, so they would return empty even where a route exists.
+// The Sold Products tab is LIVE: it loads from GET /admin/reports/sold-products via
+// src/services/reports.js (see SoldProductsReport.vue). The remaining five tabs are
+// session-only mock data: they have no production endpoint, and `visitor_logs` /
+// `team_activity_logs` are never written to by the backend, so they would return
+// empty even where a route exists.
 // See docs/superpowers/specs/2026-08-09-reports-page-redesign-design.md for the
 // audit and the decision to ship on mock data.
 //

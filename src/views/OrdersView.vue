@@ -43,15 +43,15 @@ onMounted(() => {
 onBeforeUnmount(() => clearTimeout(highlightTimer))
 
 // Customer orders are always scoped to one of four calendar periods — there is
-// no unscoped "all dates" view. Daily is the default because the page exists to
-// answer "what came in today"; widen to Yearly to reach older orders.
+// no unscoped "all dates" view. Yearly is the default so the list opens with the
+// full year's orders in view; narrow to Daily to answer "what came in today".
 const PERIODS = [
   { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
   { value: 'monthly', label: 'Monthly' },
   { value: 'yearly', label: 'Yearly' },
 ]
-const DEFAULT_PERIOD = 'daily'
+const DEFAULT_PERIOD = 'yearly'
 
 const activeTab = ref('all')
 const search = ref('')

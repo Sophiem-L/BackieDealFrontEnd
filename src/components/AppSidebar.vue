@@ -124,6 +124,11 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
                   <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M4 4v4h4" stroke-linecap="round" stroke-linejoin="round" />
                   <path d="M12 8v4l3 2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
+                <!-- Settings -->
+                <svg v-else-if="item.icon === 'settings'" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" />
+                  <path d="m19.4 15 .1.1a1.8 1.8 0 0 1-2.5 2.5l-.1-.1a1.8 1.8 0 0 0-3.1 1.3v.2a1.8 1.8 0 0 1-3.6 0v-.2a1.8 1.8 0 0 0-3.1-1.3l-.1.1a1.8 1.8 0 0 1-2.5-2.5l.1-.1a1.8 1.8 0 0 0-1.3-3.1h-.2a1.8 1.8 0 0 1 0-3.6h.2a1.8 1.8 0 0 0 1.3-3.1l-.1-.1a1.8 1.8 0 0 1 2.5-2.5l.1.1a1.8 1.8 0 0 0 3.1-1.3v-.2a1.8 1.8 0 0 1 3.6 0v.2a1.8 1.8 0 0 0 3.1 1.3l.1-.1a1.8 1.8 0 0 1 2.5 2.5l-.1.1a1.8 1.8 0 0 0 1.3 3.1h.2a1.8 1.8 0 0 1 0 3.6h-.2a1.8 1.8 0 0 0-1.3 3.1Z" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
               </span>
               <span class="nav__label">{{ item.label }}</span>
               <span v-if="item.badge" class="nav__badge">{{ item.badge }}</span>

@@ -3,8 +3,7 @@
  *
  * Deliberately free of Vue: the SKU and slug rules live here because the API
  * punishes breaking them with a raw 500 rather than a 422, so they need to be
- * unit-testable on their own. See
- * docs/superpowers/specs/2026-08-06-product-variant-editor-design.md.
+ * unit-testable on their own.
  */
 
 // Mirrors the API's `variants.*.sku` regex.
@@ -45,61 +44,66 @@ function usableAxes(axes) {
 
 /**
  * Cartesian product of the axes. Each combination is an ordered list of
- * `{ name, value }`, and the LAST axis varies fastest — so Color × Size reads
- * Red/S, Red/M, Blue/S, Blue/M, which is the order admins expect in the table.
+ * `{ name, value }`, and the LAST axis varies fastest.
  */
 export function cartesian(axes) {
   const usable = usableAxes(axes)
   if (!usable.length) return []
 
   return usable.reduce(
-    (combos, axis) => combos.flatMap((combo) => axis.values.map((value) => [...combo, { name: axis.name, value }])),
+    (combos, axis) =>
+      combos.flatMap((combo) => axis.values.map((value) => [...combo, { name: axis.name, value }])),
     [[]],
   )
 }
 
-/** [{name:'Color',value:'Red'},{name:'Size',value:'S'}] -> "Red / S" */
+/** `[{name:'Color',value:'Red'},{name:'Size',value:'S'}]` -> "Red / S" */
 export function makeVariantName(combo) {
   return (combo ?? []).map((part) => part.value).join(' / ')
 }
 
 /** Base SKU + axis values, e.g. "NV-RTX4090-RED-S". */
 export function makeVariantSku(baseSku, combo) {
-  return [skuPart(baseSku), ...(combo ?? []).map((part) => skuPart(part.value))].filter(Boolean).join('-')
+  return [skuPart(baseSku), ...(combo ?? []).map((part) => skuPart(part.value))]
+    .filter(Boolean)
+    .join('-')
 }
 
 /**
  * Base SKU + axis values, e.g. "nv-rtx4090-red-s".
  *
- * Seeding the slug with the base SKU is not cosmetic: `product_variants.slug`
- * carries a GLOBAL unique index, and the API derives the slug from the variant
- * name when we omit it. Two products each having a "Red / S" variant would both
- * want slug "red-s" and the second insert would 500. Always send this.
+ * `product_variants.slug` carries a GLOBAL unique index and the API derives it
+ * from the variant name when omitted, so two products each with a "Red / S"
+ * variant would collide. Seeding it from the base SKU avoids that - always send.
  */
 export function makeVariantSlug(baseSku, combo) {
-  return [slugifyPart(baseSku), ...(combo ?? []).map((part) => slugifyPart(part.value))].filter(Boolean).join('-')
+  return [slugifyPart(baseSku), ...(combo ?? []).map((part) => slugifyPart(part.value))]
+    .filter(Boolean)
+    .join('-')
 }
 
 // Unit separator: safe inside a tuple key because axis values are trimmed text.
-const TUPLE_SEP = ''
+const TUPLE_SEP = '␟'
 
 /**
- * A row's identity for carry-over purposes: its ordered axis VALUES.
- *
- * Keyed on values rather than `axis=value` pairs on purpose. Rows are rebuilt on
- * every keystroke, so renaming an axis from "Color" to "Colour" must not look
- * like a different row and discard the prices already entered.
+ * A row's identity for carry-over purposes: its ordered axis VALUES. Keyed on
+ * values rather than `axis=value` pairs so renaming an axis does not discard
+ * the prices already entered against its rows.
  */
 export function valueTuple(values) {
   return (values ?? []).join(TUPLE_SEP)
 }
 
-function blankRow() {
+export function blankRow() {
   return {
     name: '',
     sku: '',
+    barcode: '',
+    // "Price" is what the customer pays. "Compare-at" is the higher original
+    // price shown struck through - see toApiVariants for how the two map onto
+    // the API's price / sale_price columns.
     price: '',
-    salePrice: '',
+    compareAt: '',
     costPrice: '',
     stock: 0,
     minStockAlert: 5,
@@ -109,7 +113,7 @@ function blankRow() {
     isDefault: false,
     isActive: true,
     // Set once the admin edits the SKU by hand, which stops it tracking the
-    // product's base SKU. Never sent to the API.
+    // generated base SKU. Never sent to the API.
     skuTouched: false,
   }
 }
@@ -130,12 +134,9 @@ export function normalizeDefault(rows) {
 
 /**
  * Rebuild the row list from the axes, carrying over anything the admin already
- * typed.
- *
- * Called on every axis edit, so carry-over has to be generous. A prior row is
- * matched by its ordered axis values, and failing that by the longest prefix —
- * so adding a whole new option turns the "Red" row into "Red / S" and keeps its
- * price, rather than starting over.
+ * typed. A prior row is matched by its ordered axis values, and failing that by
+ * the longest prefix - so adding a whole new option turns the "Red" row into
+ * "Red / S" and keeps its price rather than starting over.
  */
 export function buildVariants(axes, baseSku, existingRows = []) {
   const previous = new Map()
@@ -145,7 +146,6 @@ export function buildVariants(axes, baseSku, existingRows = []) {
 
   function findPrior(combo) {
     const values = combo.map((part) => part.value)
-    // Longest match first: exact tuple, then progressively shorter prefixes.
     for (let length = values.length; length > 0; length -= 1) {
       const prior = previous.get(valueTuple(values.slice(0, length)))
       if (prior) return prior
@@ -205,11 +205,9 @@ export function validateVariants(rows) {
       return
     }
 
-    // Case-insensitive: the DB unique index would reject these as duplicates
-    // too, but as a 500 rather than a readable error.
     const key = sku.toLowerCase()
     if (seen.has(key)) {
-      errors[index] = `Duplicate SKU — already used by variant ${seen.get(key) + 1}.`
+      errors[index] = `Duplicate SKU - already used by variant ${seen.get(key) + 1}.`
       return
     }
     seen.set(key, index)
@@ -219,11 +217,8 @@ export function validateVariants(rows) {
 }
 
 /**
- * Axis-level conflicts, surfaced above the table rather than per row.
- *
- * Only genuine conflicts belong here. An option with no values yet is merely
- * unfinished — `cartesian` ignores it, and the editor nudges the admin toward
- * the next step instead of colouring normal typing as an error.
+ * Axis-level conflicts, surfaced above the table rather than per row. An option
+ * with no values yet is merely unfinished, not a conflict.
  */
 export function validateAxes(axes) {
   const problems = []
@@ -261,35 +256,47 @@ function toIntOrNull(value) {
 /**
  * Map editor rows onto the nested `variants[]` contract.
  *
- * `in_stock` is intentionally absent — the controller recomputes it from
- * `stock_quantity`, so sending it would just be a second source of truth.
+ * `in_stock` is intentionally absent - the controller recomputes it from
+ * `stock_quantity`.
  */
 export function toApiVariants(rows) {
-  return rows.map((row, index) => ({
-    name: String(row.name ?? '').trim(),
-    slug: row.slug || slugifyPart(row.name),
-    sku: String(row.sku ?? '').trim(),
-    price: toNumberOrNull(row.price),
-    sale_price: toNumberOrNull(row.salePrice),
-    cost_price: toNumberOrNull(row.costPrice),
-    stock_quantity: toIntOrNull(row.stock) ?? 0,
-    min_stock_alert: toIntOrNull(row.minStockAlert) ?? 0,
-    // Only a stored URL is worth sending; a blob: preview would not resolve for
-    // anyone else, and the column caps at 255 characters.
-    image: row.image && !row.image.startsWith('blob:') ? row.image.slice(0, 255) : null,
-    attributes: row.attributes ?? {},
-    is_default: Boolean(row.isDefault),
-    is_active: Boolean(row.isActive),
-    sort_order: index,
-  }))
+  return rows.map((row, index) => {
+    const enteredPrice = toNumberOrNull(row.price)
+    const compareAt = toNumberOrNull(row.compareAt)
+
+    // Shopify semantics: the customer pays "Price"; "Compare-at" is the higher
+    // original shown struck through. The API keeps the higher value in `price`
+    // and the payable one in `sale_price` (its check is sale_price <= price), so
+    // a compare-at swaps the two.
+    const price = compareAt != null ? compareAt : enteredPrice
+    const salePrice = compareAt != null ? enteredPrice : null
+
+    const barcode = String(row.barcode ?? '').trim()
+
+    return {
+      name: String(row.name ?? '').trim(),
+      slug: row.slug || slugifyPart(row.sku) || slugifyPart(row.name),
+      sku: String(row.sku ?? '').trim(),
+      barcode: barcode ? barcode.slice(0, 64) : null,
+      price,
+      sale_price: salePrice,
+      cost_price: toNumberOrNull(row.costPrice),
+      stock_quantity: toIntOrNull(row.stock) ?? 0,
+      min_stock_alert: toIntOrNull(row.minStockAlert) ?? 0,
+      // Only a stored URL is worth sending; a blob: preview would not resolve for
+      // anyone else, and the column caps at 255 characters.
+      image: row.image && !row.image.startsWith('blob:') ? row.image.slice(0, 255) : null,
+      attributes: row.attributes ?? {},
+      is_default: Boolean(row.isDefault),
+      is_active: Boolean(row.isActive),
+      sort_order: index,
+    }
+  })
 }
 
 /**
- * Option names in the order the rows carry them.
- *
- * Read off the rows rather than the axis builder so the grouped table works on
- * the edit page too, where variants are loaded from the API and there is no
- * builder to consult.
+ * Option names in the order the rows carry them. Read off the rows rather than
+ * the axis builder so the grouped table works on the edit page too.
  */
 export function deriveAxisNames(rows = []) {
   const names = []
@@ -303,11 +310,8 @@ export function deriveAxisNames(rows = []) {
 
 /**
  * Nest the flat row list under one option's values, the way Shopify's variant
- * table groups by Color.
- *
- * Rows stay flat in form state — that is the shape the API wants — so a group
- * carries each row's index alongside it, letting the editor patch the original
- * array without rebuilding it.
+ * table groups by Color. Each group carries every row's index alongside it so
+ * the editor can patch the original array without rebuilding it.
  */
 export function groupVariants(rows = [], axisName = '') {
   if (!axisName) return []
@@ -334,7 +338,7 @@ export function childLabel(row, axisName = '') {
   return rest.length ? rest.join(' / ') : row.name || ''
 }
 
-/** Total stock across a group, shown on its summary row. */
+/** Total stock across a group. */
 export function sumStock(items = []) {
   return items.reduce((total, { row }) => {
     const n = Number(String(row.stock ?? '').trim())
@@ -344,9 +348,7 @@ export function sumStock(items = []) {
 
 /**
  * The value a group's rows agree on for `field`, or `null` when they differ.
- *
- * Null and '' are deliberately distinct: rows that are all blank DO agree, and
- * must not be labelled "Mixed" — only genuinely differing rows get that.
+ * Null and '' are distinct: rows that are all blank DO agree.
  */
 export function sharedFieldValue(items = [], field) {
   if (!items.length) return ''
@@ -355,12 +357,9 @@ export function sharedFieldValue(items = [], field) {
 }
 
 /**
- * Distinct images available to reuse across rows, newest-seeded first.
- *
- * The API has no reachable product media collection, so the "library" a row can
- * pick from is just whatever URLs this form already knows about: the product
- * thumbnail plus anything uploaded for another row. Assigning one photo to every
- * size of a colour is then a matter of reusing the same string.
+ * Distinct images available to reuse across rows, newest-seeded first. The API
+ * has no reachable product media collection, so the "library" a row can pick
+ * from is just whatever URLs this form already knows about.
  */
 export function collectImagePool(rows = [], seeds = []) {
   const pool = []
@@ -378,26 +377,55 @@ export function collectImagePool(rows = [], seeds = []) {
 /**
  * Map a variant off `GET /admin/products/{uuid}` into an editor row.
  *
- * Every field `toApiVariants` sends back must be read here. `min_stock_alert`
+ * Every field `toApiVariants` sends must be read back here. `min_stock_alert`
  * and `stock_quantity` especially: those are sent as `?? 0` rather than null,
- * so the server's null-stripping filter would NOT protect them — a field missed
- * here is silently zeroed on the next save.
+ * so a field missed here is silently zeroed on the next save.
  */
 export function fromApiVariant(variant) {
+  const attributes =
+    variant?.attributes && !Array.isArray(variant.attributes) ? variant.attributes : {}
+
+  // Inverse of the price/sale_price mapping in toApiVariants: a stored
+  // sale_price means the customer pays that and `price` is the compare-at.
+  const hasSale = variant?.sale_price != null && variant?.sale_price !== ''
+  const price = hasSale ? variant.sale_price : (variant?.price ?? '')
+  const compareAt = hasSale ? (variant?.price ?? '') : ''
+
   return {
     name: variant?.name ?? '',
     sku: variant?.sku ?? '',
     slug: variant?.slug ?? '',
-    price: variant?.price ?? '',
-    salePrice: variant?.sale_price ?? '',
+    barcode: variant?.barcode ?? '',
+    price,
+    compareAt,
     costPrice: variant?.cost_price ?? '',
     stock: variant?.stock_quantity ?? 0,
     minStockAlert: variant?.min_stock_alert ?? 0,
     image: variant?.image ?? '',
-    // An existing variant's SKU is authoritative — never re-derive it.
+    // An existing variant's SKU is authoritative - never re-derive it.
     skuTouched: true,
-    attributes: variant?.attributes && !Array.isArray(variant.attributes) ? variant.attributes : {},
+    attributes,
     isDefault: Boolean(variant?.is_default),
     isActive: Boolean(variant?.is_active),
   }
+}
+
+/**
+ * The price to carry up to the product row, which the API still requires even
+ * though pricing now lives on the variants. The default variant's payable price
+ * wins; falling back to the first variant, then to 0.
+ */
+export function deriveProductPrice(rows = []) {
+  if (!rows.length) return 0
+  const winner = rows.find((row) => row.isDefault) ?? rows[0]
+  const n = Number(String(winner.price ?? '').replace(/,/g, '').trim())
+  return Number.isFinite(n) ? n : 0
+}
+
+/** Sum of every variant's stock, for the product-level `stock_quantity`. */
+export function sumVariantStock(rows = []) {
+  return rows.reduce((total, row) => {
+    const n = Number(String(row.stock ?? '').trim())
+    return total + (Number.isFinite(n) ? n : 0)
+  }, 0)
 }

@@ -1,47 +1,212 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { newsArticles } from '@/data/news'
+import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
-// This screen still reads mock data, but its create/edit/delete controls
-// are gated on the real permissions the API reports.
 const auth = useAuthStore()
+
+// News articles are `content_items` rows of type `news`; the Pages screen is the
+// same table with type `page`. Every request here carries the filter, so the two
+// screens never show each other's rows.
+const TYPE = 'news'
+
+// GET /admin/content returns { items, pagination } and honours ?page and
+// ?per_page. The list pages server-side rather than pulling every row.
+const PER_PAGE = 15
 
 const statusLabels = {
   published: 'Published',
-  scheduled: 'Scheduled',
   draft: 'Draft',
+  archived: 'Archived',
 }
 
 const statusFilter = ref('all')
 const statusFilters = [
   { value: 'all', label: 'All Articles' },
   { value: 'published', label: 'Published' },
-  { value: 'scheduled', label: 'Scheduled' },
   { value: 'draft', label: 'Draft' },
+  { value: 'archived', label: 'Archived' },
 ]
 
-const filtered = computed(() =>
-  statusFilter.value === 'all'
-    ? newsArticles
-    : newsArticles.filter((a) => a.status === statusFilter.value),
-)
+const articles = ref([])
+const loading = ref(false)
+const error = ref('')
+// Row actions report separately from the load: a failed delete must not blank
+// out the list the user is looking at.
+const actionError = ref('')
+const busyId = ref(null)
+
+// Server-side paging state, fed by the `pagination` block of each response.
+const page = ref(1)
+const lastPage = ref(1)
+const total = ref(0)
+
+function formatDate(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// The list shows the opening of the body as a stand-in for a summary; the API
+// has no excerpt column. Collapsing whitespace keeps a formatted body on one line.
+function excerpt(body) {
+  const text = String(body ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return 'No content yet.'
+  return text.length > 180 ? `${text.slice(0, 180)}…` : text
+}
+
+// A row can be `published` with no published_at: saving the form with that
+// status stores the status only — the publish endpoint is what stamps the date.
+function dateline(row) {
+  if (row.status === 'published' && row.published_at) {
+    return `Published ${formatDate(row.published_at)}`
+  }
+  return `Created ${formatDate(row.created_at)}`
+}
+
+function mapArticle(row) {
+  return {
+    id: row.id,
+    title: row.title ?? `Article ${row.id}`,
+    excerpt: excerpt(row.body),
+    category: row.category || 'Uncategorised',
+    image: row.image_url || '',
+    status: row.status ?? 'draft',
+    author: row.author?.name ?? 'Unknown',
+    dateline: dateline(row),
+  }
+}
+
+function buildQuery() {
+  const params = new URLSearchParams({
+    type: TYPE,
+    page: String(page.value),
+    per_page: String(PER_PAGE),
+  })
+  if (statusFilter.value !== 'all') params.set('status', statusFilter.value)
+  return params.toString()
+}
+
+async function loadArticles() {
+  loading.value = true
+  error.value = ''
+  actionError.value = ''
+  try {
+    const response = await apiFetch(`/admin/content?${buildQuery()}`, {
+      token: auth.accessToken,
+    })
+    // The envelope wraps { items, pagination }; tolerate a bare array too in
+    // case an older backend passes the resource collection straight through.
+    const payload = response?.data
+    const rows = Array.isArray(payload) ? payload : (payload?.items ?? [])
+    const pagination = Array.isArray(payload) ? {} : (payload?.pagination ?? {})
+
+    articles.value = rows.filter((row) => row?.id != null).map(mapArticle)
+    total.value = pagination.total ?? articles.value.length
+    lastPage.value = Math.max(1, pagination.last_page ?? 1)
+
+    // A stale page number (last row on the page just deleted, or a filter that
+    // shrank the set) can land past the end — pull back and refetch.
+    if (page.value > lastPage.value) {
+      page.value = lastPage.value
+    }
+  } catch (err) {
+    error.value = err.message || 'Unable to load articles. Please try again.'
+    articles.value = []
+    total.value = 0
+    lastPage.value = 1
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadArticles)
+watch(page, loadArticles)
+
+// Changing the filter restarts from page 1. Reload directly only when already
+// on page 1, otherwise the page watcher does it (avoids a double fetch).
+watch(statusFilter, () => {
+  if (page.value !== 1) {
+    page.value = 1
+  } else {
+    loadArticles()
+  }
+})
+
+// The list is already the filtered set — the server applied `status`.
+const filtered = computed(() => articles.value)
+
+const rangeStart = computed(() => (total.value === 0 ? 0 : (page.value - 1) * PER_PAGE + 1))
+const rangeEnd = computed(() => (page.value - 1) * PER_PAGE + articles.value.length)
+
+function prevPage() {
+  if (page.value > 1) page.value -= 1
+}
+
+function nextPage() {
+  if (page.value < lastPage.value) page.value += 1
+}
+
+function statusLabel(value) {
+  return statusLabels[value] ?? value
+}
 
 function addArticle() {
-  router.push('/news/new')
+  router.push({ name: 'news-create' })
 }
 
 function editArticle(article) {
-  router.push(`/news/${article.id}/edit`)
+  router.push({ name: 'news-edit', params: { id: article.id } })
 }
 
-function deleteArticle(article) {
-  // TODO: confirm + delete `article` via the news API.
-  void article
+// publish and archive are dedicated endpoints rather than a status PATCH:
+// publish also stamps published_at server-side.
+async function setStatus(article, action) {
+  actionError.value = ''
+  busyId.value = article.id
+  try {
+    const response = await apiFetch(`/admin/content/${article.id}/${action}`, {
+      method: 'POST',
+      token: auth.accessToken,
+    })
+    const updated = response?.data
+    // A status change can move the row out of the active filter, so when one is
+    // set the list is refetched rather than patched in place.
+    if (statusFilter.value === 'all' && updated?.id != null) {
+      articles.value = articles.value.map((row) =>
+        row.id === updated.id ? mapArticle(updated) : row,
+      )
+    } else {
+      await loadArticles()
+    }
+  } catch (err) {
+    actionError.value = err.message || `Unable to ${action} "${article.title}".`
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function deleteArticle(article) {
+  if (!window.confirm(`Delete article "${article.title}"? This action cannot be undone.`)) return
+  actionError.value = ''
+  busyId.value = article.id
+  try {
+    await apiFetch(`/admin/content/${article.id}`, { method: 'DELETE', token: auth.accessToken })
+    // Refetch so the row that slides up from the next page fills the gap and the
+    // total/'`last_page`' stay honest.
+    await loadArticles()
+  } catch (err) {
+    actionError.value = err.message || `Unable to delete "${article.title}".`
+  } finally {
+    busyId.value = null
+  }
 }
 </script>
 
@@ -53,7 +218,7 @@ function deleteArticle(article) {
       <!-- Section heading + primary action -->
       <section class="head">
         <div class="head__text">
-          <h2 class="head__title">News & Articles</h2>
+          <h2 class="head__title">News &amp; Articles</h2>
           <p class="head__subtitle">Publish updates, guides and announcements for your storefront.</p>
         </div>
 
@@ -81,65 +246,145 @@ function deleteArticle(article) {
         </button>
       </section>
 
+      <p v-if="actionError" class="alert" role="alert">{{ actionError }}</p>
+
       <!-- Articles list -->
       <section class="articles">
-        <article v-for="item in filtered" :key="item.id" class="news">
-          <div class="news__body">
-            <div class="news__meta">
-              <span class="badge" :class="`badge--${item.status}`">
-                {{ statusLabels[item.status] }}
-              </span>
-              <span class="news__category">{{ item.category }}</span>
+        <p v-if="loading" class="articles__empty">Loading articles…</p>
+        <p v-else-if="error" class="alert" role="alert">{{ error }}</p>
+
+        <template v-else>
+          <article v-for="item in filtered" :key="item.id" class="news">
+            <div
+              class="news__cover"
+              :class="{ 'news__cover--empty': !item.image }"
+              :style="item.image ? { backgroundImage: `url(${item.image})` } : null"
+            >
+              <svg v-if="!item.image" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="m3 15 5-4 4 3 4-4 5 5" stroke-linecap="round" stroke-linejoin="round" />
+                <circle cx="9" cy="9" r="1.5" />
+              </svg>
             </div>
-            <h3 class="news__title">{{ item.title }}</h3>
-            <p class="news__excerpt">{{ item.excerpt }}</p>
-            <div class="news__footer">
-              <span class="news__byline">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle cx="12" cy="8" r="3.5" />
-                  <path d="M5 20a7 7 0 0 1 14 0" stroke-linecap="round" />
+
+            <div class="news__body">
+              <div class="news__meta">
+                <span class="badge" :class="`badge--${item.status}`">
+                  {{ statusLabel(item.status) }}
+                </span>
+                <span class="news__category">{{ item.category }}</span>
+              </div>
+              <h3 class="news__title">{{ item.title }}</h3>
+              <p class="news__excerpt">{{ item.excerpt }}</p>
+              <div class="news__footer">
+                <span class="news__byline">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="8" r="3.5" />
+                    <path d="M5 20a7 7 0 0 1 14 0" stroke-linecap="round" />
+                  </svg>
+                  {{ item.author }}
+                </span>
+                <span class="news__dot" aria-hidden="true">·</span>
+                <span>{{ item.dateline }}</span>
+              </div>
+            </div>
+
+            <div class="news__actions">
+              <button
+                v-if="auth.hasPermission('content.update') && item.status !== 'published'"
+                type="button"
+                class="icon-btn icon-btn--ok"
+                :disabled="busyId === item.id"
+                :aria-label="`Publish ${item.title}`"
+                title="Publish"
+                @click="setStatus(item, 'publish')"
+              >
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
-                {{ item.author }}
-              </span>
-              <span class="news__dot" aria-hidden="true">·</span>
-              <span class="news__date">{{ item.date }}</span>
-              <span v-if="item.status === 'published'" class="news__dot" aria-hidden="true">·</span>
-              <span v-if="item.status === 'published'" class="news__views">
-                {{ item.views.toLocaleString() }} views
-              </span>
+              </button>
+
+              <button
+                v-if="auth.hasPermission('content.update') && item.status !== 'archived'"
+                type="button"
+                class="icon-btn"
+                :disabled="busyId === item.id"
+                :aria-label="`Archive ${item.title}`"
+                title="Archive"
+                @click="setStatus(item, 'archive')"
+              >
+                <svg viewBox="0 0 24 24" fill="none">
+                  <rect x="3" y="4" width="18" height="4" rx="1" />
+                  <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" stroke-linejoin="round" />
+                  <path d="M10 12h4" stroke-linecap="round" />
+                </svg>
+              </button>
+
+              <button
+                v-if="auth.hasPermission('content.update')"
+                type="button"
+                class="icon-btn"
+                :aria-label="`Edit ${item.title}`"
+                title="Edit"
+                @click="editArticle(item)"
+              >
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M4 20h4l10-10-4-4L4 16v4Z" stroke-linejoin="round" />
+                  <path d="m13.5 6.5 4 4" stroke-linecap="round" />
+                </svg>
+              </button>
+
+              <button
+                v-if="auth.hasPermission('content.delete')"
+                type="button"
+                class="icon-btn icon-btn--danger"
+                :disabled="busyId === item.id"
+                :aria-label="`Delete ${item.title}`"
+                title="Delete"
+                @click="deleteArticle(item)"
+              >
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M10 11v6M14 11v6" stroke-linecap="round" />
+                </svg>
+              </button>
             </div>
-          </div>
+          </article>
 
-          <div class="news__actions">
-            <button
-              v-if="auth.hasPermission('content.update')"
-              type="button"
-              class="icon-btn"
-              :aria-label="`Edit ${item.title}`"
-              @click="editArticle(item)"
-            >
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M4 20h4l10-10-4-4L4 16v4Z" stroke-linejoin="round" />
-                <path d="m13.5 6.5 4 4" stroke-linecap="round" />
-              </svg>
-            </button>
+          <p v-if="filtered.length === 0" class="articles__empty">
+            {{
+              statusFilter === 'all'
+                ? 'No articles yet. Add one to get started.'
+                : 'No articles match this filter.'
+            }}
+          </p>
 
-            <button
-              v-if="auth.hasPermission('content.delete')"
-              type="button"
-              class="icon-btn icon-btn--danger"
-              :aria-label="`Delete ${item.title}`"
-              @click="deleteArticle(item)"
-            >
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M10 11v6M14 11v6" stroke-linecap="round" />
-              </svg>
-            </button>
-          </div>
-        </article>
-
-        <p v-if="filtered.length === 0" class="articles__empty">No articles match this filter.</p>
+          <!-- Pagination -->
+          <footer v-if="total > 0" class="pagination">
+            <p class="pagination__info">
+              Showing {{ rangeStart }}–{{ rangeEnd }} of {{ total.toLocaleString() }} articles
+            </p>
+            <div class="pagination__controls">
+              <button
+                type="button"
+                class="page-btn"
+                :disabled="page <= 1 || loading"
+                @click="prevPage"
+              >
+                Previous
+              </button>
+              <button type="button" class="page-btn page-btn--active">{{ page }}</button>
+              <button
+                type="button"
+                class="page-btn"
+                :disabled="page >= lastPage || loading"
+                @click="nextPage"
+              >
+                Next
+              </button>
+            </div>
+          </footer>
+        </template>
       </section>
     </div>
   </div>
@@ -210,6 +455,52 @@ function deleteArticle(article) {
   }
 }
 
+.alert {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.25rem;
+  flex-wrap: wrap;
+
+  &__info { margin: 0; font-size: 0.82rem; color: var(--text-subtle); }
+  &__controls { display: flex; gap: 0.4rem; }
+}
+
+.page-btn {
+  min-width: 36px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) { background: var(--surface-alt); }
+
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  &--active {
+    background: rgb(var(--accent-rgb));
+    border-color: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
+  }
+}
+
 /* Articles list */
 .articles {
   display: flex;
@@ -241,6 +532,30 @@ function deleteArticle(article) {
   &:hover {
     border-color: var(--border);
     box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
+  }
+
+  &__cover {
+    flex-shrink: 0;
+    width: 104px;
+    height: 78px;
+    border-radius: 10px;
+    background-color: var(--surface-alt);
+    background-size: cover;
+    background-position: center;
+    border: 1px solid var(--border-subtle);
+
+    &--empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      svg {
+        width: 24px;
+        height: 24px;
+        stroke: var(--text-faint);
+        stroke-width: 1.6;
+      }
+    }
   }
 
   &__body {
@@ -282,6 +597,7 @@ function deleteArticle(article) {
     margin-top: 0.7rem;
     font-size: 0.78rem;
     color: var(--text-subtle);
+    flex-wrap: wrap;
   }
 
   &__byline {
@@ -317,8 +633,8 @@ function deleteArticle(article) {
   white-space: nowrap;
 
   &--published { color: var(--success); background: var(--success-bg); }
-  &--scheduled { color: var(--info); background: var(--info-bg); }
   &--draft { color: var(--text-muted); background: var(--surface-track); }
+  &--archived { color: var(--accent-ink); background: rgb(var(--accent-rgb) / 0.18); }
 }
 
 .icon-btn {
@@ -337,11 +653,18 @@ function deleteArticle(article) {
 
   &:hover { background: var(--surface-alt); }
 
+  &:disabled { opacity: 0.55; cursor: not-allowed; }
+
   svg { width: 17px; height: 17px; stroke: currentColor; stroke-width: 1.7; }
+
+  &--ok {
+    color: var(--success);
+    &:hover:not(:disabled) { background: var(--success-bg); }
+  }
 
   &--danger {
     color: var(--danger);
-    &:hover { background: var(--danger-bg); border-color: var(--danger-border); }
+    &:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger-border); }
   }
 }
 </style>

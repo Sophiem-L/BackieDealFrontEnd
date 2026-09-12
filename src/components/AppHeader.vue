@@ -4,10 +4,12 @@ import { RouterLink } from 'vue-router'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
 import { userDisplayName, userRoleLabel, initialsFrom } from '@/lib/identity'
 
 const ui = useUiStore()
 const auth = useAuthStore()
+const notificationStore = useNotificationsStore()
 
 // Reusable top bar. Any page renders <AppHeader title="..." /> to get the
 // search field, notifications and the profile chip that links to /profile.
@@ -61,13 +63,13 @@ const initials = computed(() => initialsFrom(displayName.value) || '?')
 
       <ThemeToggle />
 
-      <button type="button" class="bell" aria-label="Notifications">
+      <RouterLink to="/notifications" class="bell" :aria-label="`Notifications${notificationStore.unreadCount ? `, ${notificationStore.unreadCount} unread` : ''}`">
         <svg viewBox="0 0 24 24" fill="none">
           <path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" stroke-linejoin="round" />
           <path d="M10 19a2 2 0 0 0 4 0" stroke-linecap="round" />
         </svg>
-        <span v-if="notifications" class="bell__dot" aria-hidden="true"></span>
-      </button>
+        <span v-if="notifications && notificationStore.unreadCount" class="bell__dot" aria-hidden="true"></span>
+      </RouterLink>
 
       <RouterLink to="/profile" class="profile" title="Account settings">
         <span class="profile__meta">

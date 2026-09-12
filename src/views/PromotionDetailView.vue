@@ -3,7 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { fetchPromotion } from '@/services/promotions'
+import PromotionCountdown from '@/components/promotions/PromotionCountdown.vue'
+import { useNow } from '@/lib/countdown'
+import { fetchPromotion, liveStatus } from '@/services/promotions'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -11,10 +13,18 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const promo = ref(null)
-const loading = ref(false)
+// Starts true: the first render happens before `onMounted` fires, and the detail
+// markup dereferences `promo`, so the loading branch has to own that first paint.
+const loading = ref(true)
 const error = ref('')
 
 const statusLabels = { active: 'Active', paused: 'Paused', expired: 'Expired' }
+
+const now = useNow()
+
+// A flash sale can lapse while this page is open, so the badge is read off the
+// clock rather than off the status the fetch happened to settle on.
+const status = computed(() => (promo.value ? liveStatus(promo.value, now.value) : 'active'))
 
 const usageText = computed(() => {
   if (!promo.value) return ''
@@ -62,8 +72,8 @@ onMounted(loadPromotion)
       </div>
 
       <!-- Not found -->
-      <section v-if="loading || error" class="empty">
-        <p>{{ loading ? 'Loading promotion…' : error }}</p>
+      <section v-if="loading || error || !promo" class="empty">
+        <p>{{ loading ? 'Loading promotion…' : error || 'This promotion could not be found.' }}</p>
         <BaseButton variant="ghost" :to="{ name: 'promotions' }">Back to Promotions</BaseButton>
       </section>
 
@@ -72,7 +82,7 @@ onMounted(loadPromotion)
         <div class="col col--main">
           <!-- Banner hero -->
           <section class="hero" :style="{ background: promo.banner }">
-            <span class="hero__status" :class="`hero__status--${promo.status}`">{{ statusLabels[promo.status] }}</span>
+            <span class="hero__status" :class="`hero__status--${status}`">{{ statusLabels[status] }}</span>
             <h3 class="hero__name">{{ promo.name }}</h3>
             <div class="hero__tags">
               <span class="chip">
@@ -88,6 +98,7 @@ onMounted(loadPromotion)
                 </svg>
                 {{ promo.period }}
               </span>
+              <PromotionCountdown v-if="promo.isFlash" :expires-at="promo.expiresAt" />
             </div>
           </section>
 
@@ -101,7 +112,7 @@ onMounted(loadPromotion)
               <div class="kv__row"><dt>Promotion Type</dt><dd>{{ promo.benefitType }}</dd></div>
               <div class="kv__row"><dt>Benefit</dt><dd class="kv__benefit">{{ promo.benefit }}</dd></div>
               <div class="kv__row"><dt>Active Period</dt><dd>{{ promo.period }}</dd></div>
-              <div class="kv__row"><dt>Status</dt><dd>{{ statusLabels[promo.status] }}</dd></div>
+              <div class="kv__row"><dt>Status</dt><dd>{{ statusLabels[status] }}</dd></div>
             </dl>
 
             <template v-if="promo.description">

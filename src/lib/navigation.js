@@ -51,6 +51,10 @@ export const NAV_SECTIONS = [
       { label: 'Logs', icon: 'logs', to: '/logs', permission: 'logs.view' },
     ],
   },
+  {
+    title: 'System',
+    items: [{ label: 'Settings', icon: 'settings', to: '/settings', permission: null }],
+  },
 ]
 
 // Items the caller may not see are removed; a section left with no items is
