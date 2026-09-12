@@ -3,8 +3,11 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { apiFetch } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 
 const form = ref({
   name: '',
@@ -19,16 +22,27 @@ function goBack() {
   router.push('/roles')
 }
 
-function handleSave() {
+async function handleSave() {
   loading.value = true
   errors.value = {}
 
-  // Simulate submission for static layout (ready for backend integration later)
-  setTimeout(() => {
-    loading.value = false
-    console.log('Role created:', form.value)
+  try {
+    await apiFetch('/admin/roles', {
+      method: 'POST',
+      token: auth.accessToken,
+      body: {
+        name: form.value.name,
+        guard_name: 'api', // Matches default backend guard name
+        permissions: []    // Optional: add initial permission IDs or names if selected
+      },
+    })
     router.push('/roles')
-  }, 600)
+  } catch (err) {
+    const fieldError = Object.values(err.errors ?? {})[0]
+    errors.value.general = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to create role.'
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -44,6 +58,8 @@ function handleSave() {
           <p class="head__subtitle">Define the name, description, and status for this new administrative role.</p>
         </div>
       </section>
+
+      <p v-if="errors.general" class="alert">{{ errors.general }}</p>
 
       <!-- Form Card -->
       <section class="form-card">
@@ -111,7 +127,7 @@ $divider: #eef0f3;
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
-    width: 100%; /* Expanded to full screen width */
+    width: 100%;
     box-sizing: border-box;
   }
 }
@@ -135,6 +151,16 @@ $divider: #eef0f3;
     font-size: 0.85rem;
     color: $muted;
   }
+}
+
+.alert {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--danger, #ef4444);
+  background: var(--danger-bg, #fee2e2);
+  border: 1px solid var(--danger-border, #fca5a5);
+  border-radius: 10px;
 }
 
 .form-card {
