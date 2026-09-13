@@ -40,7 +40,7 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 
-const order = ref({ id: '—', status: '', createdAt: '—', updatedAgo: '—' })
+const order = ref({ id: '—', status: '', deliveryStatus: '', createdAt: '—', updatedAgo: '—' })
 const items = ref([])
 const totals = ref({ subtotal: '—', discount: '—', tax: '—', shipping: '—', total: '—' })
 // The coupon / promotion applied at checkout, or null. `code` is always set
@@ -109,6 +109,7 @@ function applyOrder(data) {
     id: data?.order_number || (data?.id ? `#${String(data.id).slice(0, 8).toUpperCase()}` : '—'),
     uuid: data?.id ?? '',
     status: data?.status ?? '',
+    deliveryStatus: data?.tracking?.status ?? 'pending',
     createdAt: createdValid ? dateTimeFormat.format(created) : '—',
     updatedAgo: data?.updated_at ? relativeTime(data.updated_at) : '—',
   }
@@ -534,6 +535,7 @@ async function editOrder() {
             </header>
             <dl class="kv">
               <div class="kv__row"><dt>Method</dt><dd>{{ payment.method }}</dd></div>
+              <div class="kv__row"><dt>Delivery</dt><dd>{{ statusLabel(order.deliveryStatus || 'pending') }}</dd></div>
               <div class="kv__row">
                 <dt>Status</dt>
                 <dd :class="payment.isPaid ? 'kv__ok' : 'kv__pending'">{{ payment.status }}</dd>

@@ -331,13 +331,12 @@ function toggleAll() {
 }
 
 // Actions
-// The detail/edit route carries the uuid: Product::getRouteKeyName() is `uuid`,
-// so the API resolves /admin/products/{uuid}, not the numeric id.
+// Product id is a UUID, so the same value is used for detail and edit routes.
 function viewProduct(product) {
-  router.push({ name: 'product-edit', params: { id: product.uuid }, query: { view: '1' } })
+  router.push({ name: 'product-edit', params: { id: product.id }, query: { view: '1' } })
 }
 function editProduct(product) {
-  router.push({ name: 'product-edit', params: { id: product.uuid } })
+  router.push({ name: 'product-edit', params: { id: product.id } })
 }
 // Fields carried over to a copy. `category_id`, `name`, `sku`, `slug` and
 // `price` are set explicitly; the rest ride along when present.
@@ -401,7 +400,7 @@ async function duplicateProduct(product) {
   if (duplicatingId.value) return
   duplicatingId.value = product.id
   try {
-    const detail = (await apiFetch(`/admin/products/${product.uuid}`, {
+    const detail = (await apiFetch(`/admin/products/${product.id}`, {
       token: auth.accessToken,
     }))?.data
     if (!detail?.category_id) throw new Error('This product is missing a category and cannot be copied.')
@@ -432,8 +431,8 @@ async function duplicateProduct(product) {
 async function deleteProduct(product) {
   if (!window.confirm(`Delete "${product.name}"? This action cannot be undone.`)) return
   try {
-    // Route-model binding resolves by uuid (Product::getRouteKeyName()).
-    await apiFetch(`/admin/products/${product.uuid}`, {
+    // Product route binding resolves by the UUID-valued id.
+    await apiFetch(`/admin/products/${product.id}`, {
       method: 'DELETE',
       token: auth.accessToken,
     })

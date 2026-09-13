@@ -20,9 +20,9 @@ const router = useRouter()
 const auth = useAuthStore()
 
 // Edit mode when the route carries a product key; otherwise we're creating.
-// The param holds the product `uuid` — the API's route key.
+// The param holds the product `id` (UUID) — the API's route key.
 const isEdit = computed(() => Boolean(route.params.id))
-const productUuid = computed(() => route.params.id)
+const productId = computed(() => route.params.id)
 // Read-only view mode when opened with ?view=1 (the list's View icon).
 const isView = computed(() => Boolean(route.query.view))
 
@@ -110,7 +110,7 @@ async function loadProduct() {
   loading.value = true
   error.value = ''
   try {
-    const response = await apiFetch(`/admin/products/${productUuid.value}`, {
+    const response = await apiFetch(`/admin/products/${productId.value}`, {
       token: auth.accessToken,
     })
     const p = response?.data ?? {}
@@ -212,7 +212,7 @@ async function save() {
 
   try {
     if (isEdit.value) {
-      await apiFetch(`/admin/products/${productUuid.value}`, {
+      await apiFetch(`/admin/products/${productId.value}`, {
         method: 'PUT',
         body,
         token: auth.accessToken,

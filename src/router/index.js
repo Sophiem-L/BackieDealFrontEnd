@@ -222,6 +222,16 @@ const router = createRouter({
       component: () => import('@/views/RolesView.vue'),
     },
     {
+      path: '/roles/create',
+      name: 'roles.create',
+      component: () => import('@/views/RoleCreateView.vue'),
+    },
+    {
+      path: '/roles/:id/edit',
+      name: 'roles.edit',
+      component: () => import('@/views/RoleEditView.vue'),
+    },
+    {
       path: '/logs',
       name: 'logs',
       meta: { permission: 'logs.view' },

@@ -286,14 +286,14 @@ onBeforeUnmount(() => {
 })
 
 // NOTE: StockDetailView still renders from its own hardcoded records keyed by
-// 1..6, so it falls back to the first record whatever it is handed. The uuid is
-// what a wired-up detail page would need — it is the API's route key.
-function openItem(uuid) {
-  router.push({ name: 'stock-detail', params: { id: uuid } })
+// 1..6, so it falls back to the first record whatever it is handed. Product id
+// is the UUID route key used by the API.
+function openItem(id) {
+  router.push({ name: 'stock-detail', params: { id } })
 }
 
-function openAdjustment(uuid) {
-  router.push({ name: 'stock-adjustment-create', query: { product_id: uuid } })
+function openAdjustment(id) {
+  router.push({ name: 'stock-adjustment-create', query: { product_id: id } })
 }
 
 const brokenThumbs = ref(new Set())
@@ -476,7 +476,7 @@ function nextPage() {
               v-else
               :key="item.id"
               class="table__row"
-              @click="openItem(item.uuid)"
+              @click="openItem(item.id)"
             >
               <td>
                 <div class="product">
@@ -511,7 +511,7 @@ function nextPage() {
                   variant="outline"
                   size="sm"
                   title="Adjust stock"
-                  @click.stop="openAdjustment(item.uuid)"
+                  @click.stop="openAdjustment(item.id)"
                 >
                   <template #icon>
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
