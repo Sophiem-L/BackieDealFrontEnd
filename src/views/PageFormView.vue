@@ -34,8 +34,7 @@ const statuses = [
 // The scoped `.is-invalid` rule below only reaches native controls; the Select
 // trigger is a Tailwind-styled button, so its error state is expressed the same
 // way FORM_SELECT expresses its focus ring.
-const INVALID_TRIGGER =
-  'border-[var(--danger)] shadow-[0_0_0_3px_rgb(var(--danger-rgb)/0.14)]'
+const INVALID_TRIGGER = 'border-[var(--danger)] shadow-[0_0_0_3px_rgb(var(--danger-rgb)/0.14)]'
 
 const form = reactive({
   title: '',
@@ -91,9 +90,7 @@ async function loadPage() {
 
 onMounted(loadPage)
 
-const pageTitle = computed(() =>
-  isEdit.value ? `Edit Page: ${form.title || 'Page'}` : 'New Page',
-)
+const pageTitle = computed(() => (isEdit.value ? `Edit Page: ${form.title || 'Page'}` : 'New Page'))
 
 const canSave = computed(() => form.title.trim().length > 0 && !saving.value && !loading.value)
 
@@ -149,97 +146,99 @@ async function save() {
       <p v-if="error" class="alert" role="alert">{{ error }}</p>
       <p v-if="loading" class="loading">Loading page…</p>
 
-      <form v-else class="grid" @submit.prevent="save">
-        <!-- Main column -->
-        <div class="col col--main">
-          <section class="card">
-            <h3 class="card__title">Page Content</h3>
+      <form v-else @submit.prevent="save">
+        <div class="grid">
+          <!-- Main column -->
+          <div class="col col--main">
+            <section class="card">
+              <h3 class="card__title">Page Content</h3>
 
-            <div class="field">
-              <label for="title">Title</label>
-              <input
-                id="title"
-                v-model="form.title"
-                type="text"
-                maxlength="255"
-                placeholder="e.g. About Us"
-                :class="{ 'is-invalid': firstError('title') }"
-              />
-              <p v-if="firstError('title')" class="field__error">{{ firstError('title') }}</p>
-            </div>
+              <div class="field">
+                <label for="title">Title</label>
+                <input
+                  id="title"
+                  v-model="form.title"
+                  type="text"
+                  maxlength="255"
+                  placeholder="e.g. About Us"
+                  :class="{ 'is-invalid': firstError('title') }"
+                />
+                <p v-if="firstError('title')" class="field__error">{{ firstError('title') }}</p>
+              </div>
 
-            <div class="field">
-              <label for="body">Body</label>
-              <textarea
-                id="body"
-                v-model="form.body"
-                rows="18"
-                placeholder="The page content shown on your website…"
-                :class="{ 'is-invalid': firstError('body') }"
-              ></textarea>
-              <p v-if="firstError('body')" class="field__error">{{ firstError('body') }}</p>
-              <p class="field__hint">
-                Plain text. Whatever your website renders for this page is stored here as-is.
-              </p>
-            </div>
-          </section>
+              <div class="field">
+                <label for="body">Body</label>
+                <textarea
+                  id="body"
+                  v-model="form.body"
+                  rows="18"
+                  placeholder="The page content shown on your website…"
+                  :class="{ 'is-invalid': firstError('body') }"
+                ></textarea>
+                <p v-if="firstError('body')" class="field__error">{{ firstError('body') }}</p>
+                <p class="field__hint">
+                  Plain text. Whatever your website renders for this page is stored here as-is.
+                </p>
+              </div>
+            </section>
+          </div>
+
+          <!-- Side column -->
+          <div class="col col--side">
+            <section class="card">
+              <h3 class="card__title">Publishing</h3>
+
+              <div class="field">
+                <label for="status">Status</label>
+                <Select v-model="form.status">
+                  <!-- id keeps the <label for="status"> association: a <button>
+                       is a labelable element, so the label still focuses it. -->
+                  <SelectTrigger
+                    id="status"
+                    :class="[FORM_SELECT.trigger, firstError('status') && INVALID_TRIGGER]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent :class="FORM_SELECT.content">
+                    <SelectItem
+                      v-for="opt in statuses"
+                      :key="opt.value"
+                      :value="opt.value"
+                      :class="FORM_SELECT.item"
+                    >
+                      {{ opt.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p v-if="firstError('status')" class="field__error">{{ firstError('status') }}</p>
+              </div>
+
+              <div class="field">
+                <label for="published-at">Publish date</label>
+                <input
+                  id="published-at"
+                  v-model="form.publishedAt"
+                  type="datetime-local"
+                  :class="{ 'is-invalid': firstError('published_at') }"
+                />
+                <p v-if="firstError('published_at')" class="field__error">
+                  {{ firstError('published_at') }}
+                </p>
+                <p class="field__hint">
+                  Optional. Leave empty and publishing from the list stamps the date for you.
+                </p>
+              </div>
+            </section>
+          </div>
         </div>
 
-        <!-- Side column -->
-        <div class="col col--side">
-          <section class="card">
-            <h3 class="card__title">Publishing</h3>
-
-            <div class="field">
-              <label for="status">Status</label>
-              <Select v-model="form.status">
-                <!-- id keeps the <label for="status"> association: a <button>
-                     is a labelable element, so the label still focuses it. -->
-                <SelectTrigger
-                  id="status"
-                  :class="[FORM_SELECT.trigger, firstError('status') && INVALID_TRIGGER]"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent :class="FORM_SELECT.content">
-                  <SelectItem
-                    v-for="opt in statuses"
-                    :key="opt.value"
-                    :value="opt.value"
-                    :class="FORM_SELECT.item"
-                  >
-                    {{ opt.label }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="firstError('status')" class="field__error">{{ firstError('status') }}</p>
-            </div>
-
-            <div class="field">
-              <label for="published-at">Publish date</label>
-              <input
-                id="published-at"
-                v-model="form.publishedAt"
-                type="datetime-local"
-                :class="{ 'is-invalid': firstError('published_at') }"
-              />
-              <p v-if="firstError('published_at')" class="field__error">
-                {{ firstError('published_at') }}
-              </p>
-              <p class="field__hint">
-                Optional. Leave empty and publishing from the list stamps the date for you.
-              </p>
-            </div>
-          </section>
-
-          <div class="actions">
-            <BaseButton type="submit" variant="primary" block :disabled="!canSave">
-              {{ saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Page' }}
-            </BaseButton>
-            <BaseButton type="button" variant="ghost" block @click="router.push({ name: 'pages' })">
-              Cancel
-            </BaseButton>
-          </div>
+        <div class="form-footer">
+          <BaseButton type="button" variant="ghost" @click="router.push({ name: 'pages' })">
+            Cancel
+          </BaseButton>
+          <BaseButton type="submit" variant="primary" :disabled="!canSave">
+            {{ saving ? 'Saving…' : isEdit ? 'Update Page' : 'Create Page' }}
+          </BaseButton>
         </div>
       </form>
     </div>
@@ -247,7 +246,6 @@ async function save() {
 </template>
 
 <style scoped lang="scss">
-
 .page {
   display: flex;
   flex-direction: column;
@@ -275,9 +273,16 @@ async function save() {
     color: var(--text-subtle);
     text-decoration: none;
 
-    &:hover { color: var(--text-strong); }
+    &:hover {
+      color: var(--text-strong);
+    }
 
-    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
+    svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
   }
 }
 
@@ -340,7 +345,9 @@ async function save() {
   flex-direction: column;
   gap: 0.4rem;
 
-  & + & { margin-top: 1rem; }
+  & + & {
+    margin-top: 1rem;
+  }
 
   label {
     font-size: 0.8rem;
@@ -359,7 +366,9 @@ async function save() {
     border: 1px solid var(--border);
     border-radius: 10px;
     outline: none;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
 
     &:focus {
       border-color: rgb(var(--accent-rgb));
@@ -390,9 +399,11 @@ async function save() {
   }
 }
 
-.actions {
+.form-footer {
   display: flex;
-  flex-direction: column;
+  justify-content: flex-end;
   gap: 0.6rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-subtle);
 }
 </style>

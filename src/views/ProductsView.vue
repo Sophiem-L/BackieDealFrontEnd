@@ -122,7 +122,7 @@ function usableImage(value) {
 function mapProduct(item) {
   return {
     id: item.id,
-    uuid: item.uuid,
+    uuid: item.id,
     name: item.name,
     sku: item.sku,
     category: item.category?.name ?? '—',

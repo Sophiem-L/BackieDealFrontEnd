@@ -9,7 +9,7 @@
  *   rows cannot be removed - the API syncs variants by SKU and offers no delete.
  * - `view`: a plain read-only list.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import VariantAxisBuilder from './VariantAxisBuilder.vue'
 import VariantDetailPanel from './VariantDetailPanel.vue'
 import VariantImagePicker from './VariantImagePicker.vue'
@@ -139,7 +139,6 @@ watch(
 )
 
 const search = ref('')
-const searchOpen = ref(false)
 
 function matchesSearch(row) {
   const q = search.value.trim().toLowerCase()
@@ -150,11 +149,86 @@ function matchesSearch(row) {
   )
 }
 
+/* ------------------------------------------------------------------ filters */
+
+// One selected value per option (Size, Color, ...); '' means "any".
+const filters = reactive({})
+watch(
+  axisNames,
+  (names) => {
+    for (const name of names) if (!(name in filters)) filters[name] = ''
+    for (const key of Object.keys(filters)) if (!names.includes(key)) delete filters[key]
+  },
+  { immediate: true },
+)
+
+const activeFilterCount = computed(() => Object.values(filters).filter(Boolean).length)
+
+function axisValues(name) {
+  const seen = new Set()
+  for (const row of rows.value) {
+    const v = row.attributes?.[name]
+    if (v) seen.add(v)
+  }
+  return [...seen]
+}
+
+function matchesFilters(row) {
+  return axisNames.value.every((name) => !filters[name] || (row.attributes?.[name] ?? '') === filters[name])
+}
+
+function clearFilters() {
+  for (const name of axisNames.value) filters[name] = ''
+}
+
+function matches(row) {
+  return matchesSearch(row) && matchesFilters(row)
+}
+
+// The panel is teleported to <body> so it can't be clipped by the table's
+// `overflow: hidden`, so its position is computed from the button's rect
+// instead of relying on CSS anchoring.
+const filterOpen = ref(false)
+const toolsRef = ref(null)
+const filterBtnRef = ref(null)
+const filterPanelRef = ref(null)
+const filterPanelStyle = reactive({ top: '0px', left: '0px' })
+
+function positionFilterPanel() {
+  const btn = filterBtnRef.value
+  if (!btn) return
+  const rect = btn.getBoundingClientRect()
+  const panelWidth = 220
+  filterPanelStyle.top = `${rect.bottom + 6}px`
+  filterPanelStyle.left = `${Math.min(rect.left, window.innerWidth - panelWidth - 8)}px`
+}
+
+function toggleFilterPanel() {
+  filterOpen.value = !filterOpen.value
+  if (filterOpen.value) positionFilterPanel()
+}
+
+function onDocClick(event) {
+  if (!filterOpen.value) return
+  const inTools = toolsRef.value && toolsRef.value.contains(event.target)
+  const inPanel = filterPanelRef.value && filterPanelRef.value.contains(event.target)
+  if (!inTools && !inPanel) filterOpen.value = false
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onDocClick)
+  window.addEventListener('resize', positionFilterPanel)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocClick)
+  window.removeEventListener('resize', positionFilterPanel)
+})
+
 // Flat rows (single option or ungrouped), carrying their real index.
 const flatRows = computed(() =>
   rows.value
     .map((row, index) => ({ row, index }))
-    .filter(({ row }) => matchesSearch(row)),
+    .filter(({ row }) => matches(row)),
 )
 
 const groups = computed(() => {
@@ -162,7 +236,7 @@ const groups = computed(() => {
   return groupVariants(rows.value, groupBy.value)
     .map((group) => ({
       ...group,
-      items: group.items.filter(({ row }) => matchesSearch(row)),
+      items: group.items.filter(({ row }) => matches(row)),
     }))
     .filter((group) => group.items.length)
 })
@@ -378,32 +452,54 @@ const selectedPromotions = computed(() =>
     </p>
 
     <div v-if="rows.length" class="vtable">
-      <div class="vtable__tools">
-        <button
-          type="button"
-          class="vtable__icon"
-          :class="{ 'is-active': searchOpen }"
-          aria-label="Search variants"
-          @click="searchOpen = !searchOpen"
-        >
+      <div ref="toolsRef" class="vtable__tools">
+        <div class="vtable__search">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" />
           </svg>
-        </button>
-        <div v-if="searchOpen" class="vtable__search">
-          <input v-model="search" type="search" placeholder="Search variants" autofocus />
+          <input v-model="search" type="search" placeholder="Search variants" />
         </div>
-        <button type="button" class="vtable__icon" aria-label="Filter variants" title="Filter">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 6h16M7 12h10M10 18h4" stroke-linecap="round" />
-          </svg>
-        </button>
-        <div class="vtable__spacer"></div>
-        <div class="vtable__locations" title="Inventory location">
-          <span>All locations</span>
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
+
+        <div v-if="axisNames.length" class="vtable__filterwrap">
+          <button
+            ref="filterBtnRef"
+            type="button"
+            class="vtable__icon"
+            :class="{ 'is-active': filterOpen || activeFilterCount }"
+            aria-label="Filter variants"
+            title="Filter by option"
+            @click="toggleFilterPanel"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 6h16M7 12h10M10 18h4" stroke-linecap="round" />
+            </svg>
+            <span v-if="activeFilterCount" class="vtable__filterbadge">{{ activeFilterCount }}</span>
+          </button>
+
+          <Teleport to="body">
+            <div
+              v-if="filterOpen"
+              ref="filterPanelRef"
+              class="vtable__filterpanel"
+              :style="filterPanelStyle"
+            >
+              <label v-for="name in axisNames" :key="name" class="vtable__filterrow">
+                <span>{{ name }}</span>
+                <select v-model="filters[name]">
+                  <option value="">Any {{ name }}</option>
+                  <option v-for="value in axisValues(name)" :key="value" :value="value">{{ value }}</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                class="vtable__filterclear"
+                :disabled="!activeFilterCount"
+                @click="clearFilters"
+              >
+                Clear filters
+              </button>
+            </div>
+          </Teleport>
         </div>
       </div>
 
@@ -640,12 +736,14 @@ const selectedPromotions = computed(() =>
   }
 
   &__icon {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 30px;
     height: 30px;
     padding: 0;
+    flex: none;
     color: var(--text-subtle);
     background: transparent;
     border: 1px solid transparent;
@@ -660,14 +758,16 @@ const selectedPromotions = computed(() =>
   &__search {
     display: flex;
     align-items: center;
+    gap: 0.4rem;
     flex: 1;
-    max-width: 260px;
     padding: 0.35rem 0.6rem;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--surface);
 
     &:focus-within { border-color: rgb(var(--accent-rgb)); }
+
+    svg { width: 15px; height: 15px; stroke: var(--text-subtle); stroke-width: 1.8; flex: none; }
 
     input {
       flex: 1;
@@ -682,21 +782,78 @@ const selectedPromotions = computed(() =>
     }
   }
 
-  &__spacer { flex: 1; }
+  &__filterwrap { position: relative; }
 
-  &__locations {
+  &__filterbadge {
+    position: absolute;
+    top: -3px;
+    right: -3px;
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.4rem 0.7rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--text-strong);
+    justify-content: center;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ink-on-accent);
+    background: rgb(var(--accent-rgb));
+    border-radius: 999px;
+  }
+
+  &__filterpanel {
+    position: fixed;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    width: 220px;
+    padding: 0.75rem;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: 10px;
+    box-shadow: var(--shadow-md);
+  }
 
-    svg { width: 14px; height: 14px; stroke: var(--text-subtle); stroke-width: 2; }
+  &__filterrow {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-subtle);
+    text-transform: capitalize;
+
+    select {
+      padding: 0.4rem 0.5rem;
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 400;
+      text-transform: none;
+      color: var(--text-strong);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+
+      &:focus { outline: none; border-color: rgb(var(--accent-rgb)); }
+    }
+  }
+
+  &__filterclear {
+    padding: 0.4rem 0;
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: rgb(var(--accent-rgb));
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+    cursor: pointer;
+
+    &:disabled { color: var(--text-faint); cursor: default; }
+    &:not(:disabled):hover { filter: brightness(0.92); }
   }
 
   &__bulk {

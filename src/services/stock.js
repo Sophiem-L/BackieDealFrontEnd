@@ -67,7 +67,7 @@ export function usableImage(value) {
 export function stockFromApi(item) {
   return {
     id: item.id,
-    uuid: item.uuid,
+    uuid: item.id,
     name: item.name,
     sku: item.sku,
     startDate: formatStockDate(item.created_at),
@@ -93,7 +93,7 @@ export function stockDetailFromApi(data) {
 
   return {
     id: data.id,
-    uuid: data.uuid,
+    uuid: data.id,
     name: data.name,
     sku: data.sku,
     category: data.category?.name ?? '—',
@@ -182,7 +182,7 @@ export async function fetchStockCatalog(per_page = 100, token) {
   const items = response?.data?.items ?? []
   return items.map((item) => ({
     id: item.id,
-    uuid: item.uuid,
+    uuid: item.id,
     name: item.name,
     sku: item.sku,
     category: item.category?.name ?? '—',

@@ -5,7 +5,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import SlideImagesField from '@/components/slides/SlideImagesField.vue'
 import SlideSequence from '@/components/slides/SlideSequence.vue'
-import { DEFAULT_GRADIENT, deleteSlide, fetchSlide, saveSlide } from '@/services/slides'
+import { DEFAULT_GRADIENT, fetchSlide, saveSlide } from '@/services/slides'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -86,16 +86,8 @@ async function save() {
   }
 }
 
-async function remove() {
-  if (!window.confirm('Delete this slide? This cannot be undone.')) return
-
-  error.value = ''
-  try {
-    await deleteSlide(route.params.id, auth.accessToken)
-    router.push('/slides')
-  } catch (err) {
-    error.value = err.message || 'Could not delete the slide.'
-  }
+function cancel() {
+  router.push('/slides')
 }
 
 onMounted(() => {
@@ -119,20 +111,6 @@ onMounted(() => {
             <span class="subhead__title">{{ form.title || 'New Slide' }}</span>
           </span>
         </RouterLink>
-
-        <div class="subhead__actions">
-          <BaseButton v-if="isEdit" variant="danger" @click="remove">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </template>
-            Delete Slide
-          </BaseButton>
-          <BaseButton variant="primary" :disabled="saving || loading" @click="save">
-            {{ saving ? 'Saving…' : isEdit ? 'Update Slide' : 'Create Slide' }}
-          </BaseButton>
-        </div>
       </div>
 
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
@@ -224,6 +202,13 @@ onMounted(() => {
           </section>
         </div>
       </div>
+
+      <div class="form-footer">
+        <BaseButton variant="ghost" @click="cancel">Cancel</BaseButton>
+        <BaseButton variant="primary" :disabled="saving || loading" @click="save">
+          {{ saving ? 'Saving…' : isEdit ? 'Update Slide' : 'Create Slide' }}
+        </BaseButton>
+      </div>
     </div>
   </div>
 </template>
@@ -277,7 +262,14 @@ onMounted(() => {
   }
 
   &__title { font-size: 1.1rem; font-weight: 700; color: var(--text-strong); }
-  &__actions { display: flex; gap: 0.6rem; }
+}
+
+.form-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .grid {

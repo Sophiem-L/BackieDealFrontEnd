@@ -1,9 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import ToggleSwitch from '@/components/ToggleSwitch.vue'
 import { apiFetch } from '@/services/api'
+import { ACCEPT_ATTR, uploadImage, validateImageFile } from '@/services/media'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -29,6 +31,73 @@ const categoryId = computed(() => {
 // GET /admin/categories/{id} is in flight.
 const categoryName = ref(typeof route.query.name === 'string' ? route.query.name : 'Category')
 const categoryMissing = ref(false)
+
+const canEditCategory = computed(() => auth.hasPermission('categories.update'))
+
+// General Information / Cover Image / Visibility — same fields as the Create
+// page, prefilled from GET /admin/categories/{id} in loadCategory() below.
+const form = reactive({
+  name: '',
+  description: '',
+  image: '',
+  isActive: true,
+})
+const savingCategory = ref(false)
+const categorySaveError = ref('')
+
+const fileInput = ref(null)
+const coverUploading = ref(false)
+const coverError = ref('')
+function pickCover() {
+  fileInput.value?.click()
+}
+async function onCoverChange(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+
+  coverError.value = ''
+  const problem = validateImageFile(file)
+  if (problem) {
+    coverError.value = problem
+    return
+  }
+
+  coverUploading.value = true
+  try {
+    const { url } = await uploadImage(file, { token: auth.accessToken, folder: 'categories' })
+    form.image = url
+  } catch (err) {
+    coverError.value = err.message || 'Upload failed.'
+  } finally {
+    coverUploading.value = false
+  }
+}
+
+async function saveCategory() {
+  if (categoryId.value == null) return
+  savingCategory.value = true
+  categorySaveError.value = ''
+  try {
+    const response = await apiFetch(`/admin/categories/${categoryId.value}`, {
+      method: 'PUT',
+      body: {
+        name: form.name,
+        description: form.description || null,
+        image: form.image || null,
+        is_active: form.isActive,
+      },
+      token: auth.accessToken,
+    })
+    if (response?.data?.name) categoryName.value = response.data.name
+    router.push({ name: 'categories' })
+  } catch (err) {
+    const fieldError = Object.values(err.errors ?? {})[0]
+    categorySaveError.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to save this category.'
+  } finally {
+    savingCategory.value = false
+  }
+}
 
 const search = ref('')
 const products = ref([])
@@ -62,7 +131,6 @@ function usableImage(value) {
 function mapProduct(item) {
   return {
     id: item.id,
-    uuid: item.uuid,
     name: item.name,
     sku: item.sku,
     categoryId: item.category?.id ?? null,
@@ -76,9 +144,9 @@ function mapProduct(item) {
 
 // Thumbnails that fail to load fall back to the initials tile.
 const brokenThumbs = ref(new Set())
-function onThumbError(uuid) {
+function onThumbError(id) {
   const next = new Set(brokenThumbs.value)
-  next.add(uuid)
+  next.add(id)
   brokenThumbs.value = next
 }
 
@@ -100,6 +168,12 @@ async function loadCategory() {
     })
     const row = response?.data
     if (row?.name) categoryName.value = row.name
+    Object.assign(form, {
+      name: row?.name ?? '',
+      description: row?.description ?? '',
+      image: row?.image ?? '',
+      isActive: row?.is_active == null ? true : Boolean(row.is_active),
+    })
   } catch (err) {
     // A 404 means the category is gone; anything else leaves the ?name= heading
     // in place, since the products list carries its own error state.
@@ -155,10 +229,13 @@ const filteredProducts = computed(() => {
 })
 
 // --- Add Product to Category picker ---------------------------------------
-// A product belongs to exactly one category (products.category_id), so "adding"
-// one here is a PUT that moves it out of whatever category it was in. That also
-// makes the exclusion rule trivial: a product is already in this category iff
-// its category id matches, so the fetched list just filters those out.
+// A product belongs to exactly one category (products.category_id), so the
+// picker doubles as a membership editor: it lists products regardless of
+// their current category, pre-checks the ones already filed under this one,
+// and diffs the checkbox state against that starting point on submit —
+// newly-checked products get PUT category_id=<this category>, newly-unchecked
+// ones that used to belong here get PUT category_id=null (removed from any
+// category, same as the "Uncategorized" state shown elsewhere).
 const pickerOpen = ref(false)
 const pickerSearch = ref('')
 const pickerItems = ref([])
@@ -167,20 +244,53 @@ const pickerError = ref('')
 const submitting = ref(false)
 const submitError = ref('')
 
-// Keyed by uuid and holding the whole row: the search re-fetches and replaces
+// Keyed by id and holding the whole row: the search re-fetches and replaces
 // the visible list, so an id-only selection would lose the names needed for the
 // footer count and the failure message.
 const selected = ref(new Map())
-const selectedCount = computed(() => selected.value.size)
+// Snapshot of this category's members when the picker opened (from the
+// already-loaded table, not the picker's own paginated/searched fetch — that
+// way membership is known even for products the current search doesn't
+// happen to show). The diff between this and `selected` is what gets saved.
+const originalMembers = ref(new Map())
 
-function isSelected(uuid) {
-  return selected.value.has(uuid)
+// Whether every currently-listed picker row is selected — drives the
+// "select all" checkbox's checked/indeterminate state.
+const allPickerSelected = computed(
+  () => pickerItems.value.length > 0 && pickerItems.value.every((p) => selected.value.has(p.id)),
+)
+const somePickerSelected = computed(
+  () => !allPickerSelected.value && pickerItems.value.some((p) => selected.value.has(p.id)),
+)
+
+const pendingAddCount = computed(
+  () => [...selected.value.values()].filter((p) => !originalMembers.value.has(p.id)).length,
+)
+const pendingRemoveCount = computed(
+  () => [...originalMembers.value.values()].filter((p) => !selected.value.has(p.id)).length,
+)
+const pendingChangeCount = computed(() => pendingAddCount.value + pendingRemoveCount.value)
+
+function isSelected(id) {
+  return selected.value.has(id)
 }
 
 function toggleProduct(product) {
   const next = new Map(selected.value)
-  if (next.has(product.uuid)) next.delete(product.uuid)
-  else next.set(product.uuid, product)
+  if (next.has(product.id)) next.delete(product.id)
+  else next.set(product.id, product)
+  selected.value = next
+}
+
+// Only affects the rows currently visible in the picker (i.e. the current
+// search results), not every product ever fetched.
+function toggleSelectAll() {
+  const next = new Map(selected.value)
+  if (allPickerSelected.value) {
+    for (const product of pickerItems.value) next.delete(product.id)
+  } else {
+    for (const product of pickerItems.value) next.set(product.id, product)
+  }
   selected.value = next
 }
 
@@ -208,8 +318,10 @@ async function loadPickerProducts() {
     })
     const items = (response?.data?.items ?? []).map(mapProduct)
     if (requestId !== pickerRequestId) return
-    // Drop anything already filed under this category.
-    pickerItems.value = items.filter((item) => item.categoryId !== categoryId.value)
+    // Products already in this category are shown too (pre-checked via
+    // `selected`/`originalMembers`), so unchecking them here is how they get
+    // removed — see the picker's opening comment.
+    pickerItems.value = items
   } catch (err) {
     if (requestId !== pickerRequestId) return
     pickerError.value = err.message || 'Unable to load products. Please try again.'
@@ -231,7 +343,10 @@ function openPicker() {
   pickerItems.value = []
   pickerError.value = ''
   submitError.value = ''
-  selected.value = new Map()
+  // `products` is this category's table, already loaded — the authoritative
+  // membership snapshot regardless of what the picker's own search shows.
+  originalMembers.value = new Map(products.value.map((p) => [p.id, p]))
+  selected.value = new Map(originalMembers.value)
   pickerOpen.value = true
   loadPickerProducts()
 }
@@ -245,38 +360,54 @@ function closePicker() {
 }
 
 async function addSelectedProducts() {
-  const picked = [...selected.value.values()]
-  if (picked.length === 0 || submitting.value) return
+  // Diff against the snapshot taken when the picker opened: newly-checked
+  // rows get added to this category, newly-unchecked rows that used to be
+  // members get removed from it (category_id -> null).
+  const toAdd = [...selected.value.values()].filter((p) => !originalMembers.value.has(p.id))
+  const toRemove = [...originalMembers.value.values()].filter((p) => !selected.value.has(p.id))
+  const ops = [
+    ...toAdd.map((product) => ({ product, categoryId: categoryId.value })),
+    ...toRemove.map((product) => ({ product, categoryId: null })),
+  ]
+  if (ops.length === 0 || submitting.value) return
 
   submitting.value = true
   submitError.value = ''
   try {
     const results = await Promise.allSettled(
-      picked.map((product) =>
-        apiFetch(`/admin/products/${product.uuid}`, {
+      ops.map((op) =>
+        apiFetch(`/admin/products/${op.product.id}`, {
           method: 'PUT',
-          body: { category_id: categoryId.value },
+          body: { category_id: op.categoryId },
           token: auth.accessToken,
         }),
       ),
     )
 
-    const failed = picked.filter((_, i) => results[i].status === 'rejected')
+    const failedOps = ops.filter((_, i) => results[i].status === 'rejected')
 
     // The table reloads either way, so a partial success is visible immediately.
     await loadProducts()
 
-    if (failed.length === 0) {
+    if (failedOps.length === 0) {
       closePicker()
       return
     }
 
-    // Keep only the failures selected so a retry doesn't re-send the successes.
-    selected.value = new Map(failed.map((product) => [product.uuid, product]))
+    // Re-baseline against the server's actual state, then re-apply the
+    // failed ops' desired end-state so a retry doesn't re-send the successes.
+    originalMembers.value = new Map(products.value.map((p) => [p.id, p]))
+    const next = new Map(originalMembers.value)
+    for (const op of failedOps) {
+      if (op.categoryId === null) next.delete(op.product.id)
+      else next.set(op.product.id, op.product)
+    }
+    selected.value = next
+
     // Surface the server's reason too — a validation error is otherwise invisible.
     const reason = results.find((r) => r.status === 'rejected')?.reason?.message
-    const names = failed.map((p) => p.name).join(', ')
-    submitError.value = reason ? `Couldn't add ${names} — ${reason}` : `Couldn't add: ${names}`
+    const names = failedOps.map((op) => op.product.name).join(', ')
+    submitError.value = reason ? `Couldn't update ${names} — ${reason}` : `Couldn't update: ${names}`
     await loadPickerProducts()
   } finally {
     submitting.value = false
@@ -300,14 +431,6 @@ async function addSelectedProducts() {
             <h2 class="lead__title">{{ categoryName }}</h2>
           </div>
         </div>
-        <div v-if="!categoryMissing" class="lead__actions">
-          <BaseButton variant="primary" @click="openPicker">
-            <template #icon>
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-            </template>
-            Add Product to Category
-          </BaseButton>
-        </div>
       </section>
 
       <!-- The :id in the URL must be a real category id; slug links can't resolve. -->
@@ -318,78 +441,148 @@ async function addSelectedProducts() {
         </p>
       </section>
 
-      <!-- Products content card -->
-      <section v-else class="table-card">
-        <header class="table-head">
-          <h3 class="table-head__title">Products in Category</h3>
-          <label class="table-head__search">
-            <span aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.2-3.2" stroke-linecap="round" />
-              </svg>
-            </span>
-            <input v-model="search" type="search" placeholder="Search within category..." />
-          </label>
-        </header>
+      <template v-else>
+        <!-- General Information / Cover Image / Products / Visibility — same top
+             fields as Create, plus the products table lined up beside Visibility -->
+        <section class="grid">
+          <p v-if="categorySaveError" class="alert grid__alert">{{ categorySaveError }}</p>
 
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>SKU</th>
-              <th>Price</th>
-              <th>Stock</th>
-              <th class="table__status-head">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="loading">
-              <td colspan="5" class="table__empty">Loading products…</td>
-            </tr>
-            <tr v-else-if="error">
-              <td colspan="5" class="table__empty table__empty--error">
-                {{ error }}
-                <button type="button" class="table__retry" @click="loadProducts">Retry</button>
-              </td>
-            </tr>
-            <tr v-else-if="filteredProducts.length === 0">
-              <td colspan="5" class="table__empty">
-                {{ search ? 'No products match your search.' : 'No products in this category yet.' }}
-              </td>
-            </tr>
-            <tr v-for="product in filteredProducts" v-else :key="product.uuid">
-              <td>
-                <div class="product">
-                  <span class="product__thumb" aria-hidden="true">
-                    <img
-                      v-if="product.thumbnail && !brokenThumbs.has(product.uuid)"
-                      :src="product.thumbnail"
-                      alt=""
-                      loading="lazy"
-                      @error="onThumbError(product.uuid)"
-                    />
-                    <template v-else>{{ thumbInitials(product.name) }}</template>
+          <section class="card grid__general">
+            <h3 class="card__title">General Information</h3>
+            <div class="field">
+              <label for="cat-name">Category Name</label>
+              <input id="cat-name" v-model="form.name" type="text" placeholder="e.g. Graphics Cards" />
+            </div>
+            <div class="field">
+              <label for="cat-description">Description</label>
+              <textarea id="cat-description" v-model="form.description" rows="3" placeholder="Short summary shown on the category page..."></textarea>
+            </div>
+          </section>
+
+          <section class="card grid__cover">
+            <h3 class="card__title">Cover Image</h3>
+            <button type="button" class="image" :disabled="coverUploading" @click="pickCover">
+              <template v-if="form.image">
+                <img :src="form.image" alt="Cover preview" />
+                <span class="image__overlay">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span>{{ coverUploading ? 'Uploading…' : 'Click to change' }}</span>
+                </span>
+              </template>
+              <span v-else class="image__placeholder">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <circle cx="8.5" cy="9.5" r="1.5" />
+                  <path d="m4 18 5-4 4 3 3-2 4 3" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span>{{ coverUploading ? 'Uploading…' : 'Click to upload' }}</span>
+              </span>
+            </button>
+            <input ref="fileInput" type="file" :accept="ACCEPT_ATTR" hidden @change="onCoverChange" />
+            <p v-if="coverError" class="card__hint card__hint--error">{{ coverError }}</p>
+            <p v-else class="card__hint">Recommended: 1200x675px (16:9).</p>
+          </section>
+
+          <!-- Products content card -->
+          <section class="table-card grid__products">
+            <header class="table-head">
+              <h3 class="table-head__title">Products in Category</h3>
+              <div class="table-head__actions">
+                <label class="table-head__search">
+                  <span aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m20 20-3.2-3.2" stroke-linecap="round" />
+                    </svg>
                   </span>
-                  <span class="product__name">{{ product.name }}</span>
-                </div>
-              </td>
-              <td class="sku">{{ product.sku }}</td>
-              <td class="price">{{ product.price }}</td>
-              <td>
-                <span class="stock" :class="{ 'stock--out': product.stock === 0 }">{{ product.stock }} pcs</span>
-              </td>
-              <td>
-                <span class="badge" :class="`badge--${product.status}`">{{ statusLabels[product.status] }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                  <input v-model="search" type="search" placeholder="Search within category..." />
+                </label>
+                <BaseButton variant="primary" @click="openPicker">
+                  <template #icon>
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
+                  </template>
+                  Add Product to Category
+                </BaseButton>
+              </div>
+            </header>
 
-        <p v-if="truncated" class="table-foot">
-          Showing the first {{ products.length }} of {{ total.toLocaleString() }} products.
-        </p>
-      </section>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th>Price</th>
+                  <th>Stock</th>
+                  <th class="table__status-head">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="loading">
+                  <td colspan="5" class="table__empty">Loading products…</td>
+                </tr>
+                <tr v-else-if="error">
+                  <td colspan="5" class="table__empty table__empty--error">
+                    {{ error }}
+                    <button type="button" class="table__retry" @click="loadProducts">Retry</button>
+                  </td>
+                </tr>
+                <tr v-else-if="filteredProducts.length === 0">
+                  <td colspan="5" class="table__empty">
+                    {{ search ? 'No products match your search.' : 'No products in this category yet.' }}
+                  </td>
+                </tr>
+                <tr v-for="product in filteredProducts" v-else :key="product.id">
+                  <td>
+                    <div class="product">
+                      <span class="product__thumb" aria-hidden="true">
+                        <img
+                          v-if="product.thumbnail && !brokenThumbs.has(product.id)"
+                          :src="product.thumbnail"
+                          alt=""
+                          loading="lazy"
+                          @error="onThumbError(product.id)"
+                        />
+                        <template v-else>{{ thumbInitials(product.name) }}</template>
+                      </span>
+                      <span class="product__name">{{ product.name }}</span>
+                    </div>
+                  </td>
+                  <td class="sku">{{ product.sku }}</td>
+                  <td class="price">{{ product.price }}</td>
+                  <td>
+                    <span class="stock" :class="{ 'stock--out': product.stock === 0 }">{{ product.stock }} pcs</span>
+                  </td>
+                  <td>
+                    <span class="badge" :class="`badge--${product.status}`">{{ statusLabels[product.status] }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p v-if="truncated" class="table-foot">
+              Showing the first {{ products.length }} of {{ total.toLocaleString() }} products.
+            </p>
+          </section>
+
+          <section class="card grid__visibility">
+            <h3 class="card__title">Visibility</h3>
+            <div class="availability" :class="{ 'availability--on': form.isActive }">
+              <span class="availability__dot"></span>
+              <ToggleSwitch v-model="form.isActive" label="Active (visible in storefront)" />
+            </div>
+          </section>
+
+          <div v-if="canEditCategory" class="form-actions grid__actions">
+            <BaseButton variant="ghost" :disabled="savingCategory" :to="{ name: 'categories' }">Cancel</BaseButton>
+            <BaseButton variant="primary" :disabled="savingCategory" @click="saveCategory">
+              <template v-if="savingCategory">Saving…</template>
+              <template v-else>Update Category</template>
+            </BaseButton>
+          </div>
+        </section>
+      </template>
     </div>
 
     <!-- Add product to category picker -->
@@ -422,6 +615,19 @@ async function addSelectedProducts() {
               <input v-model="pickerSearch" type="search" placeholder="Search products to add..." />
             </label>
 
+            <label
+              v-if="!pickerLoading && !pickerError && pickerItems.length > 0"
+              class="picker-selectall"
+            >
+              <input
+                type="checkbox"
+                :checked="allPickerSelected"
+                :indeterminate.prop="somePickerSelected"
+                @change="toggleSelectAll"
+              />
+              <span>Select all ({{ pickerItems.length }})</span>
+            </label>
+
             <p v-if="submitError" class="picker-error">{{ submitError }}</p>
 
             <p v-if="pickerLoading" class="picker-empty">Loading products…</p>
@@ -433,21 +639,21 @@ async function addSelectedProducts() {
               {{ pickerSearch ? 'No matching products found.' : 'All products are already in this category.' }}
             </p>
             <ul v-else class="picker-list">
-              <li v-for="product in pickerItems" :key="product.uuid">
-                <label class="picker-item" :class="{ 'is-selected': isSelected(product.uuid) }">
+              <li v-for="product in pickerItems" :key="product.id">
+                <label class="picker-item" :class="{ 'is-selected': isSelected(product.id) }">
                   <input
                     type="checkbox"
                     class="picker-item__checkbox"
-                    :checked="isSelected(product.uuid)"
+                    :checked="isSelected(product.id)"
                     @change="toggleProduct(product)"
                   />
                   <span class="picker-item__thumb" aria-hidden="true">
                     <img
-                      v-if="product.thumbnail && !brokenThumbs.has(product.uuid)"
+                      v-if="product.thumbnail && !brokenThumbs.has(product.id)"
                       :src="product.thumbnail"
                       alt=""
                       loading="lazy"
-                      @error="onThumbError(product.uuid)"
+                      @error="onThumbError(product.id)"
                     />
                     <template v-else>{{ thumbInitials(product.name) }}</template>
                   </span>
@@ -467,14 +673,12 @@ async function addSelectedProducts() {
             <BaseButton variant="ghost" :disabled="submitting" @click="closePicker">Cancel</BaseButton>
             <BaseButton
               variant="primary"
-              :disabled="selectedCount === 0 || submitting"
+              :disabled="pendingChangeCount === 0 || submitting"
               @click="addSelectedProducts"
             >
-              <template v-if="submitting">Adding…</template>
-              <template v-else-if="selectedCount">
-                Add {{ selectedCount }} Product{{ selectedCount > 1 ? 's' : '' }}
-              </template>
-              <template v-else>Add Products</template>
+              <template v-if="submitting">Saving…</template>
+              <template v-else-if="pendingChangeCount">Save Changes ({{ pendingChangeCount }})</template>
+              <template v-else>No Changes</template>
             </BaseButton>
           </footer>
         </div>
@@ -496,6 +700,182 @@ async function addSelectedProducts() {
     flex-direction: column;
     gap: 1.25rem;
   }
+}
+
+/* General Information / Cover Image / Products / Visibility form (mirrors the
+   Create page, with the products table lined up beside Visibility) */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  grid-template-areas:
+    "alert alert"
+    "general cover"
+    "products visibility"
+    "products actions";
+  gap: 1.25rem;
+  align-items: start;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "alert"
+      "general"
+      "cover"
+      "products"
+      "visibility"
+      "actions";
+  }
+}
+
+.grid__alert { grid-area: alert; margin: 0; }
+.grid__general { grid-area: general; }
+.grid__cover { grid-area: cover; }
+.grid__products { grid-area: products; }
+.grid__visibility { grid-area: visibility; }
+.grid__actions { grid-area: actions; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 1.25rem;
+
+  &__title {
+    margin: 0 0 1rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  &__hint {
+    margin: 0.75rem 0 0;
+    font-size: 0.72rem;
+    color: var(--text-subtle);
+    text-align: center;
+
+    &--error { color: var(--danger); }
+  }
+}
+
+.alert {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+
+  & + .field { margin-top: 1rem; }
+
+  label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-body);
+  }
+
+  input,
+  textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.65rem 0.8rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+    color: var(--text-strong);
+    background: var(--surface);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+    &::placeholder { color: var(--text-faint); }
+    &:focus {
+      outline: none;
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+    }
+  }
+
+  textarea { resize: vertical; }
+}
+
+.image {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--switch-track);
+  border-radius: 12px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+  cursor: pointer;
+  padding: 0;
+
+  &:hover { border-color: rgb(var(--accent-rgb)); }
+  &:hover .image__overlay,
+  &:focus-visible .image__overlay { opacity: 1; }
+  &:disabled { cursor: not-allowed; opacity: 0.7; }
+  img { width: 100%; height: 100%; object-fit: cover; }
+
+  &__placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-subtle);
+    font-size: 0.8rem;
+    svg { width: 32px; height: 32px; stroke: currentColor; stroke-width: 1.5; }
+  }
+
+  &__overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: rgb(15 20 30 / 0.55);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.8; }
+  }
+}
+
+.availability {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  background: var(--bg);
+  transition: background-color 0.15s ease;
+
+  &--on { background: var(--success-bg); }
+
+  &__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); order: -1; }
+  &--on &__dot { background: var(--success); }
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 
 /* Heading */
@@ -539,8 +919,6 @@ async function addSelectedProducts() {
   }
 
   &__title { margin: 0; font-size: 1.4rem; font-weight: 700; color: var(--text-strong); }
-
-  &__actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 }
 
 /* Products table card */
@@ -566,6 +944,13 @@ async function addSelectedProducts() {
     color: var(--text-strong);
   }
 
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
   &__search {
     display: flex;
     align-items: center;
@@ -580,8 +965,8 @@ async function addSelectedProducts() {
     svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
 
     input {
-      width: 360px;
-      max-width: 60vw;
+      width: 240px;
+      max-width: 45vw;
       border: none;
       background: transparent;
       padding: 0.5rem 0;
@@ -807,6 +1192,28 @@ async function addSelectedProducts() {
     font-family: inherit;
     color: var(--text-strong);
     &:focus { outline: none; }
+  }
+}
+
+.picker-selectall {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.1rem 0.2rem 0.85rem;
+  cursor: pointer;
+
+  input {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    accent-color: rgb(var(--accent-rgb));
+    cursor: pointer;
+  }
+
+  span {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-subtle);
   }
 }
 

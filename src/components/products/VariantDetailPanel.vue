@@ -101,7 +101,7 @@ async function onFileChange(event) {
 /* ---------------------------------------------------------------- the list */
 
 const search = ref('')
-const filters = reactive({})
+const filters = reactive(Object.fromEntries(optionNames.value.map((name) => [name, ''])))
 
 const listRows = computed(() =>
   props.rows

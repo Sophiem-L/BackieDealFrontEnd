@@ -174,6 +174,12 @@ const router = createRouter({
       component: () => import('@/views/NewsFormView.vue'),
     },
     {
+      path: '/news/:id',
+      name: 'news-view',
+      meta: { permission: 'content.view' },
+      component: () => import('@/views/NewsDetailView.vue'),
+    },
+    {
       path: '/news/:id/edit',
       name: 'news-edit',
       meta: { permission: 'content.update' },
@@ -190,6 +196,12 @@ const router = createRouter({
       name: 'page-create',
       meta: { permission: 'content.create' },
       component: () => import('@/views/PageFormView.vue'),
+    },
+    {
+      path: '/pages/:id',
+      name: 'page-view',
+      meta: { permission: 'content.view' },
+      component: () => import('@/views/PageDetailView.vue'),
     },
     {
       path: '/pages/:id/edit',

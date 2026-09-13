@@ -113,7 +113,7 @@ function thumbInitials(name) {
 function mapItem(row) {
   return {
     id: row.id,
-    uuid: row.uuid,
+    uuid: row.id,
     name: row.name ?? '',
     sku: row.sku ?? '',
     startDate: formatStockDate(row.created_at),
