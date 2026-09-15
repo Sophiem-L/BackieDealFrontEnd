@@ -259,7 +259,7 @@ async function createOrder() {
                 <tr v-for="(item, i) in items" :key="i">
                   <td>
                     <select
-                      v-model.number="item.productId"
+                      v-model="item.productId"
                       class="field"
                       :class="{ 'field--invalid': errorFor(`items.${i}.product_id`) }"
                       :disabled="loadingRefs"
