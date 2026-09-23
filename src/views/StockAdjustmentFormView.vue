@@ -1,9 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import ToastStack from '@/components/ToastStack.vue'
 import { fetchStockCatalog, createBulkStockMovement } from '@/services/stock'
+import { fetchSerials, lookupSerial } from '@/services/serials'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -11,82 +13,165 @@ const route = useRoute()
 const auth = useAuthStore()
 
 const adjustmentTypes = [
-  {
-    value: 'Inventory Recount',
-    label: 'Inventory Recount',
-    description: 'Regular count and verification',
-    icon: '📋',
-    color: 'blue',
-  },
-  {
-    value: 'Damaged Goods',
-    label: 'Damaged Goods',
-    description: 'Items too damaged to sell',
-    icon: '💔',
-    color: 'red',
-  },
-  {
-    value: 'Customer Return',
-    label: 'Customer Return',
-    description: 'Items returned by customers',
-    icon: '↩️',
-    color: 'orange',
-  },
-  {
-    value: 'Supplier Delivery',
-    label: 'Supplier Delivery',
-    description: 'Stock received from suppliers',
-    icon: '📦',
-    color: 'green',
-  },
-  {
-    value: 'Theft / Loss',
-    label: 'Theft / Loss',
-    description: 'Missing or stolen items',
-    icon: '⚠️',
-    color: 'red',
-  },
-  {
-    value: 'Correction',
-    label: 'Correction',
-    description: 'System error correction',
-    icon: '✏️',
-    color: 'purple',
-  },
+  { value: 'Inventory Recount', label: 'Inventory Recount', description: 'Regular count and verification', icon: '📋', color: 'blue' },
+  { value: 'Damaged Goods', label: 'Damaged Goods', description: 'Items too damaged to sell', icon: '💔', color: 'red' },
+  { value: 'Customer Return', label: 'Customer Return', description: 'Items returned by customers', icon: '↩️', color: 'orange' },
+  { value: 'Supplier Delivery', label: 'Supplier Delivery', description: 'Stock received from suppliers', icon: '📦', color: 'green' },
+  { value: 'Theft / Loss', label: 'Theft / Loss', description: 'Missing or stolen items', icon: '⚠️', color: 'red' },
+  { value: 'Correction', label: 'Correction', description: 'System error correction', icon: '✏️', color: 'purple' },
 ]
 
 const product = ref(null)
 const submitting = ref(false)
 const submitError = ref('')
-const selectedRows = ref(new Set())
 const showAdjustmentDropdown = ref(false)
+const toasts = ref([])
+const drawer = reactive({
+  open: false,
+  variantId: null,
+  mode: 'increase',
+  input: '',
+  search: '',
+  selectedSerials: [],
+  availableSerials: [],
+  errors: {},
+  pendingExtras: 0,
+  originalSerials: [],
+  lastFocusedEl: null,
+  showExistingSerials: false,
+  lastAddedSerial: '',
+})
 
 const form = reactive({
   adjustmentType: 'Inventory Recount',
   reason: '',
 })
 
-const selectedAdjustmentType = computed(() =>
-  adjustmentTypes.find(t => t.value === form.adjustmentType) || adjustmentTypes[0]
+const selectedAdjustmentType = computed(
+  () => adjustmentTypes.find((type) => type.value === form.adjustmentType) || adjustmentTypes[0],
 )
 
+const isProductLocked = computed(() => Boolean(route.query.product_id || route.query.id))
+
+function normalizeSerial(value = '') {
+  return String(value ?? '').trim().toUpperCase()
+}
+
+function isIncreaseAdjustment(type = form.adjustmentType) {
+  return !['Damaged Goods', 'Theft / Loss'].includes(type)
+}
+
+function activeRows() {
+  return product.value?.adjustments?.filter((item) => Number(item.quantityChange) !== 0) ?? []
+}
+
+function getRowQty(item) {
+  return Number(item.quantityChange) || 0
+}
+
+function getSerialTarget(item) {
+  if (!item) return 0
+
+  const currentQty = Number(item.currentStock) || 0
+  const adjQty = Number(item.quantityChange) || 0
+  const existingSerialCount = getRowSerials(item).length
+
+  if (isIncreaseAdjustment(form.adjustmentType)) {
+    return Math.max(0, (currentQty + adjQty) - existingSerialCount)
+  }
+
+  return Math.max(0, Math.min(Math.abs(adjQty), existingSerialCount))
+}
+
+function getRequiredSerials(item) {
+  return getSerialTarget(item)
+}
+
+function getFilledSerialCount(item) {
+  return Array.isArray(item.serialNumbers)
+    ? item.serialNumbers.filter((serial) => normalizeSerial(serial).length > 0).length
+    : 0
+}
+
+function getSerialTriggerTitle(item) {
+  const qty = getRowQty(item)
+  if (!Number.isFinite(qty) || qty === 0) {
+    return 'Enter quantity first'
+  }
+
+  const required = getRequiredSerials(item)
+  if (required === 0) {
+    return 'Serials complete'
+  }
+
+  return getFilledSerialCount(item) >= required
+    ? 'Serials complete'
+    : `${getFilledSerialCount(item)} of ${required} serials entered`
+}
+
+function getRowSerials(item) {
+  return Array.isArray(item.serialNumbers)
+    ? item.serialNumbers.map(normalizeSerial).filter((serial) => serial.length > 0)
+    : []
+}
+
+const summaryText = computed(() => {
+  const rows = activeRows()
+  const variantCount = rows.length
+  const totalUnits = rows.reduce((sum, item) => sum + Math.abs(getRowQty(item)), 0)
+  const signedTotal = rows.reduce((sum, item) => sum + getRowQty(item), 0)
+  const serialRequired = rows.reduce((sum, item) => sum + getRequiredSerials(item), 0)
+
+  return `${variantCount} variants · ${signedTotal >= 0 ? '+' : ''}${signedTotal} units · ${serialRequired} serials required`
+})
+
+const incompleteRows = computed(() => {
+  return activeRows().filter((item) => getFilledSerialCount(item) !== getRequiredSerials(item))
+})
+
+const incompleteTooltip = computed(() => {
+  return incompleteRows.value
+    .map((item) => `${item.name}: ${getFilledSerialCount(item)} of ${getRequiredSerials(item)} serials`)
+    .join('; ')
+})
+
+const quantityIsValid = computed(() => {
+  const rows = activeRows()
+  if (!rows.length) return false
+  return rows.every((item) => {
+    const qty = getRowQty(item)
+    if (!Number.isFinite(qty) || qty === 0) return false
+    return getFilledSerialCount(item) === getRequiredSerials(item)
+  })
+})
+
+function pushToast(title, message = '', type = 'success') {
+  const toast = { id: Date.now() + Math.random(), title, message, type }
+  toasts.value.push(toast)
+  setTimeout(() => {
+    toasts.value = toasts.value.filter((item) => item.id !== toast.id)
+  }, 5000)
+}
+
 function selectAdjustmentType(type) {
+  const nextIsIncrease = isIncreaseAdjustment(type.value)
+  const currentMode = product.value?.adjustments?.some((item) => getRowQty(item) < 0)
+  const hasValues = product.value?.adjustments?.some((item) => Number(item.quantityChange) !== 0)
+
+  if (hasValues && currentMode !== nextIsIncrease) {
+    const shouldContinue = window.confirm('Changing the adjustment type will clear the row quantities and serial selections. Continue?')
+    if (!shouldContinue) return
+
+    product.value.adjustments.forEach((item) => {
+      const nextQty = nextIsIncrease ? Math.abs(getRowQty(item) || 1) : -Math.abs(getRowQty(item) || 1)
+      item.quantityChange = nextQty
+      item.serialNumbers = Array.from({ length: Math.max(0, getRequiredSerials(item)) }, (_, index) => item.serialNumbers?.[index] ?? '')
+    })
+  }
+
   form.adjustmentType = type.value
   showAdjustmentDropdown.value = false
 }
-
-const isProductLocked = computed(() => Boolean(route.query.product_id || route.query.id))
-const quantityIsValid = computed(
-  () => product.value?.adjustments?.length > 0 && product.value.adjustments.every((item) => Number.isInteger(item.quantityChange) && item.quantityChange > 0),
-)
-
-const totalStockChange = computed(() => {
-  return product.value?.adjustments?.reduce((sum, item) => sum + (Number(item.quantityChange) || 0), 0) || 0
-})
-
-const afterUpdateTotal = computed(() => {
-  return product.value?.currentStock && totalStockChange.value ? product.value.currentStock + totalStockChange.value : product.value?.currentStock || 0
-})
 
 function thumbInitials(name) {
   return String(name ?? '')
@@ -105,12 +190,8 @@ async function loadCatalog() {
 
     const queryProductId = route.query.product_id || route.query.id
     if (queryProductId && !product.value) {
-      const match = catalog.value.find(
-        (p) => String(p.id) === String(queryProductId),
-      )
-      if (match) {
-        selectProduct(match)
-      }
+      const match = catalog.value.find((p) => String(p.id) === String(queryProductId))
+      if (match) selectProduct(match)
     }
   } catch (err) {
     console.error('Failed to load products catalog:', err)
@@ -139,25 +220,49 @@ function selectProduct(picked) {
       isSerialized: picked.isSerialized,
     }]).map((variant) => ({
       ...variant,
-      quantityChange: 1,
-      serialNumbers: variant.isSerialized ? [''] : [],
+      quantityChange: isIncreaseAdjustment(form.adjustmentType) ? 1 : -1,
+      serialNumbers: Array.from({ length: isIncreaseAdjustment(form.adjustmentType) ? 1 : 1 }, () => ''),
     })),
   }
+
+  product.value.adjustments = product.value.adjustments.map((item) => ({
+    ...item,
+    serialNumbers: Array.from({ length: Math.max(0, Math.abs(Number(item.quantityChange) || 0)) }, () => ''),
+  }))
 }
 
-function updateVariantQuantity(item, value) {
-  const quantity = Number(value)
-  item.quantityChange = Number.isInteger(quantity) && quantity > 0 ? quantity : value
-  if (item.isSerialized) {
-    item.serialNumbers = Array.from(
-      { length: Math.max(0, Number(item.quantityChange) || 0) },
-      (_, index) => item.serialNumbers[index] ?? '',
-    )
+function updateVariantQuantity(item, rawValue) {
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed)) {
+    item.quantityChange = 0
+    return
   }
+
+  const nextQty = isIncreaseAdjustment(form.adjustmentType) ? Math.abs(parsed) : -Math.abs(parsed)
+  const previousQty = getRowQty(item)
+
+  if (previousQty !== 0 && Math.abs(nextQty) < Math.abs(previousQty)) {
+    const nextCount = Math.abs(nextQty)
+    const removed = getRequiredSerials(item) - nextCount
+    if (removed > 0) {
+      const confirmed = window.confirm(`Lowering the qty for ${item.name} will remove the last ${removed} serial numbers. Continue?`)
+      if (!confirmed) {
+        item.quantityChange = previousQty
+        return
+      }
+    }
+  }
+
+  item.quantityChange = nextQty
+
+  const limit = getRequiredSerials(item)
+  const current = Array.isArray(item.serialNumbers) ? item.serialNumbers.slice(0, limit) : []
+  const nextSerials = Array.from({ length: limit }, (_, index) => current[index] ?? '')
+  item.serialNumbers = nextSerials
 }
 
 function selectProductById(id) {
-  const picked = catalog.value.find((p) => String(p.id) === String(id))
+  const picked = catalog.value.find((item) => String(item.id) === String(id))
   if (!picked) return
   selectProduct(picked)
 }
@@ -166,10 +271,260 @@ function cancel() {
   router.push('/stock')
 }
 
+function getCurrentItem() {
+  return product.value?.adjustments?.find((item) => Number(item.id) === Number(drawer.variantId)) ?? null
+}
+
+function hasUnsavedChanges() {
+  if (!product.value) return false
+  return product.value.adjustments.some((item) => {
+    const qty = Number(item.quantityChange) || 0
+    if (qty !== 0) return true
+    return getRowSerials(item).length > 0
+  }) || Boolean(form.reason.trim())
+}
+
+function scrollToFirstInvalidRow() {
+  const invalidRow = document.querySelector('[data-row-invalid="true"]')
+  if (invalidRow) {
+    invalidRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const field = invalidRow.querySelector('input, button, [contenteditable="true"]')
+    field?.focus?.()
+  }
+}
+
+function parseSerialInput(rawValue) {
+  return String(rawValue ?? '')
+    .split(/[\n,\t\s]+/)
+    .map((serial) => normalizeSerial(serial))
+    .filter((serial) => serial.length > 0)
+}
+
+async function checkSerialExists(serialNumber) {
+  if (!serialNumber) return false
+  try {
+    const result = await lookupSerial(serialNumber, auth.accessToken)
+    return Boolean(result)
+  } catch (err) {
+    return false
+  }
+}
+
+async function openSerialDrawer(item) {
+  if (!item) return
+
+  drawer.lastFocusedEl = document.activeElement
+  drawer.open = true
+  drawer.variantId = item.id
+  drawer.mode = isIncreaseAdjustment(form.adjustmentType) ? 'increase' : 'decrease'
+  drawer.input = ''
+  drawer.search = ''
+  drawer.errors = {}
+  drawer.pendingExtras = 0
+  drawer.selectedSerials = getRowSerials(item)
+  drawer.originalSerials = getRowSerials(item)
+  drawer.availableSerials = []
+  drawer.showExistingSerials = false
+  drawer.lastAddedSerial = ''
+
+  if (drawer.mode === 'decrease') {
+    try {
+      const response = await fetchSerials({ product_variant_id: item.id, status: 'available', per_page: 200 }, auth.accessToken)
+      drawer.availableSerials = [...new Set((response.items ?? []).map((serial) => normalizeSerial(serial.serial_number || serial.serialNumber)).filter(Boolean))]
+    } catch (err) {
+      console.error('Failed to load serial inventory', err)
+      drawer.availableSerials = []
+    }
+  }
+
+  requestAnimationFrame(() => {
+    const input = document.getElementById('serial-modal-input')
+    input?.focus()
+  })
+}
+
+function closeSerialDrawer(confirmBeforeClose = false) {
+  const item = getCurrentItem()
+  if (confirmBeforeClose && item) {
+    const current = getRowSerials(item)
+    const baseline = drawer.originalSerials ?? []
+    const hasChanges = JSON.stringify(current) !== JSON.stringify(baseline)
+    if (hasChanges && !window.confirm('Discard the unsaved serial changes?')) {
+      return
+    }
+  }
+
+  drawer.open = false
+  drawer.variantId = null
+  drawer.input = ''
+  drawer.search = ''
+  drawer.selectedSerials = []
+  drawer.availableSerials = []
+  drawer.errors = {}
+  drawer.pendingExtras = 0
+  drawer.originalSerials = []
+  drawer.showExistingSerials = false
+  drawer.lastAddedSerial = ''
+
+  if (drawer.lastFocusedEl instanceof HTMLElement) {
+    drawer.lastFocusedEl.focus()
+  }
+}
+
+function addSerialsFromInput() {
+  const item = getCurrentItem()
+  if (!item) return
+
+  const limit = getRequiredSerials(item)
+  const current = getRowSerials(item)
+  const incoming = parseSerialInput(drawer.input)
+  const accepted = []
+  let ignored = 0
+
+  incoming.forEach((serial) => {
+    if (current.includes(serial) || accepted.includes(serial)) {
+      drawer.errors[serial] = 'Duplicate serial in the list.'
+      return
+    }
+    if (current.length + accepted.length >= limit) {
+      ignored += 1
+      return
+    }
+    accepted.push(serial)
+  })
+
+  drawer.pendingExtras = ignored
+  drawer.input = ''
+
+  if (accepted.length === 0) return
+
+  const nextSerials = [...current, ...accepted].slice(0, limit)
+  item.serialNumbers = nextSerials
+  while (item.serialNumbers.length < limit) item.serialNumbers.push('')
+  drawer.lastAddedSerial = nextSerials[nextSerials.length - 1] || ''
+  if (drawer.lastAddedSerial) {
+    setTimeout(() => {
+      if (drawer.lastAddedSerial === nextSerials[nextSerials.length - 1]) drawer.lastAddedSerial = ''
+    }, 850)
+  }
+}
+
+async function addSingleSerial(value) {
+  const item = getCurrentItem()
+  if (!item) return
+
+  const serial = normalizeSerial(value)
+  if (!serial) return
+
+  const current = getRowSerials(item)
+  if (current.includes(serial)) {
+    drawer.errors[serial] = 'Duplicate serial in the list.'
+    return
+  }
+
+  const exists = await checkSerialExists(serial)
+  if (exists) {
+    drawer.errors[serial] = 'Already exists in the system.'
+    return
+  }
+
+  if (current.length >= getRequiredSerials(item)) {
+    drawer.pendingExtras = current.length - getRequiredSerials(item)
+    return
+  }
+
+  delete drawer.errors[serial]
+  const nextSerials = [...current, serial].slice(0, getRequiredSerials(item))
+  item.serialNumbers = nextSerials
+  while (item.serialNumbers.length < getRequiredSerials(item)) item.serialNumbers.push('')
+  drawer.input = ''
+  drawer.lastAddedSerial = serial
+  setTimeout(() => {
+    if (drawer.lastAddedSerial === serial) drawer.lastAddedSerial = ''
+  }, 850)
+}
+
+function removeSerial(item, serial) {
+  if (!item) return
+  item.serialNumbers = item.serialNumbers.filter((candidate) => normalizeSerial(candidate) !== normalizeSerial(serial))
+  while (item.serialNumbers.length < getRequiredSerials(item)) item.serialNumbers.push('')
+}
+
+function selectFirstNSerials() {
+  const item = getCurrentItem()
+  if (!item) return
+  const limit = getRequiredSerials(item)
+  const available = drawer.availableSerials.filter((serial) => !drawer.selectedSerials.includes(serial))
+  drawer.selectedSerials = available.slice(0, limit)
+  item.serialNumbers = [...drawer.selectedSerials, ...Array.from({ length: Math.max(0, limit - drawer.selectedSerials.length) }, () => '')]
+}
+
+function toggleSelectedSerial(serial) {
+  const item = getCurrentItem()
+  if (!item) return
+
+  const target = [...new Set(drawer.selectedSerials)]
+  const next = target.includes(serial)
+    ? target.filter((candidate) => candidate !== serial)
+    : [...target, serial]
+
+  drawer.selectedSerials = next
+  item.serialNumbers = [...next, ...Array.from({ length: Math.max(0, getRequiredSerials(item) - next.length) }, () => '')]
+}
+
+function saveDrawerSelection() {
+  const item = getCurrentItem()
+  if (!item) return
+
+  const serials = getRowSerials(item)
+  item.serialNumbers = [...serials, ...Array.from({ length: Math.max(0, getRequiredSerials(item) - serials.length) }, () => '')]
+  closeSerialDrawer()
+}
+
+function handleModalKeydown(event) {
+  if (!drawer.open) return
+
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeSerialDrawer(true)
+    return
+  }
+
+  if (event.key !== 'Tab') return
+
+  const modal = document.querySelector('.serial-modal__panel')
+  if (!modal) return
+
+  const focusable = [...modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+
+  if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first?.focus()
+  }
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last?.focus()
+  }
+}
+
 async function complete() {
   if (!product.value) return
-  if (!quantityIsValid.value) {
-    submitError.value = 'Quantity must be a positive whole number.'
+  if (submitting.value) return
+
+  const rows = activeRows()
+  if (!rows.length) {
+    submitError.value = 'Select at least one row to adjust.'
+    return
+  }
+
+  const invalid = rows.filter((item) => getFilledSerialCount(item) !== getRequiredSerials(item))
+
+  if (invalid.length) {
+    submitError.value = `Please complete the serial entries before submitting.`
+    setTimeout(scrollToFirstInvalidRow, 0)
     return
   }
 
@@ -178,30 +533,28 @@ async function complete() {
 
   try {
     const reference = form.reason?.trim() || form.adjustmentType
-    await createBulkStockMovement({
-      items: product.value.adjustments.map((item) => ({
+    const payload = rows.map((item) => {
+      const qty = Number(item.quantityChange) || 0
+      const serials = getRowSerials(item)
+      return {
         stockable_type: product.value.variants.length ? 'variant' : 'product',
         stockable_id: String(item.id),
-        movement_type: 'adjust',
-        quantity: item.quantityChange,
+        movement_type: qty >= 0 ? 'stock_in' : 'stock_out',
+        quantity: Math.abs(qty),
         reason: form.adjustmentType,
         reference,
-        serial_numbers: item.serialNumbers.filter((serial) => serial.trim()),
+        serial_numbers: serials,
         metadata: { adjustment_type: form.adjustmentType },
-      })),
-    }, auth.accessToken)
-
-    // Redirect to stock detail page with refresh flag
-    router.push({
-      name: 'stock-detail',
-      params: { id: product.value.id },
-      query: { refresh: Date.now() }
+      }
     })
+
+    await createBulkStockMovement({ items: payload }, auth.accessToken)
+    pushToast('Stock adjustment saved', 'Inventory updated successfully.', 'success')
+    router.push({ name: 'stock-detail', params: { id: product.value.id }, query: { refresh: Date.now() } })
   } catch (err) {
-    submitError.value =
-      err.errors?.quantity?.[0] ||
-      err.message ||
-      'Unable to save stock adjustment. Please try again.'
+    const message = err?.errors?.items?.[0] || err?.message || 'Unable to save stock adjustment. Please try again.'
+    submitError.value = message
+    pushToast('Stock adjustment failed', message, 'error')
   } finally {
     submitting.value = false
   }
@@ -211,14 +564,55 @@ function closeAdjustmentDropdown() {
   showAdjustmentDropdown.value = false
 }
 
+let leaveGuard = null
+
 onMounted(() => {
   loadCatalog()
   document.addEventListener('click', closeAdjustmentDropdown)
+  document.addEventListener('keydown', handleModalKeydown)
+  window.addEventListener('beforeunload', (event) => {
+    if (hasUnsavedChanges()) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+  })
+  leaveGuard = router.beforeEach((to, from, next) => {
+    if (!hasUnsavedChanges() || window.confirm('You have unsaved changes. Leave this page?')) {
+      next()
+      return
+    }
+    next(false)
+  })
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', closeAdjustmentDropdown)
+  document.removeEventListener('keydown', handleModalKeydown)
+  document.body.style.overflow = ''
+  if (leaveGuard) leaveGuard()
 })
+
+watch(
+  () => drawer.open,
+  (isOpen) => {
+    document.body.style.overflow = isOpen ? 'hidden' : ''
+  },
+  { immediate: true },
+)
+
+watch(
+  () => form.adjustmentType,
+  () => {
+    if (!product.value?.adjustments?.length) return
+    const nextSeries = isIncreaseAdjustment(form.adjustmentType)
+    product.value.adjustments.forEach((item) => {
+      const qty = Number(item.quantityChange) || 0
+      item.quantityChange = nextSeries ? Math.abs(qty || 1) : -Math.abs(qty || 1)
+      const serials = Array.isArray(item.serialNumbers) ? item.serialNumbers.slice(0, Math.abs(Number(item.quantityChange) || 0)) : []
+      item.serialNumbers = Array.from({ length: Math.max(0, Math.abs(Number(item.quantityChange) || 0)) }, (_, index) => serials[index] ?? '')
+    })
+  },
+)
 </script>
 
 <template>
@@ -319,7 +713,7 @@ onBeforeUnmount(() => {
 
         <div v-if="product?.adjustments?.length" class="table-container">
           <div class="table-header">
-            <span class="table-header__summary">Total Stock In Variant: <strong>{{ totalStockChange }}</strong></span>
+            <span class="table-header__summary">{{ summaryText }}</span>
           </div>
 
           <table class="stock-table">
@@ -332,11 +726,14 @@ onBeforeUnmount(() => {
                 <th class="th-stock-in">Stock In Qty</th>
                 <th class="th-serialized">Serial</th>
                 <th class="th-after">After Update</th>
-                <th class="th-action">Action</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(item, index) in product.adjustments" :key="item.id">
+              <tr
+                v-for="(item, index) in product.adjustments"
+                :key="item.id"
+                :data-row-invalid="getFilledSerialCount(item) !== getRequiredSerials(item) && Number(item.quantityChange) !== 0"
+              >
                 <td class="td-no">{{ index + 1 }}</td>
                 <td class="td-sku">{{ item.sku || 'N/A' }}</td>
                 <td class="td-variant">
@@ -358,7 +755,7 @@ onBeforeUnmount(() => {
                       :id="`quantity-${item.id}`"
                       :value="item.quantityChange"
                       type="number"
-                      min="1"
+                      :min="isIncreaseAdjustment(form.adjustmentType) ? 1 : -9999"
                       step="1"
                       inputmode="numeric"
                       required
@@ -367,54 +764,28 @@ onBeforeUnmount(() => {
                   </div>
                 </td>
                 <td class="td-serialized">
-                  <span v-if="item.isSerialized" class="serialized-badge" title="This variant requires serial numbers">
-                    <svg class="serialized-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <path d="M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18M9 12h6M9 16h6M9 8h6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                    {{ item.serialNumbers?.length || 0 }}/{{ item.quantityChange }}
-                  </span>
-                  <span v-else class="serialized-none">—</span>
+                  <button
+                    type="button"
+                    class="serial-trigger"
+                    :class="{
+                      'serial-trigger--disabled': !Number.isFinite(getRowQty(item)) || getRowQty(item) <= 0,
+                      'serial-trigger--incomplete': getRowQty(item) > 0 && getFilledSerialCount(item) !== getRequiredSerials(item),
+                      'serial-trigger--complete': getRowQty(item) > 0 && getFilledSerialCount(item) === getRequiredSerials(item),
+                    }"
+                    :disabled="!Number.isFinite(getRowQty(item)) || getRowQty(item) <= 0"
+                    :aria-label="`Add serial numbers for ${item.name}`"
+                    :title="getSerialTriggerTitle(item)"
+                    @click="openSerialDrawer(item)"
+                  >
+                    <span class="serial-trigger__label">Add serial</span>
+                    <span class="serial-trigger__count" aria-live="polite">{{ getFilledSerialCount(item) }} / {{ getRequiredSerials(item) }}</span>
+                    <span v-if="getRowQty(item) > 0 && getFilledSerialCount(item) === getRequiredSerials(item)" class="serial-trigger__check">✓</span>
+                  </button>
                 </td>
                 <td class="td-after">{{ (Number(item.currentStock) || 0) + (Number(item.quantityChange) || 0) }}</td>
-                <td class="td-action">
-                  <input
-                    :id="`check-${item.id}`"
-                    type="checkbox"
-                    :checked="selectedRows.has(item.id)"
-                    @change="e => e.target.checked ? selectedRows.add(item.id) : selectedRows.delete(item.id)"
-                    class="checkbox"
-                  />
-                </td>
               </tr>
             </tbody>
           </table>
-
-          <div v-if="product?.adjustments?.some(a => a.isSerialized)" class="serial-section">
-            <div class="serial-section__head">
-              <h4 class="serial-section__title">Serial Numbers</h4>
-              <p class="serial-section__desc">Enter unique serial numbers for each item</p>
-            </div>
-            <div v-for="item in product.adjustments.filter(a => a.isSerialized)" :key="item.id" class="serial-group">
-              <div class="serial-group__header">
-                <span class="serial-group__label">{{ item.name }} ({{ item.sku }})</span>
-                <span class="serial-group__count">{{ item.serialNumbers.filter(s => s.trim()).length }}/{{ item.quantityChange }} entered</span>
-              </div>
-              <div class="serial-inputs">
-                <div v-for="(_, serialIndex) in item.serialNumbers" :key="`${item.id}-${serialIndex}`" class="serial-input-wrapper">
-                  <label :for="`serial-${item.id}-${serialIndex}`" class="serial-input-label">Serial #{{ serialIndex + 1 }}</label>
-                  <input
-                    :id="`serial-${item.id}-${serialIndex}`"
-                    v-model="item.serialNumbers[serialIndex]"
-                    type="text"
-                    required
-                    :placeholder="`e.g., SN-${Date.now().toString().slice(-6)}`"
-                    class="serial-input"
-                  />
-                  <span v-if="item.serialNumbers[serialIndex]?.trim()" class="serial-check">✓</span>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
 
         <div class="field field--reason">
@@ -431,10 +802,172 @@ onBeforeUnmount(() => {
 
       <div class="actions">
         <BaseButton variant="ghost" :disabled="submitting" @click="cancel">Cancel</BaseButton>
-        <BaseButton variant="primary" :disabled="!product || !quantityIsValid || submitting" @click="complete">
-          {{ submitting ? 'Saving...' : 'Create' }}
-        </BaseButton>
+        <div class="submit-wrap">
+          <BaseButton
+            variant="primary"
+            :disabled="!product || !quantityIsValid || submitting"
+            @click="complete"
+            :title="incompleteRows.length ? incompleteTooltip : ''"
+          >
+            {{ submitting ? 'Saving...' : 'Create' }}
+          </BaseButton>
+        </div>
       </div>
+
+      <aside
+        v-if="drawer.open"
+        class="serial-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="serial-modal-title"
+        @click.self="closeSerialDrawer(true)"
+      >
+        <div class="serial-modal__panel" aria-live="polite">
+          <header class="serial-modal__header">
+            <div class="serial-modal__variant">
+              <img
+                v-if="product?.thumbnail"
+                :src="product.thumbnail"
+                :alt="getCurrentItem()?.name || 'Variant image'"
+                class="serial-modal__thumb"
+              />
+              <span v-else class="serial-modal__thumb serial-modal__thumb--initials">{{ thumbInitials(getCurrentItem()?.name || product?.name || 'V') }}</span>
+              <div class="serial-modal__variant-copy">
+                <strong>{{ getCurrentItem()?.name || 'Variant' }}</strong>
+                <span>{{ getCurrentItem()?.sku || product?.sku || 'SKU' }}</span>
+              </div>
+            </div>
+            <button type="button" class="serial-modal__close" aria-label="Close" title="Close" @click="closeSerialDrawer(true)">×</button>
+          </header>
+
+          <div class="serial-modal__body">
+            <div class="serial-modal__title-row">
+              <div>
+                <p class="serial-modal__eyebrow">Variant serials</p>
+                <h3 id="serial-modal-title">
+                  {{ getRequiredSerials(getCurrentItem()) === 1 ? 'Add 1 serial number' : `Add ${getRequiredSerials(getCurrentItem())} serial numbers` }}
+                </h3>
+              </div>
+            </div>
+
+            <div class="serial-modal__stats" aria-label="Serial stats">
+              <div class="serial-modal__stat">
+                <span>Existing</span>
+                <strong>{{ getCurrentItem()?.currentStock ?? 0 }}</strong>
+              </div>
+              <div class="serial-modal__stat">
+                <span>Needed</span>
+                <strong>{{ Math.max(0, getRequiredSerials(getCurrentItem())) }}</strong>
+              </div>
+              <div class="serial-modal__stat">
+                <span>Entered</span>
+                <strong>{{ getFilledSerialCount(getCurrentItem()) }}</strong>
+              </div>
+            </div>
+
+            <div class="serial-modal__progress" aria-live="polite">
+              <div class="serial-modal__progress-meta">
+                <span>{{ getFilledSerialCount(getCurrentItem()) }} / {{ getRequiredSerials(getCurrentItem()) }}</span>
+                <span :class="{ 'serial-modal__progress-state--complete': getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem()) }">
+                  {{ getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem()) ? 'Complete' : 'In progress' }}
+                </span>
+              </div>
+              <div class="serial-modal__progress-track">
+                <span
+                  class="serial-modal__progress-bar"
+                  :style="{ width: `${Math.min(100, (getFilledSerialCount(getCurrentItem()) / Math.max(1, getRequiredSerials(getCurrentItem()))) * 100)}%` }"
+                />
+              </div>
+            </div>
+
+            <div class="serial-modal__field">
+              <label for="serial-modal-input">Scan or type a serial</label>
+              <div class="serial-modal__input-row">
+                <input
+                  id="serial-modal-input"
+                  v-model="drawer.input"
+                  type="text"
+                  autocomplete="off"
+                  :disabled="getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())"
+                  @keydown.enter.prevent="addSingleSerial(drawer.input)"
+                  @keydown.backspace.prevent="if (!drawer.input.trim()) { const item = getCurrentItem(); if (item && item.serialNumbers && item.serialNumbers.length) { const last = item.serialNumbers.slice().reverse().find((serial) => normalizeSerial(serial)); if (last) removeSerial(item, last) } }"
+                  @paste="event => { event.preventDefault(); addSerialsFromInput(); }"
+                  placeholder="Scan or type a serial, then press Enter"
+                />
+                <button type="button" class="serial-modal__add-btn" :disabled="!drawer.input.trim() || getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())" @click="addSingleSerial(drawer.input)">Add</button>
+              </div>
+              <p class="serial-modal__helper">Tip: paste many serials separated by new lines, commas or spaces</p>
+              <p v-if="getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())" class="serial-modal__limit">All serials entered</p>
+            </div>
+
+            <div v-if="drawer.pendingExtras" class="serial-modal__banner">
+              {{ drawer.pendingExtras }} extra ignored.
+            </div>
+            <div v-if="Object.keys(drawer.errors).length" class="serial-modal__error-list" aria-live="polite">
+              <div v-for="(message, serial) in drawer.errors" :key="serial" class="serial-modal__error-item">
+                <span>⚠</span>
+                <span>{{ serial }}: {{ message }}</span>
+              </div>
+            </div>
+
+            <div class="serial-modal__chips-wrap">
+              <div v-if="!getRowSerials(getCurrentItem()).length" class="serial-modal__empty-state">
+                <span aria-hidden="true">⌁</span>
+                <p>No serials yet. Scan or paste to begin.</p>
+              </div>
+              <div v-else class="serial-modal__chips">
+                <button
+                  v-for="serial in getRowSerials(getCurrentItem())"
+                  :key="`${serial}-${Math.random()}`"
+                  type="button"
+                  class="serial-modal__chip"
+                  :class="{ 'serial-modal__chip--new': drawer.lastAddedSerial && serial === drawer.lastAddedSerial }"
+                  @click="removeSerial(getCurrentItem(), serial)"
+                  :title="`Remove ${serial}`"
+                >
+                  <span class="serial-modal__chip-index">#{{ getRowSerials(getCurrentItem()).indexOf(serial) + 1 }}</span>
+                  <span class="serial-modal__chip-value">{{ serial }}</span>
+                  <span aria-hidden="true" class="serial-modal__chip-remove">×</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="serial-modal__existing">
+              <button type="button" class="serial-modal__existing-toggle" @click="drawer.showExistingSerials = !drawer.showExistingSerials">
+                <span>Existing serials ({{ drawer.availableSerials.length }})</span>
+                <span>{{ drawer.showExistingSerials ? 'Hide' : 'Show' }}</span>
+              </button>
+              <div v-if="drawer.showExistingSerials" class="serial-modal__existing-panel">
+                <div class="serial-modal__existing-search">
+                  <input v-model="drawer.search" type="search" placeholder="Search serials" />
+                </div>
+                <div class="serial-modal__existing-list">
+                  <div v-for="serial in drawer.availableSerials.filter(item => item.toLowerCase().includes(drawer.search.toLowerCase()))" :key="serial" class="serial-modal__existing-item">
+                    {{ serial }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <footer class="serial-modal__footer">
+            <button type="button" class="serial-modal__ghost" @click="() => { const item = getCurrentItem(); if (item) { item.serialNumbers = []; drawer.selectedSerials = []; drawer.errors = {}; drawer.pendingExtras = 0 } }">Clear all</button>
+            <div class="serial-modal__footer-actions">
+              <button type="button" class="serial-modal__secondary" @click="closeSerialDrawer(true)">Cancel</button>
+              <button
+                type="button"
+                class="serial-modal__primary"
+                :disabled="getFilledSerialCount(getCurrentItem()) !== getRequiredSerials(getCurrentItem()) || !getCurrentItem()"
+                @click="saveDrawerSelection"
+              >
+                Save serials
+              </button>
+            </div>
+          </footer>
+        </div>
+      </aside>
+
+      <ToastStack :toasts="toasts" @dismiss="toasts = toasts.filter((toast) => toast.id !== $event)" />
     </div>
   </div>
 </template>
@@ -979,6 +1512,64 @@ onBeforeUnmount(() => {
   stroke-width: 1.5;
 }
 
+.serial-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 40px;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 214, 102, 0.35);
+  background: rgba(255, 214, 102, 0.08);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+
+  &:hover:not(:disabled) {
+    border-color: rgba(255, 214, 102, 0.52);
+    background: rgba(255, 214, 102, 0.12);
+  }
+
+  &--incomplete {
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(248, 113, 113, 0.1);
+    color: #fca5a5;
+  }
+
+  &--complete {
+    border-color: rgba(34, 197, 94, 0.45);
+    background: rgba(34, 197, 94, 0.12);
+    color: #86efac;
+  }
+
+  &--disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    border-color: var(--border-subtle);
+    background: var(--surface-hover);
+    color: var(--text-muted);
+  }
+
+  &__label {
+    white-space: nowrap;
+  }
+
+  &__count {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__check {
+    color: inherit;
+    font-weight: 700;
+  }
+}
+
 .serialized-none {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -1202,6 +1793,531 @@ onBeforeUnmount(() => {
       border-color: rgb(var(--accent-rgb));
       box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
+  }
+}
+
+.serial-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(15, 17, 20, 0.68);
+  backdrop-filter: blur(4px);
+  animation: serialModalFade 0.2s ease;
+}
+
+.serial-modal__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 640px);
+  max-height: 85vh;
+  background: var(--surface);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  animation: serialModalScale 0.2s ease;
+}
+
+.serial-modal__header,
+.serial-modal__footer {
+  position: sticky;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.serial-modal__footer {
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: none;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  background: rgba(20, 22, 27, 0.96);
+}
+
+.serial-modal__variant {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.serial-modal__thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--surface-hover);
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+
+  &--initials {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-strong);
+  }
+}
+
+.serial-modal__variant-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+
+  strong {
+    color: var(--text-strong);
+    font-size: 0.96rem;
+    font-weight: 700;
+  }
+
+  span {
+    font-size: 0.76rem;
+    color: var(--text-subtle);
+  }
+}
+
+.serial-modal__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-hover);
+  color: var(--text-strong);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    border-color: rgb(var(--accent-rgb) / 0.5);
+    background: rgba(var(--accent-rgb) / 0.08);
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--accent-rgb));
+    outline-offset: 2px;
+  }
+}
+
+.serial-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
+  overflow-y: auto;
+}
+
+.serial-modal__eyebrow {
+  margin: 0 0 0.35rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.serial-modal__title-row h3 {
+  margin: 0;
+  font-size: 1.35rem;
+  color: var(--text-strong);
+  line-height: 1.3;
+}
+
+.serial-modal__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.serial-modal__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.75rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-hover);
+
+  span {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+
+  strong {
+    color: var(--text-strong);
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+}
+
+.serial-modal__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.serial-modal__progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.serial-modal__progress-state--complete {
+  color: #86efac;
+}
+
+.serial-modal__progress-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.serial-modal__progress-bar {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.85), rgba(var(--accent-rgb), 1));
+  transition: width 0.2s ease;
+}
+
+.serial-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.serial-modal__field label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.serial-modal__input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.serial-modal__input-row input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-hover);
+  color: var(--text-strong);
+  padding: 0.8rem 0.9rem;
+  font: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+  &::placeholder {
+    color: var(--text-muted);
+  }
+
+  &:focus {
+    outline: none;
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.serial-modal__add-btn,
+.serial-modal__ghost,
+.serial-modal__secondary,
+.serial-modal__primary {
+  min-height: 42px;
+  border-radius: 10px;
+  padding: 0.7rem 1rem;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.serial-modal__add-btn,
+.serial-modal__primary {
+  background: rgb(var(--accent-rgb));
+  border: 1px solid rgb(var(--accent-rgb));
+  color: var(--ink-on-accent);
+}
+
+.serial-modal__add-btn:hover:not(:disabled),
+.serial-modal__primary:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.serial-modal__ghost,
+.serial-modal__secondary {
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-strong);
+}
+
+.serial-modal__primary:disabled,
+.serial-modal__add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.serial-modal__helper,
+.serial-modal__limit {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.serial-modal__banner {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.serial-modal__error-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.serial-modal__error-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+  font-size: 0.78rem;
+}
+
+.serial-modal__chips-wrap {
+  min-height: 120px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.01);
+  padding: 0.75rem;
+}
+
+.serial-modal__empty-state {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+
+  span {
+    font-size: 1.7rem;
+    opacity: 0.7;
+  }
+
+  p {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+}
+
+.serial-modal__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.serial-modal__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.65rem 0.45rem 0.5rem;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-strong);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.8rem;
+  cursor: pointer;
+
+  &:hover {
+    border-color: rgba(var(--accent-rgb), 0.45);
+  }
+
+  &--new {
+    border-color: rgba(var(--accent-rgb), 0.6);
+    box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.15);
+    background: rgba(var(--accent-rgb), 0.08);
+  }
+}
+
+.serial-modal__chip-index {
+  opacity: 0.72;
+}
+
+.serial-modal__chip-value {
+  font-weight: 600;
+}
+
+.serial-modal__chip-remove {
+  font-size: 1rem;
+  opacity: 0.8;
+}
+
+.serial-modal__existing {
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.serial-modal__existing-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  background: transparent;
+  border: none;
+  color: var(--text-strong);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.serial-modal__existing-panel {
+  border-top: 1px solid var(--border-subtle);
+  padding: 0.8rem;
+}
+
+.serial-modal__existing-search input {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-hover);
+  color: var(--text-strong);
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+  font: inherit;
+}
+
+.serial-modal__existing-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-top: 0.8rem;
+}
+
+.serial-modal__existing-item {
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--text-body);
+}
+
+.serial-modal__footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+@keyframes serialModalFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes serialModalScale {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 640px) {
+  .serial-modal {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .serial-modal__panel {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .serial-modal__header,
+  .serial-modal__footer {
+    padding: 0.9rem 1rem;
+  }
+
+  .serial-modal__body {
+    padding: 1rem;
+  }
+
+  .serial-modal__input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .serial-modal__add-btn,
+  .serial-modal__primary,
+  .serial-modal__secondary,
+  .serial-modal__ghost {
+    width: 100%;
+  }
+
+  .serial-modal__footer {
+    justify-content: stretch;
+  }
+
+  .serial-modal__footer-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .serial-modal,
+  .serial-modal__panel {
+    animation: none;
   }
 }
 

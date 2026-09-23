@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowDown, ArrowUp } from '@lucide/vue'
+import { ArrowDown, ArrowUp, Eye, SlidersHorizontal } from '@lucide/vue'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { Button } from '@/components/ui/button'
@@ -18,8 +18,6 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const PER_PAGE = 20
-// A status filter can't be pushed to the endpoint, so it's applied client-side by
-// walking the search result. Cap the walk so a huge catalog can't hang the page.
 const FILTER_PER_PAGE = 100
 const FILTER_MAX_PAGES = 20
 
@@ -43,6 +41,9 @@ const sortDirection = ref('desc')
 
 const summary = ref({ total: null, low: null, out: null, inStock: null })
 
+const canViewStock = computed(() => auth.hasPermission('stock.view'))
+const canAdjustStock = computed(() => auth.hasPermission('stock.update'))
+
 const availabilityOptions = [
   { value: 'all', label: 'All Stock' },
   { value: 'in-stock', label: 'In Stock' },
@@ -51,9 +52,9 @@ const availabilityOptions = [
 ]
 
 const availabilityLabels = {
-  'in-stock': 'In Stock',
-  'low-stock': 'Low Stock',
-  'out-of-stock': 'Out of Stock',
+  'in-stock': 'In stock',
+  'low-stock': 'Low stock',
+  'out-of-stock': 'Out of stock',
 }
 
 const filterLabel = computed(
@@ -65,7 +66,6 @@ const filterLabel = computed(
 function countLabel(value) {
   return value == null ? '—' : Number(value).toLocaleString()
 }
-// The stat cards format their raw counts through this.
 const formatCount = countLabel
 
 const stats = computed(() => [
@@ -103,6 +103,52 @@ const stats = computed(() => [
   },
 ])
 
+function formatDisplayDate(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatRelativeTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+
+  const diffMs = Date.now() - date.getTime()
+  const diffMinutes = Math.max(0, Math.round(diffMs / 60000))
+
+  if (diffMinutes < 1) return 'just now'
+  if (diffMinutes < 60) return `${Math.max(1, diffMinutes)} min ago`
+
+  const diffHours = Math.round(diffMinutes / 60)
+  if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`
+
+  const diffDays = Math.round(diffHours / 24)
+  if (diffDays < 30) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
+
+  const diffMonths = Math.round(diffDays / 30)
+  if (diffMonths < 12) return `${diffMonths} month${diffMonths === 1 ? '' : 's'} ago`
+
+  const diffYears = Math.round(diffMonths / 12)
+  return `${diffYears} year${diffYears === 1 ? '' : 's'} ago`
+}
+
+function formatDateTooltip(value) {
+  if (!value) return 'No date available'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+}
+
 function thumbInitials(name) {
   return String(name ?? '')
     .replace(/[^A-Za-z0-9 ]/g, '')
@@ -111,23 +157,25 @@ function thumbInitials(name) {
 }
 
 function mapItem(row) {
+  const status = deriveStockStatus(row)
+
   return {
     id: row.id,
     uuid: row.id,
     name: row.name ?? '',
     sku: row.sku ?? '',
-    startDate: formatStockDate(row.created_at),
-    lastUpdated: formatStockDate(row.updated_at),
+    startDate: formatDisplayDate(row.created_at),
+    lastUpdated: row.updated_at,
+    lastUpdatedLabel: formatRelativeTime(row.updated_at),
     onHand: Number(row.stock_quantity ?? 0),
     threshold: Number(row.min_stock_alert ?? 0),
-    availability: deriveStockStatus(row),
+    availability: status,
     thumbnail: usableImage(
       row.thumbnail || row.image || row.image_url || row.product?.thumbnail,
     ),
   }
 }
 
-// GET /admin/stock accepts `search`, `sort`/`direction`, and an updated-at range.
 function listParams({ page: targetPage = page.value, perPage = PER_PAGE } = {}) {
   const params = new URLSearchParams({
     page: String(targetPage),
@@ -142,7 +190,6 @@ function listParams({ page: targetPage = page.value, perPage = PER_PAGE } = {}) 
   return params
 }
 
-// Walk every page of the current search, for the client-side status filter.
 async function fetchAllMatching() {
   const rows = []
   let current = 1
@@ -161,7 +208,6 @@ async function fetchAllMatching() {
   return { rows, truncated: last > FILTER_MAX_PAGES }
 }
 
-// Paging inside a client-filtered set shouldn't refetch on every page step.
 let statusCache = { key: '', rows: [] }
 
 function invalidateStatusCache() {
@@ -195,9 +241,6 @@ async function loadItems() {
       lastPage.value = pagination.last_page ?? 1
       filterTruncated.value = false
     } else {
-      // The endpoint has no stock-status parameter, so narrow client-side and
-      // page over the result — that keeps the total and the page count honest
-      // rather than paginating a server set the table then filters down.
       const key = statusCacheKey()
       if (statusCache.key !== key) {
         const { rows, truncated } = await fetchAllMatching()
@@ -235,8 +278,6 @@ async function loadSummary() {
   }
 }
 
-// Any filter change resets to page 1. Reload directly only when already on
-// page 1, otherwise the page watcher does it (avoids a double fetch).
 function applyFilters() {
   if (page.value !== 1) {
     page.value = 1
@@ -250,7 +291,25 @@ function setFilter(value) {
   filterOpen.value = false
 }
 
-// Debounce search; the dropdown applies immediately through its watcher.
+function toggleSort(columnKey) {
+  if (sortBy.value === columnKey) {
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+    return
+  }
+
+  sortBy.value = columnKey
+  sortDirection.value = columnKey === 'name' ? 'asc' : 'desc'
+}
+
+function isSorted(columnKey) {
+  return sortBy.value === columnKey
+}
+
+function getSortIcon(columnKey) {
+  if (!isSorted(columnKey)) return 'neutral'
+  return sortDirection.value === 'asc' ? 'asc' : 'desc'
+}
+
 let searchTimer
 watch(query, () => {
   invalidateStatusCache()
@@ -285,9 +344,6 @@ onBeforeUnmount(() => {
   clearTimeout(searchTimer)
 })
 
-// NOTE: StockDetailView still renders from its own hardcoded records keyed by
-// 1..6, so it falls back to the first record whatever it is handed. Product id
-// is the UUID route key used by the API.
 function openItem(id) {
   router.push({ name: 'stock-detail', params: { id } })
 }
@@ -456,77 +512,143 @@ function nextPage() {
           Too many matches to filter in full — showing a partial list. Narrow your search to see everything.
         </p>
 
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Product &amp; SKU</th>
-              <th>Start-Date</th>
-              <th>Last Updated</th>
-              <th>On Hand</th>
-              <th>Availability</th>
-              <th aria-label="Actions"></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="loading && items.length === 0">
-              <td colspan="6" class="table__empty">Loading inventory data...</td>
-            </tr>
-            <tr
-              v-for="item in items"
-              v-else
-              :key="item.id"
-              class="table__row"
-              @click="openItem(item.id)"
-            >
-              <td>
-                <div class="product">
-                  <img
-                    v-if="item.thumbnail && !brokenThumbs.has(item.id)"
-                    :src="item.thumbnail"
-                    :alt="item.name"
-                    class="product__thumb product__thumb--img"
-                    loading="lazy"
-                    @error="onThumbError(item.id)"
-                  />
-                  <span v-else class="product__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
-                  <div class="product__meta">
-                    <p class="product__name">{{ item.name }}</p>
-                    <p class="product__sku">{{ item.sku }}</p>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th class="sortable" @click="toggleSort('name')" role="button" tabindex="0" @keydown.enter.prevent="toggleSort('name')" @keydown.space.prevent="toggleSort('name')">
+                  <span class="thead-label">Product</span>
+                  <span v-if="getSortIcon('name') !== 'neutral'" class="sort-indicator" aria-hidden="true">
+                    <ArrowUp v-if="sortDirection === 'asc'" />
+                    <ArrowDown v-else />
+                  </span>
+                </th>
+                <th class="added-on">Added on</th>
+                <th class="sortable" @click="toggleSort('updated_at')" role="button" tabindex="0" @keydown.enter.prevent="toggleSort('updated_at')" @keydown.space.prevent="toggleSort('updated_at')">
+                  <span class="thead-label">Last updated</span>
+                  <span v-if="getSortIcon('updated_at') !== 'neutral'" class="sort-indicator" aria-hidden="true">
+                    <ArrowUp v-if="sortDirection === 'asc'" />
+                    <ArrowDown v-else />
+                  </span>
+                </th>
+                <th class="sortable" @click="toggleSort('stock_quantity')" role="button" tabindex="0" @keydown.enter.prevent="toggleSort('stock_quantity')" @keydown.space.prevent="toggleSort('stock_quantity')">
+                  <span class="thead-label">On hand</span>
+                  <span v-if="getSortIcon('stock_quantity') !== 'neutral'" class="sort-indicator" aria-hidden="true">
+                    <ArrowUp v-if="sortDirection === 'asc'" />
+                    <ArrowDown v-else />
+                  </span>
+                </th>
+                <th>Availability</th>
+                <th class="table__actions-header" aria-label="Actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-if="loading && items.length === 0">
+                <tr>
+                  <td colspan="6" class="table__empty">
+                    <div class="skeleton-row" v-for="n in 5" :key="n" aria-hidden="true">
+                      <span class="skeleton skeleton--thumb" />
+                      <span class="skeleton skeleton--line wide" />
+                      <span class="skeleton skeleton--line" />
+                      <span class="skeleton skeleton--line short" />
+                      <span class="skeleton skeleton--line short" />
+                      <span class="skeleton skeleton--tiny" />
+                    </div>
+                  </td>
+                </tr>
+              </template>
+
+              <tr
+                v-else-if="items.length > 0"
+                v-for="item in items"
+                :key="item.id"
+                class="table__row"
+                @click="openItem(item.id)"
+              >
+                <td>
+                  <div class="product">
+                    <img
+                      v-if="item.thumbnail && !brokenThumbs.has(item.id)"
+                      :src="item.thumbnail"
+                      :alt="item.name"
+                      class="product__thumb product__thumb--img"
+                      loading="lazy"
+                      @error="onThumbError(item.id)"
+                    />
+                    <span v-else class="product__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
+                    <div class="product__meta">
+                      <p class="product__name">{{ item.name }}</p>
+                      <p class="product__sku">{{ item.sku }}</p>
+                      <p class="product__submeta">
+                        <span class="product__added">Added on {{ item.startDate }}</span>
+                        <span class="product__divider">•</span>
+                        <span class="product__updated">{{ item.lastUpdatedLabel }}</span>
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </td>
-              <td class="start-date">{{ item.startDate }}</td>
-              <td class="start-date">{{ item.lastUpdated || '—' }}</td>
-              <td>
-                <span class="onhand" :class="`onhand--${item.availability}`">{{ item.onHand }}</span>
-                <span class="onhand__unit">units</span>
-              </td>
-              <td>
-                <span class="badge" :class="`badge--${item.availability}`">
-                  {{ availabilityLabels[item.availability] }}
-                </span>
-              </td>
-              <td class="table__actions">
-                <BaseButton
-                  variant="outline"
-                  size="sm"
-                  title="Adjust stock"
-                  @click.stop="openAdjustment(item.id)"
-                >
-                  <template #icon>
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M12 5v14M5 12h14" stroke-linecap="round" />
-                    </svg>
-                  </template>
-                  Adjust
-                </BaseButton>
-              </td>
-            </tr>
-            <tr v-if="!loading && items.length === 0 && !error">
-              <td colspan="6" class="table__empty">No products match your filters.</td>
-            </tr>
-          </tbody>
-        </table>
+                </td>
+
+                <td class="added-on-cell">{{ item.startDate }}</td>
+
+                <td class="updated-cell">
+                  <span :title="formatDateTooltip(item.lastUpdated)" class="updated-text">{{ item.lastUpdatedLabel }}</span>
+                </td>
+
+                <td class="onhand-cell">
+                  <div class="onhand-wrap">
+                    <span class="onhand" :class="`onhand--${item.availability}`">{{ item.onHand }}</span>
+                    <span class="onhand__unit">units</span>
+                  </div>
+                  <div class="stock-bar" :class="`stock-bar--${item.availability}`" aria-label="Stock level indicator">
+                    <span class="stock-bar__fill"></span>
+                  </div>
+                </td>
+
+                <td>
+                  <span class="status-chip" :class="`status-chip--${item.availability}`">
+                    <span class="status-chip__dot" aria-hidden="true"></span>
+                    {{ availabilityLabels[item.availability] }}
+                  </span>
+                </td>
+
+                <td class="table__actions cell-actions">
+                  <div v-if="canViewStock || canAdjustStock" class="action-buttons">
+                    <button
+                      v-if="canViewStock"
+                      type="button"
+                      class="icon-button icon-button--view"
+                      :title="`View details: ${item.name}`"
+                      :aria-label="`View details for ${item.name}`"
+                      @click.stop="openItem(item.id)"
+                    >
+                      <Eye :size="18" :stroke-width="1.75" stroke="currentColor" fill="none" aria-hidden="true" />
+                    </button>
+                    <button
+                      v-if="canAdjustStock"
+                      type="button"
+                      class="icon-button icon-button--adjust"
+                      :title="`Adjust stock: ${item.name}`"
+                      :aria-label="`Adjust stock for ${item.name}`"
+                      @click.stop="openAdjustment(item.id)"
+                    >
+                      <SlidersHorizontal :size="18" :stroke-width="1.75" stroke="currentColor" fill="none" aria-hidden="true" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <tr v-if="!loading && items.length === 0 && !error">
+                <td colspan="6" class="table__empty">
+                  <div class="empty-state">
+                    <div class="empty-state__icon" aria-hidden="true">◌</div>
+                    <strong>No inventory matches your filters.</strong>
+                    <span>Try a different search or reset the stock filters.</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <footer v-if="total > 0" class="pagination">
           <p class="pagination__range">
@@ -559,7 +681,6 @@ function nextPage() {
 </template>
 
 <style scoped lang="scss">
-
 .page {
   display: flex;
   flex-direction: column;
@@ -757,134 +878,397 @@ function nextPage() {
     &--success { background: var(--success-bg); color: var(--success); }
   }
 
-  &__label {
-    margin: 0;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-subtle);
-  }
-
-  &__value {
-    margin: 0.2rem 0 0;
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: var(--text-strong);
-  }
-
-  &__note {
-    margin: 0.1rem 0 0;
-    font-size: 0.74rem;
-    color: var(--text-subtle);
-  }
+  &__label { } 
+  &__value { }
+  &__note { }
 }
 
 .table-card {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 14px;
+  border-radius: 16px;
   overflow: hidden;
+}
+
+.table-wrap {
+  overflow-x: auto;
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
-
-  th, td {
-    text-align: left;
-    padding: 0.9rem 1.25rem;
-    vertical-align: middle;
-  }
+  min-width: 820px;
 
   thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: rgba(15, 20, 27, 0.96);
+    color: var(--text-subtle);
     font-size: 0.72rem;
     font-weight: 700;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-subtle);
+    padding: 0.8rem 0.9rem;
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-sunken);
+    text-align: left;
   }
 
-  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
-  tbody tr:hover { background: var(--surface-sunken); }
-
-  &__row { cursor: pointer; }
-
-  &__empty {
-    text-align: center;
-    color: var(--text-subtle);
-    font-size: 0.88rem;
-    padding: 2rem 1rem;
+  tbody td {
+    padding: 0.9rem 0.9rem;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: middle;
+    color: var(--text-body);
   }
+
+  tbody tr {
+    transition: background-color 150ms ease;
+    &:hover { background: rgba(255,255,255,0.02); }
+  }
+}
+
+.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+
+  .thead-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+}
+
+.sort-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  color: var(--accent-ink);
+
+  svg {
+    width: 0.9rem;
+    height: 0.9rem;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+  }
+}
+
+.table__actions-header {
+  text-align: right;
+  width: 120px;
 }
 
 .product {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.8rem;
+  min-width: 260px;
+}
 
-  &__thumb {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+.product__thumb {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  color: var(--text-strong);
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.product__thumb--img {
+  object-fit: cover;
+}
+
+.product__meta {
+  min-width: 0;
+}
+
+.product__name {
+  margin: 0;
+  color: var(--text-strong);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.product__sku {
+  margin: 0.1rem 0 0;
+  color: var(--text-subtle);
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.product__submeta {
+  display: none;
+  margin: 0.3rem 0 0;
+  gap: 0.45rem;
+  align-items: center;
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+}
+
+.product__divider { opacity: 0.65; }
+
+.added-on,
+.added-on-cell {
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+
+.updated-cell {
+  min-width: 120px;
+}
+
+.updated-text {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-body);
+  cursor: help;
+}
+
+.onhand-cell {
+  min-width: 150px;
+}
+
+.onhand-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.onhand {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--text-strong);
+  letter-spacing: -0.02em;
+}
+
+.onhand__unit {
+  font-size: 0.72rem;
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.stock-bar {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.07);
+  overflow: hidden;
+  max-width: 120px;
+}
+
+.stock-bar__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  display: block;
+  border-radius: inherit;
+}
+
+.stock-bar--in-stock .stock-bar__fill { background: linear-gradient(90deg, #34d399, #22c55e); }
+.stock-bar--low-stock .stock-bar__fill { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.stock-bar--out-of-stock .stock-bar__fill { background: linear-gradient(90deg, #f87171, #ef4444); }
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+  white-space: nowrap;
+}
+
+.status-chip__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-chip--in-stock {
+  color: #9ae6b4;
+  background: rgba(34, 197, 94, 0.09);
+  .status-chip__dot { background: #34d399; }
+}
+
+.status-chip--low-stock {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.09);
+  .status-chip__dot { background: #f59e0b; }
+}
+
+.status-chip--out-of-stock {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.09);
+  .status-chip__dot { background: #f87171; }
+}
+
+.cell-actions {
+  width: 112px;
+  text-align: right;
+}
+
+.action-buttons {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.icon-button {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+
+  &:hover {
+    border-color: rgb(var(--accent-rgb));
+    color: rgb(var(--accent-rgb));
+    background: rgba(var(--accent-rgb), 0.1);
+  }
+
+  &:active {
+    transform: scale(0.96);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgb(var(--accent-rgb)), 0 0 0 4px rgba(var(--accent-rgb), 0.2);
+    border-color: rgb(var(--accent-rgb));
+  }
+
+  @media (max-width: 768px) {
     width: 40px;
     height: 40px;
-    border-radius: 8px;
-    background: var(--border-subtle);
-    color: var(--text-muted);
-    font-size: 0.72rem;
-    font-weight: 700;
-    flex-shrink: 0;
-
-    &--img {
-      display: block;
-      object-fit: cover;
-    }
   }
+}
 
-  &__name {
-    margin: 0;
-    font-size: 0.88rem;
-    font-weight: 600;
+.icon-button--view {
+  color: rgba(255, 255, 255, 0.72);
+  background: transparent;
+}
+
+.icon-button--adjust {
+  color: rgb(var(--accent-rgb));
+  border-color: rgba(var(--accent-rgb), 0.5);
+  background: transparent;
+}
+
+.table__empty {
+  padding: 1.1rem !important;
+  text-align: center;
+}
+
+.skeleton-row {
+  display: grid;
+  grid-template-columns: 44px 1.6fr 1fr 1fr 1fr 52px;
+  gap: 0.9rem;
+  align-items: center;
+  padding: 0.4rem 0;
+}
+
+.skeleton {
+  display: block;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.05) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton--thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+}
+
+.skeleton--line {
+  width: 100%;
+  height: 12px;
+}
+
+.skeleton--line.wide { width: 90%; }
+.skeleton--line.short { width: 55%; }
+.skeleton--tiny { width: 36px; height: 36px; border-radius: 8px; }
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 2.2rem 1rem;
+  color: var(--text-subtle);
+
+  strong {
     color: var(--text-strong);
   }
+}
 
-  &__sku {
-    margin: 0.15rem 0 0;
-    font-size: 0.74rem;
-    color: var(--text-subtle);
-  }
+.empty-state__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.08);
+  display: grid;
+  place-items: center;
+  color: var(--accent-ink);
+  font-size: 1.2rem;
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .table__alert {
-  padding: 0.85rem 1.25rem;
-  font-size: 0.85rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 1rem;
   border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.85rem;
+}
 
-  &--error {
-    background: var(--danger-bg);
-    color: var(--danger);
-  }
+.table__alert--error {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.08);
+}
 
-  &--warning {
-    background: rgb(var(--accent-rgb) / 0.14);
-    color: var(--accent-ink);
-  }
+.table__alert--warning {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.07);
 }
 
 .table__retry {
+  border: 1px solid rgba(255,255,255,0.08);
   background: transparent;
-  border: 1px solid currentColor;
-  border-radius: 6px;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: inherit;
+  color: var(--text-strong);
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
   cursor: pointer;
 }
 
@@ -893,88 +1277,87 @@ function nextPage() {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.85rem 1.25rem;
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface);
-  flex-wrap: wrap;
+  padding: 1rem 1rem 1.2rem;
+  color: var(--text-subtle);
+}
 
-  &__range {
-    margin: 0;
-    font-size: 0.82rem;
-    color: var(--text-subtle);
+.pagination__range {
+  margin: 0;
+}
 
-    strong {
-      color: var(--text-strong);
-    }
-  }
-
-  &__pages {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-
-  &__info {
-    font-size: 0.82rem;
-    color: var(--text-body);
-  }
+.pagination__pages {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .page-btn {
-  padding: 0.35rem 0.7rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-body);
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    background: var(--surface-alt);
-    color: var(--text-strong);
-  }
-
-  &:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-}
-
-.start-date {
-  font-size: 0.85rem;
-  color: var(--text-body);
-}
-
-.onhand {
-  font-size: 0.95rem;
-  font-weight: 700;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
   color: var(--text-strong);
-
-  &--low-stock { color: var(--accent-ink); }
-  &--out-of-stock { color: var(--danger); }
-
-  &__unit {
-    margin-left: 0.3rem;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--text-subtle);
-  }
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  border-radius: 999px;
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 
-  &--in-stock { background: var(--success-bg); color: var(--success); }
-  &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
-  &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
+@media (max-width: 768px) {
+  .page__body { padding: 1rem; }
+
+  .table {
+    min-width: 0;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table tbody tr {
+    display: block;
+    padding: 0.75rem 0.8rem;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .table tbody td {
+    display: block;
+    padding: 0.35rem 0;
+    border: none;
+  }
+
+  .product {
+    min-width: 0;
+  }
+
+  .product__submeta {
+    display: inline-flex;
+    flex-wrap: wrap;
+  }
+
+  .added-on-cell,
+  .updated-cell {
+    display: none;
+  }
+
+  .onhand-cell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .table__actions.cell-actions {
+    text-align: left;
+    padding-top: 0.75rem;
+  }
+
+  .pagination {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

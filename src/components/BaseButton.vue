@@ -83,8 +83,13 @@ const tag = computed(() => (props.to ? RouterLink : 'button'))
 
   &--primary {
     background: rgb(var(--accent-rgb));
+    border-color: rgb(var(--accent-rgb));
     color: var(--ink-on-accent);
-    &:hover:not(:disabled) { filter: brightness(0.96); }
+    box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.25);
+    &:hover:not(:disabled) {
+      filter: brightness(0.96);
+      box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.4), 0 8px 18px rgb(var(--accent-rgb) / 0.18);
+    }
   }
 
   &--ghost {
