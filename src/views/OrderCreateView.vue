@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -18,9 +18,9 @@ import { useAuthStore } from '@/stores/auth'
 const router = useRouter()
 const auth = useAuthStore()
 
-// Blank order — everything starts empty for the user to fill in.
-// `productId` ties a row to a real product id; the unit price auto-fills.
-const items = ref([{ productId: '', qty: 1, unitPrice: null }])
+// `productId` ties a row to a real product id; the unit price is snapshotted
+// from the selected catalog entry and the API payload remains unchanged.
+const items = ref([])
 
 // Order-level amounts, matching the columns the API persists.
 const fees = ref({ tax: null, shipping: null })
@@ -43,9 +43,22 @@ const PAYMENT_METHODS = [
  * Reference data — the pickers are populated from the API, not fixtures.
  * ------------------------------------------------------------------------- */
 const catalog = ref([])
+const categories = ref([])
 const customerList = ref([])
 const loadingRefs = ref(false)
 const refsError = ref('')
+
+const productModalOpen = ref(false)
+const productLoading = ref(false)
+const productError = ref('')
+const productSearch = ref('')
+const productCategory = ref('')
+const productBranch = ref('')
+const productPage = ref(1)
+const productPagination = ref({})
+const selectedProductIds = ref(new Set())
+const selectedQuantities = ref({})
+let productSearchTimer
 
 // Customers come through the same service the Customers directory uses, so the
 // picker offers the whole directory rather than the first page the bare
@@ -55,20 +68,13 @@ async function loadReferenceData() {
   loadingRefs.value = true
   refsError.value = ''
   try {
-    const [productsRes, customers] = await Promise.all([
-      apiFetch('/admin/products?per_page=200&sort=name&direction=asc', {
-        token: auth.accessToken,
-      }),
+    const [customers, categoriesRes] = await Promise.all([
       fetchCustomers(auth.accessToken),
+      apiFetch('/admin/categories?per_page=200', { token: auth.accessToken }),
     ])
 
-    // Products come back as { items, pagination }.
-    const productItems = productsRes?.data?.items ?? productsRes?.data ?? []
-    catalog.value = productItems.map((p) => ({
-      id: p.id,
-      name: p.name,
-      price: Number(p.price ?? 0),
-    }))
+    const categoryItems = categoriesRes?.data?.items ?? categoriesRes?.data ?? []
+    categories.value = Array.isArray(categoryItems) ? categoryItems : []
 
     // fetchCustomers already flattens the resource — name, email, phone and a
     // formatted address — so nothing is re-mapped here.
@@ -84,6 +90,121 @@ async function loadReferenceData() {
   } finally {
     loadingRefs.value = false
   }
+}
+
+function normalizeProduct(product) {
+  return {
+    id: product.id,
+    name: product.name,
+    description: product.short_description || product.description || '',
+    sku: product.sku || '',
+    price: Number(product.sale_price ?? product.price ?? 0),
+    stock: product.stock_quantity == null ? null : Number(product.stock_quantity),
+    thumbnail: product.thumbnail || product.image || '',
+    categoryId: product.category_id ?? '',
+    categoryName: product.category?.name || '',
+    branchId: product.branch_id ?? product.branch?.id ?? '',
+    branchName: product.branch?.name || product.branch_name || '',
+  }
+}
+
+const branchOptions = computed(() => {
+  const branches = new Map()
+  catalog.value.forEach((product) => {
+    if (product.branchId && product.branchName) branches.set(String(product.branchId), product.branchName)
+  })
+  return [...branches].map(([id, name]) => ({ id, name }))
+})
+
+const visibleProducts = computed(() => {
+  if (!productBranch.value) return catalog.value
+  return catalog.value.filter((product) => String(product.branchId) === String(productBranch.value))
+})
+
+const selectedCount = computed(() => selectedProductIds.value.size)
+const selectedProducts = computed(() => catalog.value.filter((product) => selectedProductIds.value.has(String(product.id))))
+
+async function loadProducts() {
+  productLoading.value = true
+  productError.value = ''
+  try {
+    const query = new URLSearchParams({
+      q: productSearch.value,
+      category_id: productCategory.value,
+      page: String(productPage.value),
+      per_page: '18',
+      sort: 'name',
+      direction: 'asc',
+    })
+    const response = await apiFetch(`/admin/products?${query.toString()}`, { token: auth.accessToken })
+    const data = response?.data ?? {}
+    catalog.value = Array.isArray(data.items) ? data.items.map(normalizeProduct) : []
+    productPagination.value = data.pagination ?? {}
+  } catch (err) {
+    productError.value = err.message || 'Could not load products.'
+  } finally {
+    productLoading.value = false
+  }
+}
+
+function openProductModal() {
+  productModalOpen.value = true
+  productPage.value = 1
+  loadProducts()
+}
+
+function closeProductModal() { productModalOpen.value = false }
+
+function toggleProduct(product) {
+  const id = String(product.id)
+  const next = new Set(selectedProductIds.value)
+  if (next.has(id)) {
+    next.delete(id)
+    delete selectedQuantities.value[id]
+  } else {
+    next.add(id)
+    selectedQuantities.value[id] = 1
+  }
+  selectedProductIds.value = next
+}
+
+function quantityFor(product) { return Number(selectedQuantities.value[String(product.id)] || 1) }
+
+function setSelectedQuantity(product, value) {
+  const quantity = Math.max(1, Math.floor(Number(value) || 1))
+  const stock = product.stock
+  selectedQuantities.value[String(product.id)] = stock == null ? quantity : Math.min(quantity, Math.max(1, stock))
+}
+
+function addSelectedProducts() {
+  for (const product of selectedProducts.value) {
+    const quantity = quantityFor(product)
+    const existing = items.value.find((item) => String(item.productId) === String(product.id))
+    if (existing) existing.qty += quantity
+    else items.value.push({ productId: product.id, qty: quantity, unitPrice: product.price, product })
+  }
+  selectedProductIds.value = new Set()
+  selectedQuantities.value = {}
+  closeProductModal()
+}
+
+function scheduleProductSearch() {
+  clearTimeout(productSearchTimer)
+  productPage.value = 1
+  productSearchTimer = setTimeout(loadProducts, 250)
+}
+
+function clearProductFilters() {
+  productSearch.value = ''
+  productCategory.value = ''
+  productBranch.value = ''
+  productPage.value = 1
+  loadProducts()
+}
+
+function changeProductPage(page) {
+  productPage.value = page
+  loadProducts()
 }
 
 onMounted(loadReferenceData)
@@ -115,21 +236,17 @@ function money(value) {
   return `$${(Number(value) || 0).toFixed(2)}`
 }
 
-function addItem() {
-  items.value.push({ productId: '', qty: 1, unitPrice: null })
-}
 function removeItem(index) {
   items.value.splice(index, 1)
-  if (items.value.length === 0) addItem()
 }
 
-// When a product is picked, auto-fill its unit price.
-function onProductSelect(item) {
-  const product = catalog.value.find((p) => p.id === item.productId)
-  if (product) {
-    item.unitPrice = product.price
-  }
+function adjustItemQuantity(item, delta) {
+  const next = Math.max(1, (Number(item.qty) || 1) + delta)
+  const stock = item.product?.stock
+  item.qty = stock == null ? next : Math.min(next, Math.max(1, stock))
 }
+
+function setItemQuantity(item, value) { adjustItemQuantity(item, Math.max(0, Number(value) || 1) - (Number(item.qty) || 1)) }
 
 function cancel() {
   router.push({ name: 'orders' })
@@ -143,9 +260,7 @@ const submitError = ref('')
 // Field-level messages keyed the way the API returns them, e.g. items.0.qty.
 const fieldErrors = ref({})
 
-const completeItems = computed(() =>
-  items.value.filter((i) => i.productId && (Number(i.qty) || 0) > 0),
-)
+const completeItems = computed(() => items.value.filter((i) => i.productId && (Number(i.qty) || 0) > 0))
 // A customer, a payment method and at least one line item are all required
 // before the order can be saved.
 const isComplete = computed(
@@ -243,9 +358,18 @@ async function createOrder() {
                 </svg>
                 Order Items
               </h3>
+              <button type="button" class="add-row" aria-label="Add Products" @click="openProductModal">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
+                Add Products
+              </button>
             </header>
 
-            <table class="items">
+            <div v-if="!items.length" class="items-empty">
+              <strong>No products added yet</strong>
+              <span>Choose one or more products to start this order.</span>
+              <button type="button" class="add-row" @click="openProductModal">Add Products</button>
+            </div>
+            <table v-else class="items">
               <thead>
                 <tr>
                   <th>Product</th>
@@ -256,32 +380,22 @@ async function createOrder() {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(item, i) in items" :key="i">
+                <tr v-for="(item, i) in items" :key="item.productId">
                   <td>
-                    <select
-                      v-model="item.productId"
-                      class="field"
-                      :class="{ 'field--invalid': errorFor(`items.${i}.product_id`) }"
-                      :disabled="loadingRefs"
-                      @change="onProductSelect(item)"
-                    >
-                      <option value="" disabled>
-                        {{ loadingRefs ? 'Loading products…' : 'Select a product' }}
-                      </option>
-                      <option v-for="p in catalog" :key="p.id" :value="p.id">{{ p.name }}</option>
-                    </select>
+                    <div class="order-product">
+                      <span class="order-product__thumb"><img v-if="item.product?.thumbnail" :src="item.product.thumbnail" :alt="item.product.name" /><span v-else aria-hidden="true">{{ item.product?.name?.slice(0, 2).toUpperCase() }}</span></span>
+                      <span class="order-product__copy"><strong>{{ item.product?.name || item.productId }}</strong><small>{{ item.product?.description || item.product?.sku }}</small><small v-if="item.product?.sku">SKU: {{ item.product.sku }}</small></span>
+                    </div>
                     <span v-if="errorFor(`items.${i}.product_id`)" class="field-error">
                       {{ errorFor(`items.${i}.product_id`) }}
                     </span>
                   </td>
                   <td class="items__qty">
-                    <input
-                      v-model.number="item.qty"
-                      class="field field--center"
-                      :class="{ 'field--invalid': errorFor(`items.${i}.qty`) }"
-                      type="number"
-                      min="1"
-                    />
+                    <div class="quantity-control quantity-control--order">
+                      <button type="button" aria-label="Decrease quantity" @click="adjustItemQuantity(item, -1)">−</button>
+                      <input v-model.number="item.qty" class="field field--center" :class="{ 'field--invalid': errorFor(`items.${i}.qty`) }" type="number" min="1" :max="item.product?.stock ?? undefined" @change="setItemQuantity(item, item.qty)" />
+                      <button type="button" aria-label="Increase quantity" @click="adjustItemQuantity(item, 1)">+</button>
+                    </div>
                   </td>
                   <td class="items__price items__num items__muted">
                     {{ money(item.unitPrice) }}
@@ -297,11 +411,6 @@ async function createOrder() {
                 </tr>
               </tbody>
             </table>
-
-            <button type="button" class="add-row" @click="addItem">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-              Add Item
-            </button>
 
             <!-- These map to the tax_total / shipping_total columns the API
                  persists. Discount is not set here; the API still supports it
@@ -448,6 +557,40 @@ async function createOrder() {
         </div>
       </div>
     </form>
+
+    <Teleport to="body">
+      <div v-if="productModalOpen" class="product-modal" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
+        <button type="button" class="product-modal__backdrop" aria-label="Close product selection" @click="closeProductModal"></button>
+        <section class="product-modal__panel">
+          <header class="product-modal__header">
+            <div><p class="product-modal__eyebrow">Order products</p><h2 id="product-modal-title">Add Products</h2><p>Select products and quantities for this order.</p></div>
+            <button type="button" class="icon-btn" aria-label="Close product selection" @click="closeProductModal">×</button>
+          </header>
+          <div class="product-modal__filters">
+            <input v-model="productSearch" class="field" type="search" placeholder="Search product name or SKU" @input="scheduleProductSearch" />
+            <select v-model="productCategory" class="field" aria-label="Filter by category" @change="productPage = 1; loadProducts()"><option value="">All categories</option><option v-for="category in categories" :key="category.id" :value="category.id">{{ category.name }}</option></select>
+            <select v-if="branchOptions.length" v-model="productBranch" class="field" aria-label="Filter by branch"><option value="">All branches</option><option v-for="branch in branchOptions" :key="branch.id" :value="branch.id">{{ branch.name }}</option></select>
+            <button type="button" class="clear-filters" @click="clearProductFilters">Clear filters</button>
+          </div>
+          <p v-if="productError" class="submit-error" role="alert">{{ productError }}</p>
+          <div v-if="productLoading" class="product-modal__empty">Loading products…</div>
+          <div v-else-if="!visibleProducts.length" class="product-modal__empty"><strong>No products found</strong><span>Try a different search or clear the filters.</span></div>
+          <div v-else class="product-list">
+            <label v-for="product in visibleProducts" :key="product.id" class="product-option" :class="{ 'product-option--selected': selectedProductIds.has(String(product.id)) }">
+              <input type="checkbox" :checked="selectedProductIds.has(String(product.id))" @change="toggleProduct(product)" />
+              <span class="product-option__thumb"><img v-if="product.thumbnail" :src="product.thumbnail" :alt="product.name" /><span v-else>{{ product.name.slice(0, 2).toUpperCase() }}</span></span>
+              <span class="product-option__copy"><strong>{{ product.name }}</strong><small>{{ product.description || 'No description available.' }}</small><small>SKU: {{ product.sku }} · {{ product.categoryName || 'Uncategorized' }}<template v-if="product.branchName"> · {{ product.branchName }}</template></small></span>
+              <span class="product-option__stock">{{ product.stock == null ? 'Stock —' : `${product.stock} available` }}</span>
+              <span v-if="selectedProductIds.has(String(product.id))" class="quantity-control"><button type="button" aria-label="Decrease quantity" @click.prevent="setSelectedQuantity(product, quantityFor(product) - 1)">−</button><input :value="quantityFor(product)" type="number" min="1" :max="product.stock ?? undefined" aria-label="Selected quantity" @input="setSelectedQuantity(product, $event.target.value)" @click.stop /><button type="button" aria-label="Increase quantity" @click.prevent="setSelectedQuantity(product, quantityFor(product) + 1)">+</button></span>
+            </label>
+          </div>
+          <footer class="product-modal__footer">
+            <span>{{ selectedCount }} product{{ selectedCount === 1 ? '' : 's' }} selected</span>
+            <div><BaseButton variant="ghost" type="button" @click="closeProductModal">Cancel</BaseButton><BaseButton variant="primary" type="button" :disabled="!selectedCount" @click="addSelectedProducts">Add Selected Products ({{ selectedCount }})</BaseButton></div>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -700,6 +843,15 @@ textarea.field { resize: vertical; }
   &__remove { width: 44px; text-align: right; }
 }
 
+.items-empty { display: grid; justify-items: center; gap: .35rem; padding: 2rem 1rem; color: var(--text-subtle); text-align: center; border: 1px dashed var(--border); border-radius: 10px; }
+.items-empty strong { color: var(--text-strong); font-size: .9rem; }
+.items-empty span { font-size: .78rem; }
+.order-product { display: flex; align-items: center; gap: .65rem; min-width: 220px; }
+.order-product__thumb, .product-option__thumb { display: grid; place-items: center; flex: none; overflow: hidden; color: var(--text-muted); background: var(--surface-sunken); border: 1px solid var(--border-subtle); border-radius: 8px; font-size: 12px; font-weight: 700; }
+.order-product__thumb { width: 42px; height: 42px; }.order-product__thumb img, .product-option__thumb img { width: 100%; height: 100%; object-fit: contain; }
+.order-product__copy, .product-option__copy { display: grid; gap: .18rem; min-width: 0; }.order-product__copy strong, .product-option__copy strong { overflow: hidden; color: var(--text-strong); font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }.order-product__copy small, .product-option__copy small { overflow: hidden; color: var(--text-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.quantity-control { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-sunken); overflow: hidden; }.quantity-control button { width: 28px; height: 30px; padding: 0; color: var(--text-body); background: transparent; border: 0; cursor: pointer; }.quantity-control button:hover { color: var(--text-strong); background: var(--surface-hover); }.quantity-control input { width: 38px; min-height: 30px; padding: .25rem; border: 0; border-left: 1px solid var(--border-subtle); border-right: 1px solid var(--border-subtle); border-radius: 0; background: transparent; }.quantity-control--order { margin: 0 auto; }
+
 .add-row {
   display: inline-flex;
   align-items: center;
@@ -761,4 +913,12 @@ textarea.field { resize: vertical; }
 
   &--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 }
+
+.product-modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 1rem; }
+.product-modal__backdrop { position: absolute; inset: 0; background: rgb(0 0 0 / .68); border: 0; cursor: default; }
+.product-modal__panel { position: relative; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; width: min(100%, 920px); max-height: min(760px, calc(100vh - 2rem)); overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-md); }
+.product-modal__header, .product-modal__filters, .product-modal__footer { padding: 1rem 1.25rem; }.product-modal__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--border-subtle); }.product-modal__header h2 { margin: .15rem 0; color: var(--text-strong); font-size: 1.1rem; }.product-modal__header p { margin: 0; color: var(--text-muted); font-size: .78rem; }.product-modal__eyebrow { color: var(--accent-ink) !important; font-size: 12px !important; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.product-modal__filters { display: grid; grid-template-columns: minmax(220px, 1fr) 170px 170px auto; gap: .6rem; border-bottom: 1px solid var(--border-subtle); }.clear-filters { color: var(--accent-ink); background: transparent; border: 0; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }.clear-filters:hover { text-decoration: underline; }
+.product-list { min-height: 0; overflow: auto; padding: .75rem 1.25rem; }.product-option { display: grid; grid-template-columns: 20px 48px minmax(0, 1fr) auto auto; align-items: center; gap: .75rem; padding: .7rem; border: 1px solid transparent; border-bottom-color: var(--border-subtle); cursor: pointer; }.product-option:hover { background: var(--surface-sunken); }.product-option--selected { background: rgb(var(--accent-rgb) / .08); border-color: rgb(var(--accent-rgb) / .35); }.product-option > input { accent-color: rgb(var(--accent-rgb)); }.product-option__thumb { width: 48px; height: 48px; }.product-option__stock { color: var(--text-muted); font-size: 12px; white-space: nowrap; }.product-modal__empty { display: grid; place-items: center; align-content: center; gap: .35rem; min-height: 220px; color: var(--text-muted); font-size: .82rem; }.product-modal__empty strong { color: var(--text-strong); }.product-modal__footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 12px; }.product-modal__footer > div { display: flex; gap: .6rem; }
+@media (max-width: 720px) { .product-modal { padding: 0; place-items: stretch; }.product-modal__panel { width: 100%; max-height: 100vh; border-radius: 0; }.product-modal__filters { grid-template-columns: 1fr 1fr; }.product-modal__filters .field:first-child { grid-column: 1 / -1; }.product-option { grid-template-columns: 20px 42px minmax(0, 1fr); }.product-option__stock, .product-option .quantity-control { grid-column: 3; }.product-modal__footer { align-items: stretch; flex-direction: column; }.product-modal__footer > div { justify-content: stretch; }.product-modal__footer .btn { flex: 1; } }
 </style>

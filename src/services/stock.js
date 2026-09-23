@@ -121,6 +121,12 @@ function formatMovementType(type) {
 
 export function movementFromApi(m) {
   const changeVal = m.new_quantity - m.previous_quantity
+
+  // Determine if this is a variant movement
+  const isVariant = m.stockable_type === 'App\\Models\\ProductVariant' ||
+                    m.stockable_type === 'ProductVariant'
+  const variantInfo = m.variant ? ` (${m.variant.name || m.variant.sku})` : ''
+
   return {
     id: m.id,
     date: formatStockDate(m.created_at),
@@ -132,7 +138,15 @@ export function movementFromApi(m) {
           ? -m.quantity
           : m.quantity,
     balance: m.new_quantity,
-    by: m.created_by?.name ?? 'Admin User',
+    by: m.created_by ? `${m.created_by.first_name || ''} ${m.created_by.last_name || ''}`.trim() || 'Admin User' : 'Admin User',
+    reference: m.reference || m.receiving_reference || null,
+    reason: m.notes || m.reason || null,
+    timestamp: m.created_at,
+    stockableType: m.stockable_type,
+    stockableId: m.stockable_id,
+    isVariant: isVariant,
+    variantInfo: variantInfo,
+    displayType: m.reason || (isVariant ? `${formatMovementType(m.movement_type)}${variantInfo}` : formatMovementType(m.movement_type)),
   }
 }
 
@@ -178,7 +192,7 @@ export async function fetchStockDetail(id, token) {
 }
 
 export async function fetchStockCatalog(per_page = 100, token) {
-  const response = await apiFetch(`/admin/stock?per_page=${per_page}`, { token })
+  const response = await apiFetch(`/admin/stock?per_page=${per_page}&include_variants=1`, { token })
   const items = response?.data?.items ?? []
   return items.map((item) => ({
     id: item.id,
@@ -191,11 +205,28 @@ export async function fetchStockCatalog(per_page = 100, token) {
     unitPrice: item.price,
     threshold: Number(item.min_stock_alert ?? 0),
     thumbnail: usableImage(item.thumbnail),
+    isSerialized: Boolean(item.is_serialized),
+    variants: (item.variants ?? []).map((variant) => ({
+      id: variant.id,
+      name: variant.name,
+      sku: variant.sku,
+      currentStock: Number(variant.stock_quantity ?? 0),
+      isSerialized: Boolean(variant.is_serialized),
+    })),
   }))
 }
 
 export async function createStockMovement(payload, token) {
   const response = await apiFetch('/admin/stock/movements', {
+    method: 'POST',
+    token,
+    body: payload,
+  })
+  return response?.data ?? {}
+}
+
+export async function createBulkStockMovement(payload, token) {
+  const response = await apiFetch('/admin/stock/movements/bulk', {
     method: 'POST',
     token,
     body: payload,
