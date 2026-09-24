@@ -132,6 +132,12 @@ const router = createRouter({
       component: () => import('@/views/StockDetailView.vue'),
     },
     {
+      path: '/serials',
+      name: 'serials',
+      meta: { permission: 'product-serials.view' },
+      component: () => import('@/views/SerialsView.vue'),
+    },
+    {
       path: '/reports',
       name: 'reports',
       meta: { permission: 'logs.view' },
@@ -251,7 +257,42 @@ const router = createRouter({
     {
       path: '/settings',
       name: 'settings',
-      component: () => import('@/views/StoreSettingsView.vue'),
+      redirect: { name: 'settings-general' },
+    },
+    {
+      path: '/settings/general',
+      name: 'settings-general',
+      component: () => import('@/views/settings/SettingsGeneralView.vue'),
+    },
+    {
+      path: '/settings/payments',
+      name: 'settings-payments',
+      component: () => import('@/views/settings/SettingsPaymentsView.vue'),
+    },
+    {
+      path: '/settings/shipping',
+      name: 'settings-shipping',
+      component: () => import('@/views/settings/SettingsShippingView.vue'),
+    },
+    {
+      path: '/settings/taxes',
+      name: 'settings-taxes',
+      component: () => import('@/views/settings/SettingsTaxesView.vue'),
+    },
+    {
+      path: '/settings/notifications',
+      name: 'settings-notifications',
+      component: () => import('@/views/settings/SettingsNotificationsView.vue'),
+    },
+    {
+      path: '/settings/team',
+      name: 'settings-team',
+      component: () => import('@/views/settings/SettingsTeamView.vue'),
+    },
+    {
+      path: '/settings/integrations',
+      name: 'settings-integrations',
+      component: () => import('@/views/settings/SettingsIntegrationsView.vue'),
     },
     {
       path: '/login',

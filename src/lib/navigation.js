@@ -19,6 +19,7 @@ export const NAV_SECTIONS = [
       { label: 'Categories', icon: 'categories', to: '/categories', permission: 'categories.view' },
       { label: 'Promotions', icon: 'promotions', to: '/promotions', permission: 'promotions.view' },
       { label: 'Stock Management', icon: 'stock', to: '/stock', permission: 'stock.view' },
+      { label: 'Serial Numbers', icon: 'stock', to: '/serials', permission: 'product-serials.view' },
       { label: 'Reports', icon: 'reports', to: '/reports', permission: 'logs.view' },
     ],
   },
