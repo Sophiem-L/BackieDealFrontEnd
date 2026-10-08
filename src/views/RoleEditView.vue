@@ -257,7 +257,7 @@ async function handleUpdate() {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: #f8fafc;
+  background: var(--bg);
 
   &__body {
     padding: 1.5rem;
@@ -272,35 +272,35 @@ async function handleUpdate() {
   margin: 0;
   padding: 0.75rem 1rem;
   font-size: 0.85rem;
-  color: #ef4444;
-  background: #fee2e2;
-  border: 1px solid #fca5a5;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
   border-radius: 8px;
 }
 
 .card {
   position: relative;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 
   &__accent-bar {
     height: 4px;
-    background: #6366f1;
+    background: rgb(var(--accent-rgb));
   }
 
   &__header {
     padding: 1.25rem 1.5rem;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   &__title {
     margin: 0;
     font-size: 1.05rem;
     font-weight: 600;
-    color: #475569;
+    color: var(--text-strong);
   }
 
   &__body {
@@ -320,10 +320,10 @@ async function handleUpdate() {
 .form-label {
   font-size: 0.9rem;
   font-weight: 600;
-  color: #475569;
+  color: var(--text-body);
 
   .required {
-    color: #ef4444;
+    color: var(--danger);
   }
 }
 
@@ -331,13 +331,20 @@ async function handleUpdate() {
   width: 100%;
   padding: 0.75rem 1rem;
   font-size: 0.9rem;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   outline: none;
-  color: #1e293b;
+  color: var(--text-strong);
+  background: var(--surface);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 
   &:focus {
-    border-color: #6366f1;
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.16);
+  }
+
+  &::placeholder {
+    color: var(--text-subtle);
   }
 }
 
@@ -350,16 +357,18 @@ async function handleUpdate() {
   width: 100%;
   padding: 0.75rem 1rem;
   font-size: 0.9rem;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   outline: none;
   appearance: none;
-  background: #fff;
-  color: #1e293b;
+  background: var(--surface);
+  color: var(--text-strong);
   cursor: pointer;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 
   &:focus {
-    border-color: #6366f1;
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.16);
   }
 }
 
@@ -369,7 +378,7 @@ async function handleUpdate() {
   top: 50%;
   transform: translateY(-50%);
   font-size: 0.7rem;
-  color: #64748b;
+  color: var(--text-subtle);
   pointer-events: none;
 }
 
@@ -382,7 +391,7 @@ async function handleUpdate() {
 .btn-text {
   background: transparent;
   border: none;
-  color: #6366f1;
+  color: var(--accent-ink);
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
@@ -394,7 +403,7 @@ async function handleUpdate() {
 
 .perm-state {
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--text-muted);
   padding: 1rem 0;
 }
 
@@ -406,15 +415,15 @@ async function handleUpdate() {
 }
 
 .module-card {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
   overflow: hidden;
 
   &__head {
     padding: 0.65rem 0.85rem;
-    background: #f8fafc;
-    border-bottom: 1px solid #e2e8f0;
+    background: var(--surface-sunken);
+    border-bottom: 1px solid var(--border-subtle);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -433,15 +442,20 @@ async function handleUpdate() {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
-  color: #334155;
+  color: var(--text-strong);
   cursor: pointer;
+
+  input {
+    accent-color: rgb(var(--accent-rgb));
+  }
 }
 
 .badge {
   font-size: 0.75rem;
   padding: 0.25rem 0.5rem;
-  background: #e2e8f0;
-  color: #475569;
+  background: var(--surface-track);
+  color: var(--text-body);
+  border: 1px solid var(--border-subtle);
   border-radius: 999px;
   font-weight: 600;
 }
@@ -451,13 +465,23 @@ async function handleUpdate() {
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.6rem;
-  background: #f1f5f9;
+  background: var(--surface-sunken);
   border-radius: 6px;
+  transition: background-color 150ms ease;
   cursor: pointer;
+
+  input {
+    accent-color: rgb(var(--accent-rgb));
+    flex-shrink: 0;
+  }
+
+  &:hover {
+    background: var(--surface-alt);
+  }
 
   &__name {
     font-size: 0.8rem;
-    color: #475569;
+    color: var(--text-body);
   }
 }
 
@@ -467,15 +491,15 @@ async function handleUpdate() {
   left: 0;
   right: 0;
   height: 64px;
-  background: #ffffff;
-  border-top: 1px solid #e2e8f0;
+  background: var(--surface);
+  border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;
   padding: 0 2rem;
   z-index: 50;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 -4px 12px rgb(0 0 0 / 0.08);
 }
 
 .btn-back {
@@ -485,14 +509,19 @@ async function handleUpdate() {
   padding: 0.6rem 1.25rem;
   font-size: 0.88rem;
   font-weight: 600;
-  color: #ffffff;
-  background: #94a3b8;
-  border: none;
+  color: var(--text-body);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;
 
   &:hover {
-    background: #64748b;
+    background: var(--surface-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--accent-rgb));
+    outline-offset: 2px;
   }
 
   svg { width: 16px; height: 16px; }
@@ -505,14 +534,19 @@ async function handleUpdate() {
   padding: 0.6rem 1.5rem;
   font-size: 0.88rem;
   font-weight: 600;
-  color: #ffffff;
-  background: #2563eb;
-  border: none;
+  color: var(--ink-on-accent);
+  background: rgb(var(--accent-rgb));
+  border: 1px solid rgb(var(--accent-rgb));
   border-radius: 8px;
   cursor: pointer;
 
   &:hover:not(:disabled) {
-    background: #1d4ed8;
+    filter: brightness(0.94);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 2px;
   }
 
   &:disabled {
@@ -521,5 +555,25 @@ async function handleUpdate() {
   }
 
   svg { width: 16px; height: 16px; }
+}
+
+@media (max-width: 640px) {
+  .page__body {
+    padding: 1rem;
+  }
+
+  .card__header,
+  .card__body {
+    padding: 1rem;
+  }
+
+  .modules-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+    gap: 0.75rem;
+  }
+
+  .bottom-actions {
+    padding-inline: 1rem;
+  }
 }
 </style>

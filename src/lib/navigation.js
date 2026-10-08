@@ -19,7 +19,12 @@ export const NAV_SECTIONS = [
       { label: 'Categories', icon: 'categories', to: '/categories', permission: 'categories.view' },
       { label: 'Promotions', icon: 'promotions', to: '/promotions', permission: 'promotions.view' },
       { label: 'Stock Management', icon: 'stock', to: '/stock', permission: 'stock.view' },
-      { label: 'Serial Numbers', icon: 'stock', to: '/serials', permission: 'product-serials.view' },
+      {
+        label: 'Serial Numbers',
+        icon: 'stock',
+        to: '/serials',
+        permission: 'product-serials.view',
+      },
       { label: 'Reports', icon: 'reports', to: '/reports', permission: 'logs.view' },
     ],
   },
@@ -37,6 +42,12 @@ export const NAV_SECTIONS = [
     title: 'Users',
     items: [
       { label: 'Customers', icon: 'customers', to: '/customers', permission: 'customers.view' },
+      {
+        label: 'Customer Ratings',
+        icon: 'reviews',
+        to: '/reviews',
+        permission: 'reviews.view',
+      },
       {
         label: 'Administrators',
         icon: 'administrators',

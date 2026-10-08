@@ -72,6 +72,12 @@ const router = createRouter({
       component: () => import('@/views/CustomersView.vue'),
     },
     {
+      path: '/reviews',
+      name: 'reviews',
+      meta: { permission: 'reviews.view' },
+      component: () => import('@/views/ReviewsView.vue'),
+    },
+    {
       path: '/customers/new',
       name: 'customer-create',
       meta: { permission: 'users.create' },

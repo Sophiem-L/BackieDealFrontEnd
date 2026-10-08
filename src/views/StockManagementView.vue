@@ -779,24 +779,36 @@ function nextPage() {
   gap: 0.4rem;
   padding: 0.55rem 0.8rem;
   font-size: 0.82rem;
-  font-weight: 500;
+  font-weight: 600;
   font-family: inherit;
-  color: var(--text-body);
-  background: var(--surface);
+  color: var(--text-strong);
+  background: var(--surface-alt);
   border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+
+  &:hover { background: var(--surface-hover); }
+  &:focus-visible {
+    outline: none;
+    border-color: var(--border-strong);
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+  }
 
   &__icon {
     display: inline-flex;
-    color: var(--accent-ink);
+    color: var(--text-strong);
     svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
   }
 
-  &__caret { width: 14px; height: 14px; stroke: var(--text-subtle); stroke-width: 1.8; }
+  &__caret { width: 14px; height: 14px; stroke: var(--text-muted); stroke-width: 1.8; }
 
-  &--active { border-color: rgb(var(--accent-rgb) / 0.7); background: rgb(var(--accent-rgb) / 0.08); }
+  &--active {
+    color: var(--text-strong);
+    border-color: rgb(var(--accent-rgb) / 0.7);
+    background: rgb(var(--accent-rgb) / 0.12);
+  }
 }
 
 .filter__popup {
@@ -1139,9 +1151,9 @@ function nextPage() {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: transparent;
-  color: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text-strong);
   transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
   cursor: pointer;
   padding: 0;
@@ -1149,8 +1161,8 @@ function nextPage() {
 
   &:hover {
     border-color: rgb(var(--accent-rgb));
-    color: rgb(var(--accent-rgb));
-    background: rgba(var(--accent-rgb), 0.1);
+    color: var(--accent-ink);
+    background: rgb(var(--accent-rgb) / 0.12);
   }
 
   &:active {
@@ -1170,14 +1182,14 @@ function nextPage() {
 }
 
 .icon-button--view {
-  color: rgba(255, 255, 255, 0.72);
-  background: transparent;
+  color: var(--text-strong);
+  background: var(--surface-alt);
 }
 
 .icon-button--adjust {
-  color: rgb(var(--accent-rgb));
-  border-color: rgba(var(--accent-rgb), 0.5);
-  background: transparent;
+  color: var(--accent-ink);
+  border-color: rgb(var(--accent-rgb) / 0.55);
+  background: rgb(var(--accent-rgb) / 0.1);
 }
 
 .table__empty {
