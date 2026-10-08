@@ -49,18 +49,13 @@ export async function fetchAdminRoles(token) {
  * Fetch permissions for a specific role
  */
 export async function fetchRolePermissions(roleId, token) {
-  try {
-    const response = await apiFetch(`/admin/roles/${roleId}`, {
-      method: 'GET',
-      token,
-    })
+  const response = await apiFetch(`/admin/roles/${roleId}`, {
+    method: 'GET',
+    token,
+  })
 
-    const role = response.data || response
-    return role.permissions || role.permission_names || []
-  } catch (err) {
-    console.error('Failed to fetch role permissions:', err)
-    return []
-  }
+  const role = response.data || response
+  return role.permissions || role.permission_names || []
 }
 
 /**

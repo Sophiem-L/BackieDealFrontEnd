@@ -48,8 +48,12 @@ export async function updateAdministrator(id, data, token) {
       first_name: data.firstName,
       last_name: data.lastName,
       email: data.email,
+      phone: data.phone || null,
+      recovery_email: data.recoveryEmail || null,
       password: data.password || undefined,
+      password_confirmation: data.passwordConfirm || undefined,
       role_id: data.roleId,
+      is_active: data.isActive,
     },
   })
 }

@@ -65,7 +65,11 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
                 <svg v-else-if="item.icon === 'orders'" viewBox="0 0 24 24" fill="none">
                   <circle cx="9" cy="20" r="1.4" />
                   <circle cx="18" cy="20" r="1.4" />
-                  <path d="M3 4h2l2.4 12.2a1 1 0 0 0 1 .8h8.6a1 1 0 0 0 1-.8L21 8H6" stroke-linecap="round" stroke-linejoin="round" />
+                  <path
+                    d="M3 4h2l2.4 12.2a1 1 0 0 0 1 .8h8.6a1 1 0 0 0 1-.8L21 8H6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
                 </svg>
                 <!-- Products (box) -->
                 <svg v-else-if="item.icon === 'products'" viewBox="0 0 24 24" fill="none">
@@ -74,7 +78,10 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
                 </svg>
                 <!-- Categories (tag) -->
                 <svg v-else-if="item.icon === 'categories'" viewBox="0 0 24 24" fill="none">
-                  <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.2-6.2a2 2 0 0 1-.6-1.4V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l6.4 6.4a2 2 0 0 1 0 2.4Z" stroke-linejoin="round" />
+                  <path
+                    d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.2-6.2a2 2 0 0 1-.6-1.4V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l6.4 6.4a2 2 0 0 1 0 2.4Z"
+                    stroke-linejoin="round"
+                  />
                   <circle cx="8" cy="8" r="1.3" />
                 </svg>
                 <!-- Promotions (percent) -->
@@ -102,16 +109,33 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
                 <!-- Pages (layers) -->
                 <svg v-else-if="item.icon === 'pages'" viewBox="0 0 24 24" fill="none">
                   <path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" stroke-linejoin="round" />
-                  <path d="m3 12 9 4.5L21 12M3 16.5 12 21l9-4.5" stroke-linecap="round" stroke-linejoin="round" />
+                  <path
+                    d="m3 12 9 4.5L21 12M3 16.5 12 21l9-4.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
                 </svg>
                 <!-- Customers (people) -->
                 <svg v-else-if="item.icon === 'customers'" viewBox="0 0 24 24" fill="none">
                   <circle cx="9" cy="8" r="3" />
-                  <path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.5M17 20a6 6 0 0 0-2-4.5" stroke-linecap="round" />
+                  <path
+                    d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5.5M17 20a6 6 0 0 0-2-4.5"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <!-- Reviews (star) -->
+                <svg v-else-if="item.icon === 'reviews'" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 0l-5.4 2.8 1-6.1L3.2 9.4l6.1-.9L12 3Z"
+                    stroke-linejoin="round"
+                  />
                 </svg>
                 <!-- Administrators (shield) -->
                 <svg v-else-if="item.icon === 'administrators'" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6l-7-3Z" stroke-linejoin="round" />
+                  <path
+                    d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6l-7-3Z"
+                    stroke-linejoin="round"
+                  />
                   <path d="m9.5 12 1.8 1.8L15 10" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
                 <!-- Roles & Permissions (key) -->
@@ -121,13 +145,21 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
                 </svg>
                 <!-- Logs (history) -->
                 <svg v-else-if="item.icon === 'logs'" viewBox="0 0 24 24" fill="none">
-                  <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M4 4v4h4" stroke-linecap="round" stroke-linejoin="round" />
+                  <path
+                    d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M4 4v4h4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
                   <path d="M12 8v4l3 2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
                 <!-- Settings -->
                 <svg v-else-if="item.icon === 'settings'" viewBox="0 0 24 24" fill="none">
                   <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" />
-                  <path d="m19.4 15 .1.1a1.8 1.8 0 0 1-2.5 2.5l-.1-.1a1.8 1.8 0 0 0-3.1 1.3v.2a1.8 1.8 0 0 1-3.6 0v-.2a1.8 1.8 0 0 0-3.1-1.3l-.1.1a1.8 1.8 0 0 1-2.5-2.5l.1-.1a1.8 1.8 0 0 0-1.3-3.1h-.2a1.8 1.8 0 0 1 0-3.6h.2a1.8 1.8 0 0 0 1.3-3.1l-.1-.1a1.8 1.8 0 0 1 2.5-2.5l.1.1a1.8 1.8 0 0 0 3.1-1.3v-.2a1.8 1.8 0 0 1 3.6 0v.2a1.8 1.8 0 0 0 3.1 1.3l.1-.1a1.8 1.8 0 0 1 2.5 2.5l-.1.1a1.8 1.8 0 0 0 1.3 3.1h.2a1.8 1.8 0 0 1 0 3.6h-.2a1.8 1.8 0 0 0-1.3 3.1Z" stroke-linecap="round" stroke-linejoin="round" />
+                  <path
+                    d="m19.4 15 .1.1a1.8 1.8 0 0 1-2.5 2.5l-.1-.1a1.8 1.8 0 0 0-3.1 1.3v.2a1.8 1.8 0 0 1-3.6 0v-.2a1.8 1.8 0 0 0-3.1-1.3l-.1.1a1.8 1.8 0 0 1-2.5-2.5l.1-.1a1.8 1.8 0 0 0-1.3-3.1h-.2a1.8 1.8 0 0 1 0-3.6h.2a1.8 1.8 0 0 0 1.3-3.1l-.1-.1a1.8 1.8 0 0 1 2.5-2.5l.1.1a1.8 1.8 0 0 0 3.1-1.3v-.2a1.8 1.8 0 0 1 3.6 0v.2a1.8 1.8 0 0 0 3.1 1.3l.1-.1a1.8 1.8 0 0 1 2.5 2.5l-.1.1a1.8 1.8 0 0 0 1.3 3.1h.2a1.8 1.8 0 0 1 0 3.6h-.2a1.8 1.8 0 0 0-1.3 3.1Z"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
                 </svg>
               </span>
               <span class="nav__label">{{ item.label }}</span>
@@ -143,7 +175,11 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
       <button type="button" class="nav__link nav__link--logout" @click="handleLogout">
         <span class="nav__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none">
-            <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" stroke-linecap="round" stroke-linejoin="round" />
+            <path
+              d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
             <path d="M10 8l-4 4 4 4M6 12h11" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </span>
@@ -166,7 +202,9 @@ $sidebar-rail: 74px;
   flex-direction: column;
   background: var(--surface);
   border-right: 1px solid var(--border-subtle);
-  transition: width 0.2s ease, transform 0.2s ease;
+  transition:
+    width 0.2s ease,
+    transform 0.2s ease;
 
   /* ---- Collapsed (icon rail) on desktop ---- */
   &--collapsed {
@@ -291,7 +329,9 @@ $sidebar-rail: 74px;
     background: transparent;
     border: none;
     cursor: pointer;
-    transition: background-color 0.15s ease, color 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
 
     &:hover {
       background: var(--surface-alt);

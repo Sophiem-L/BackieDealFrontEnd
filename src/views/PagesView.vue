@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -37,9 +37,17 @@ const deleteTarget = ref(null)
 const deleteConfirmationText = ref('')
 const selectedIds = ref([])
 const lastSelectedId = ref(null)
-const statusFilter = ref(['all', 'published', 'draft', 'archived'].includes(route.query.status) ? route.query.status : 'all')
-const sortBy = ref(['updated', 'newest', 'oldest', 'title'].includes(route.query.sort) ? route.query.sort : 'updated')
-const viewMode = ref(route.query.view === 'table' ? 'table' : 'card')
+const statusFilter = ref(
+  ['all', 'published', 'draft', 'archived'].includes(route.query.status)
+    ? route.query.status
+    : 'all',
+)
+const sortBy = ref(
+  ['updated', 'newest', 'oldest', 'title'].includes(route.query.sort)
+    ? route.query.sort
+    : 'updated',
+)
+const viewMode = ref(route.query.view === 'table' ? 'table' : 'list')
 const density = ref(route.query.density === 'compact' ? 'compact' : 'comfortable')
 const queryText = ref(route.query.q || '')
 const debouncedQuery = ref(route.query.q || '')
@@ -68,12 +76,13 @@ const visiblePages = computed(() => {
   return sortPages(filtered, sortBy.value)
 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(visiblePages.value.length / itemsPerPage.value)))
+const totalPages = computed(() =>
+  Math.max(1, Math.ceil(visiblePages.value.length / itemsPerPage.value)),
+)
 const currentPageItems = computed(() => {
   const start = (page.value - 1) * itemsPerPage.value
   return visiblePages.value.slice(start, start + itemsPerPage.value)
 })
-const selectedPages = computed(() => pages.value.filter((pageItem) => selectedIds.value.includes(pageItem.id)))
 const deleteConfirmReady = computed(() => {
   if (!deleteTarget.value) return false
   const expected = String(deleteTarget.value.id)
@@ -117,7 +126,7 @@ function updateRouteState() {
   if (queryText.value) query.q = queryText.value
   else delete query.q
 
-  if (viewMode.value !== 'card') query.view = viewMode.value
+  if (viewMode.value !== 'list') query.view = viewMode.value
   else delete query.view
 
   if (density.value !== 'comfortable') query.density = density.value
@@ -155,9 +164,13 @@ watch(
 )
 
 function syncFromRoute() {
-  const nextStatus = ['all', 'published', 'draft', 'archived'].includes(route.query.status) ? route.query.status : 'all'
-  const nextSort = ['updated', 'newest', 'oldest', 'title'].includes(route.query.sort) ? route.query.sort : 'updated'
-  const nextView = route.query.view === 'table' ? 'table' : 'card'
+  const nextStatus = ['all', 'published', 'draft', 'archived'].includes(route.query.status)
+    ? route.query.status
+    : 'all'
+  const nextSort = ['updated', 'newest', 'oldest', 'title'].includes(route.query.sort)
+    ? route.query.sort
+    : 'updated'
+  const nextView = route.query.view === 'table' ? 'table' : 'list'
   const nextDensity = route.query.density === 'compact' ? 'compact' : 'comfortable'
 
   statusFilter.value = nextStatus
@@ -169,16 +182,6 @@ function syncFromRoute() {
   page.value = Number(route.query.page || 1)
 }
 
-function formatPageMeta(item) {
-  if (item.status === 'published' && item.published_at) {
-    return `Published ${formatShortDate(item.published_at)}`
-  }
-  if (item.updated_at) {
-    return `Updated ${formatShortDate(item.updated_at)}`
-  }
-  return `Created ${formatShortDate(item.created_at)}`
-}
-
 function buildListQuery() {
   const params = new URLSearchParams({ type: TYPE, per_page: '200' })
   return params.toString()
@@ -188,9 +191,11 @@ async function loadPages() {
   loading.value = true
   error.value = ''
   try {
-    const response = await apiFetch(`/admin/content?${buildListQuery()}`, { token: auth.accessToken })
+    const response = await apiFetch(`/admin/content?${buildListQuery()}`, {
+      token: auth.accessToken,
+    })
     const payload = response?.data
-    const rows = Array.isArray(payload) ? payload : payload?.items ?? []
+    const rows = Array.isArray(payload) ? payload : (payload?.items ?? [])
     pages.value = rows.filter((row) => row?.id != null).map((row) => makePageRow(row))
   } catch (err) {
     pages.value = []
@@ -205,7 +210,10 @@ function focusSearch() {
 }
 
 function handleGlobalShortcuts(event) {
-  if ((event.key === '/' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) && !event.altKey) {
+  if (
+    (event.key === '/' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) &&
+    !event.altKey
+  ) {
     event.preventDefault()
     focusSearch()
   }
@@ -231,11 +239,14 @@ function openPage(item) {
 
 function copySlug(item) {
   const text = item.slug || ''
-  navigator.clipboard?.writeText(text).then(() => {
-    pushToast('Slug copied', text)
-  }).catch(() => {
-    pushToast('Copy not available', 'Use the URL in the page details instead.')
-  })
+  navigator.clipboard
+    ?.writeText(text)
+    .then(() => {
+      pushToast('Slug copied', text)
+    })
+    .catch(() => {
+      pushToast('Copy not available', 'Use the URL in the page details instead.')
+    })
 }
 
 function getPrimaryActionLabel(item) {
@@ -249,7 +260,6 @@ function currentStatus(item) {
 }
 
 async function persistStatus(item, nextStatus) {
-  const previousStatus = currentStatus(item)
   const previousPage = { ...item }
 
   pages.value = pages.value.map((pageItem) => {
@@ -265,7 +275,9 @@ async function persistStatus(item, nextStatus) {
   })
 
   const undoAction = () => {
-    pages.value = pages.value.map((pageItem) => (pageItem.id === item.id ? { ...pageItem, ...previousPage } : pageItem))
+    pages.value = pages.value.map((pageItem) =>
+      pageItem.id === item.id ? { ...pageItem, ...previousPage } : pageItem,
+    )
   }
 
   pushToast(
@@ -283,9 +295,15 @@ async function persistStatus(item, nextStatus) {
 
   try {
     if (nextStatus === 'published') {
-      await apiFetch(`/admin/content/${item.id}/publish`, { method: 'POST', token: auth.accessToken })
+      await apiFetch(`/admin/content/${item.id}/publish`, {
+        method: 'POST',
+        token: auth.accessToken,
+      })
     } else if (nextStatus === 'archived') {
-      await apiFetch(`/admin/content/${item.id}/archive`, { method: 'POST', token: auth.accessToken })
+      await apiFetch(`/admin/content/${item.id}/archive`, {
+        method: 'POST',
+        token: auth.accessToken,
+      })
     } else {
       await apiFetch(`/admin/content/${item.id}`, {
         method: 'PATCH',
@@ -294,7 +312,9 @@ async function persistStatus(item, nextStatus) {
       })
     }
   } catch (err) {
-    pages.value = pages.value.map((pageItem) => (pageItem.id === item.id ? { ...pageItem, ...previousPage } : pageItem))
+    pages.value = pages.value.map((pageItem) =>
+      pageItem.id === item.id ? { ...pageItem, ...previousPage } : pageItem,
+    )
     pushToast('Action failed', err?.message || 'Please try again.', { type: 'error' })
   }
 }
@@ -302,7 +322,12 @@ async function persistStatus(item, nextStatus) {
 async function performMainAction(item) {
   actionBusyId.value = item.id
   try {
-    const targetStatus = currentStatus(item) === 'draft' ? 'published' : currentStatus(item) === 'published' ? 'draft' : 'draft'
+    const targetStatus =
+      currentStatus(item) === 'draft'
+        ? 'published'
+        : currentStatus(item) === 'published'
+          ? 'draft'
+          : 'draft'
     await persistStatus(item, targetStatus)
   } finally {
     actionBusyId.value = null
@@ -321,10 +346,21 @@ async function performBulkAction(action) {
     delete: 'Delete',
   }
 
-  pushToast(`${actionLabels[action]} ${selectedItems.length} page${selectedItems.length > 1 ? 's' : ''}`, 'Bulk action in progress.', { persist: true })
+  pushToast(
+    `${actionLabels[action]} ${selectedItems.length} page${selectedItems.length > 1 ? 's' : ''}`,
+    'Bulk action in progress.',
+    { persist: true },
+  )
 
   for (const item of selectedItems) {
-    const targetStatus = action === 'publish' ? 'published' : action === 'unpublish' ? 'draft' : action === 'archive' ? 'archived' : null
+    const targetStatus =
+      action === 'publish'
+        ? 'published'
+        : action === 'unpublish'
+          ? 'draft'
+          : action === 'archive'
+            ? 'archived'
+            : null
 
     if (action === 'delete') {
       await apiFetch(`/admin/content/${item.id}`, { method: 'DELETE', token: auth.accessToken })
@@ -344,7 +380,12 @@ function toggleSelection(id, event) {
   const visibleIds = currentPageItems.value.map((item) => item.id)
   const isSelected = selectedIds.value.includes(id)
 
-  if (event && event.shiftKey && lastSelectedId.value && visibleIds.includes(lastSelectedId.value)) {
+  if (
+    event &&
+    event.shiftKey &&
+    lastSelectedId.value &&
+    visibleIds.includes(lastSelectedId.value)
+  ) {
     const anchorIndex = visibleIds.indexOf(lastSelectedId.value)
     const targetIndex = visibleIds.indexOf(id)
     const start = Math.min(anchorIndex, targetIndex)
@@ -416,7 +457,10 @@ function toggleSelectAllVisible() {
 }
 
 function escapeHtml(value) {
-  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
 onMounted(() => {
@@ -437,10 +481,10 @@ watch(
     <AppHeader title="Content: Pages" />
 
     <div class="page__body">
-      <header class="page__header">
-        <div>
-          <p class="eyebrow">Website content</p>
-          <h2 class="title">Pages</h2>
+      <section class="head">
+        <div class="head__text">
+          <h2 class="head__title">Pages</h2>
+          <p class="head__subtitle">Create, organize, and publish website content.</p>
         </div>
 
         <BaseButton
@@ -455,190 +499,322 @@ watch(
           </template>
           Add New Page
         </BaseButton>
-      </header>
-
-      <section class="toolbar" aria-label="Page list controls">
-        <div class="search-box">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
-            <path d="m20 20-3.4-3.4" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" />
-          </svg>
-          <input
-            ref="searchRef"
-            v-model="queryText"
-            type="search"
-            placeholder="Search pages by title, slug or excerpt"
-            aria-label="Search pages"
-          />
-          <button v-if="queryText" type="button" class="search-box__clear" aria-label="Clear search" @click="queryText = ''">×</button>
-        </div>
-
-        <div class="toolbar__right">
-          <div class="view-toggle" role="tablist" aria-label="Layout view">
-            <button type="button" :class="{ 'is-active': viewMode === 'card' }" @click="viewMode = 'card'">Cards</button>
-            <button type="button" :class="{ 'is-active': viewMode === 'table' }" @click="viewMode = 'table'">Table</button>
-          </div>
-
-          <div class="density-toggle" aria-label="Density">
-            <button type="button" :class="{ 'is-active': density === 'comfortable' }" @click="density = 'comfortable'">Comfortable</button>
-            <button type="button" :class="{ 'is-active': density === 'compact' }" @click="density = 'compact'">Compact</button>
-          </div>
-        </div>
       </section>
 
-      <nav class="filters" aria-label="Page status filters" role="tablist">
-        <button
-          v-for="filter in statusFilters"
-          :key="filter.value"
-          type="button"
-          class="filter-pill"
-          :class="{ 'filter-pill--active': statusFilter === filter.value }"
-          :aria-pressed="statusFilter === filter.value"
-          :aria-live="filter.value === statusFilter ? 'polite' : 'off'"
-          @click="statusFilter = filter.value"
-        >
-          <span>{{ filter.label }}</span>
-          <span class="filter-pill__count">{{ statusCounts[filter.value] ?? 0 }}</span>
-        </button>
-      </nav>
+      <p v-if="error" class="pages-error" role="alert">{{ error }}</p>
 
-      <section class="sort-row" aria-label="Sort pages">
-        <label class="sort-row__label" for="page-sort">Sort by</label>
-        <select id="page-sort" v-model="sortBy" class="sort-row__select">
-          <option v-for="option in sortOptions" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
-      </section>
-
-      <div v-if="loading" class="list-skeleton" aria-live="polite" aria-busy="true">
-        <div v-for="n in 4" :key="n" class="skeleton-card" />
-      </div>
-
-      <div v-else-if="error" class="alert-card" role="alert" aria-live="assertive">
-        <strong>We couldn’t load your pages.</strong>
-        <p>{{ error }}</p>
-        <button type="button" class="alert-card__retry" @click="loadPages">Try again</button>
-      </div>
-
-      <template v-else>
-        <EmptyState
-          v-if="visiblePages.length === 0 && !debouncedQuery && statusFilter === 'all'"
-          title="No pages yet"
-          description="Create your first website page to start publishing policy content and storefront details."
-          action-label="Create your first page"
-          @action="showTemplateModal = true"
-        />
-
-        <EmptyState
-          v-else-if="visiblePages.length === 0"
-          :title="`No pages match “${debouncedQuery || statusFilter}”`"
-          description="Try a different search, or switch to another filter to broaden the list."
-          action-label="Clear search"
-          @action="queryText = ''"
-        />
-
-        <div v-else-if="viewMode === 'table'" class="table-shell">
-          <table class="page-table" role="table">
-            <thead>
-              <tr>
-                <th class="table-check"><input type="checkbox" :checked="currentPageItems.length > 0 && currentPageItems.every((item) => selectedIds.includes(item.id))" @change="toggleSelectAllVisible" /></th>
-                <th>Title</th>
-                <th>Status</th>
-                <th>Author</th>
-                <th>Updated</th>
-                <th>Slug</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="item in currentPageItems" :key="item.id" :class="{ 'is-selected': selectedIds.includes(item.id) }">
-                <td><input type="checkbox" :checked="selectedIds.includes(item.id)" @change="toggleSelection(item.id, $event)" /></td>
-                <td>
-                  <button type="button" class="title-link" @click="openPage(item)">
-                    <span v-html="escapeHtml(item.title).replace(new RegExp(`(${debouncedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>')" />
-                  </button>
-                </td>
-                <td><StatusChip :status="item.status" /></td>
-                <td>{{ item.author }}</td>
-                <td>
-                  <div class="updated-cell">
-                    <span>{{ formatRelativeTime(getUpdatedAtValue(item)) }}</span>
-                    <button type="button" class="meta-tooltip" :title="`Updated ${formatShortDate(getUpdatedAtValue(item))}`">i</button>
-                  </div>
-                </td>
-                <td>
-                  <button type="button" class="slug-copy" @click="copySlug(item)">{{ item.slug }}</button>
-                </td>
-                <td>
-                  <div class="table-actions">
-                    <button type="button" class="mini-action" @click="openPage(item)">Edit</button>
-                    <button type="button" class="mini-action mini-action--ghost" @click="openLivePage(item)">View live</button>
-                    <PageActionsMenu :item="item" :busy="actionBusyId === item.id" @view="openLivePage(item)" @edit="openEditor(item)" @publish="persistStatus(item, 'published')" @unpublish="persistStatus(item, 'draft')" @archive="persistStatus(item, 'archived')" @restore="persistStatus(item, 'draft')" @duplicate="router.push({ name: 'page-create', query: { duplicate: item.id } })" @delete="confirmDelete(item)" />
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div v-else class="card-list" aria-live="polite">
-          <article
-            v-for="item in currentPageItems"
-            :key="item.id"
-            class="page-card"
-            :class="{ 'page-card--selected': selectedIds.includes(item.id) }"
-          >
-            <div class="page-card__head">
-              <div class="page-card__check">
-                <input type="checkbox" :checked="selectedIds.includes(item.id)" @change="toggleSelection(item.id, $event)" />
-              </div>
-              <div class="page-card__status">
-                <StatusChip :status="item.status" />
-                <span v-if="isPageStale(item)" class="needs-review">Needs review</span>
-              </div>
-            </div>
-
-            <button type="button" class="page-card__title" @click="openPage(item)">
-              <span v-html="highlightMatch(item.title, debouncedQuery)" />
+      <section class="pages" aria-label="Pages list">
+        <div class="toolbar" aria-label="Page list controls">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
+              <path
+                d="m20 20-3.4-3.4"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.8"
+              />
+            </svg>
+            <input
+              ref="searchRef"
+              v-model="queryText"
+              type="search"
+              placeholder="Search pages by title, slug or excerpt"
+              aria-label="Search pages"
+            />
+            <button
+              v-if="queryText"
+              type="button"
+              class="search-box__clear"
+              aria-label="Clear search"
+              @click="queryText = ''"
+            >
+              ×
             </button>
+          </div>
 
-            <p class="page-card__excerpt" v-html="highlightMatch(item.excerpt, debouncedQuery)" />
-
-            <div class="page-card__meta">
-              <span class="page-card__meta-label">Author</span>
-              <span>{{ item.author }}</span>
-            </div>
-            <div class="page-card__meta">
-              <span class="page-card__meta-label">Updated</span>
-              <span>{{ formatRelativeTime(getUpdatedAtValue(item)) }}</span>
-            </div>
-
-            <div class="page-card__slug-row">
-              <span class="slug-label">Slug</span>
-              <button type="button" class="slug-copy" @click="copySlug(item)">{{ item.slug }}</button>
-            </div>
-
-            <div class="page-card__actions">
-              <button type="button" class="primary-action" @click="performMainAction(item)">
-                {{ actionBusyId === item.id ? 'Working…' : getPrimaryActionLabel(item) }}
+          <div class="toolbar__right">
+            <div class="view-toggle" role="tablist" aria-label="Layout view">
+              <button
+                type="button"
+                :class="{ 'is-active': viewMode === 'list' }"
+                @click="viewMode = 'list'"
+              >
+                List
               </button>
-              <button type="button" class="secondary-action" @click="openEditor(item)">Edit</button>
-              <button type="button" class="secondary-action" @click="openLivePage(item)">View live</button>
-              <PageActionsMenu :item="item" :busy="actionBusyId === item.id" @view="openLivePage(item)" @edit="openEditor(item)" @publish="persistStatus(item, 'published')" @unpublish="persistStatus(item, 'draft')" @archive="persistStatus(item, 'archived')" @restore="persistStatus(item, 'draft')" @duplicate="router.push({ name: 'page-create', query: { duplicate: item.id } })" @delete="confirmDelete(item)" />
+              <button
+                type="button"
+                :class="{ 'is-active': viewMode === 'table' }"
+                @click="viewMode = 'table'"
+              >
+                Table
+              </button>
             </div>
-          </article>
+
+            <div class="density-toggle" aria-label="Density">
+              <button
+                type="button"
+                :class="{ 'is-active': density === 'comfortable' }"
+                @click="density = 'comfortable'"
+              >
+                Comfortable
+              </button>
+              <button
+                type="button"
+                :class="{ 'is-active': density === 'compact' }"
+                @click="density = 'compact'"
+              >
+                Compact
+              </button>
+            </div>
+          </div>
         </div>
 
-        <footer v-if="visiblePages.length" class="pager">
-          <span>Showing {{ currentPageItems.length }} of {{ visiblePages.length }} pages</span>
-          <div class="pager__controls">
-            <button type="button" :disabled="page <= 1" @click="page -= 1">Previous</button>
-            <button type="button" class="pager__page" :aria-label="`Page ${page}`">{{ page }}</button>
-            <button type="button" :disabled="page >= totalPages" @click="page += 1">Next</button>
+        <nav class="filters" aria-label="Page status filters" role="tablist">
+          <button
+            v-for="filter in statusFilters"
+            :key="filter.value"
+            type="button"
+            class="filter-pill"
+            :class="{ 'filter-pill--active': statusFilter === filter.value }"
+            :aria-pressed="statusFilter === filter.value"
+            :aria-live="filter.value === statusFilter ? 'polite' : 'off'"
+            @click="statusFilter = filter.value"
+          >
+            <span>{{ filter.label }}</span>
+            <span class="filter-pill__count">{{ statusCounts[filter.value] ?? 0 }}</span>
+          </button>
+        </nav>
+
+        <section class="sort-row" aria-label="Sort pages">
+          <label class="sort-row__label" for="page-sort">Sort by</label>
+          <select id="page-sort" v-model="sortBy" class="sort-row__select">
+            <option v-for="option in sortOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </section>
+
+        <div v-if="loading" class="list-skeleton" aria-live="polite" aria-busy="true">
+          <div v-for="n in 4" :key="n" class="skeleton-card" />
+        </div>
+
+        <template v-else>
+          <EmptyState
+            v-if="visiblePages.length === 0 && !debouncedQuery && statusFilter === 'all'"
+            title="No pages yet"
+            description="Create your first website page to start publishing policy content and storefront details."
+            action-label="Create your first page"
+            @action="showTemplateModal = true"
+          />
+
+          <EmptyState
+            v-else-if="visiblePages.length === 0"
+            :title="`No pages match “${debouncedQuery || statusFilter}”`"
+            description="Try a different search, or switch to another filter to broaden the list."
+            action-label="Clear search"
+            @action="queryText = ''"
+          />
+
+          <div v-else-if="viewMode === 'table'" class="table-shell">
+            <table class="page-table" role="table">
+              <thead>
+                <tr>
+                  <th class="table-check">
+                    <input
+                      type="checkbox"
+                      :checked="
+                        currentPageItems.length > 0 &&
+                        currentPageItems.every((item) => selectedIds.includes(item.id))
+                      "
+                      @change="toggleSelectAllVisible"
+                    />
+                  </th>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th>Author</th>
+                  <th>Updated</th>
+                  <th>Slug</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="item in currentPageItems"
+                  :key="item.id"
+                  :class="{ 'is-selected': selectedIds.includes(item.id) }"
+                >
+                  <td>
+                    <input
+                      type="checkbox"
+                      :checked="selectedIds.includes(item.id)"
+                      @change="toggleSelection(item.id, $event)"
+                    />
+                  </td>
+                  <td>
+                    <button type="button" class="title-link" @click="openPage(item)">
+                      <span
+                        v-html="
+                          escapeHtml(item.title).replace(
+                            new RegExp(
+                              `(${debouncedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
+                              'ig',
+                            ),
+                            '<mark>$1</mark>',
+                          )
+                        "
+                      />
+                    </button>
+                  </td>
+                  <td><StatusChip :status="item.status" /></td>
+                  <td>{{ item.author }}</td>
+                  <td>
+                    <div class="updated-cell">
+                      <span>{{ formatRelativeTime(getUpdatedAtValue(item)) }}</span>
+                      <button
+                        type="button"
+                        class="meta-tooltip"
+                        :title="`Updated ${formatShortDate(getUpdatedAtValue(item))}`"
+                      >
+                        i
+                      </button>
+                    </div>
+                  </td>
+                  <td>
+                    <button type="button" class="slug-copy" @click="copySlug(item)">
+                      {{ item.slug }}
+                    </button>
+                  </td>
+                  <td>
+                    <div class="table-actions">
+                      <button type="button" class="mini-action" @click="openPage(item)">
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        class="mini-action mini-action--ghost"
+                        @click="openLivePage(item)"
+                      >
+                        View live
+                      </button>
+                      <PageActionsMenu
+                        :item="item"
+                        :busy="actionBusyId === item.id"
+                        @view="openLivePage(item)"
+                        @edit="openEditor(item)"
+                        @publish="persistStatus(item, 'published')"
+                        @unpublish="persistStatus(item, 'draft')"
+                        @archive="persistStatus(item, 'archived')"
+                        @restore="persistStatus(item, 'draft')"
+                        @duplicate="
+                          router.push({ name: 'page-create', query: { duplicate: item.id } })
+                        "
+                        @delete="confirmDelete(item)"
+                      />
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-        </footer>
-      </template>
+
+          <div
+            v-else
+            class="page-list"
+            :class="{ 'page-list--compact': density === 'compact' }"
+            aria-live="polite"
+          >
+            <article
+              v-for="item in currentPageItems"
+              :key="item.id"
+              class="page-row"
+              :class="{ 'page-row--selected': selectedIds.includes(item.id) }"
+            >
+              <label class="page-row__check">
+                <input
+                  type="checkbox"
+                  :checked="selectedIds.includes(item.id)"
+                  @change="toggleSelection(item.id, $event)"
+                />
+              </label>
+
+              <div class="page-row__body" role="button" @click="openPage(item)">
+                <div class="page-row__meta">
+                  <StatusChip :status="item.status" />
+                  <span v-if="isPageStale(item)" class="needs-review">Needs review</span>
+                </div>
+                <h3 class="page-row__title" v-html="highlightMatch(item.title, debouncedQuery)" />
+                <p
+                  class="page-row__excerpt"
+                  v-html="highlightMatch(item.excerpt, debouncedQuery)"
+                />
+                <div class="page-row__details">
+                  <span>{{ item.author }}</span>
+                  <span>Updated {{ formatRelativeTime(getUpdatedAtValue(item)) }}</span>
+                  <span>{{ item.slug }}</span>
+                </div>
+              </div>
+
+              <div class="page-row__cta">
+                <button type="button" class="page-row__cta-pill" @click="performMainAction(item)">
+                  {{ actionBusyId === item.id ? 'Working…' : getPrimaryActionLabel(item) }}
+                </button>
+              </div>
+
+              <div class="page-row__actions">
+                <button
+                  type="button"
+                  class="icon-btn"
+                  aria-label="Edit page"
+                  @click="openEditor(item)"
+                >
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M4 20h4l10-10-4-4L4 16v4Z" stroke-linejoin="round" />
+                    <path d="m13.5 6.5 4 4" stroke-linecap="round" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="icon-btn"
+                  aria-label="View live page"
+                  @click="openLivePage(item)"
+                >
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M14 5h5v5M10 14 19 5M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+                <PageActionsMenu
+                  :item="item"
+                  :busy="actionBusyId === item.id"
+                  @view="openLivePage(item)"
+                  @edit="openEditor(item)"
+                  @publish="persistStatus(item, 'published')"
+                  @unpublish="persistStatus(item, 'draft')"
+                  @archive="persistStatus(item, 'archived')"
+                  @restore="persistStatus(item, 'draft')"
+                  @duplicate="router.push({ name: 'page-create', query: { duplicate: item.id } })"
+                  @delete="confirmDelete(item)"
+                />
+              </div>
+            </article>
+          </div>
+
+          <footer v-if="visiblePages.length" class="pager">
+            <span>Showing {{ currentPageItems.length }} of {{ visiblePages.length }} pages</span>
+            <div class="pager__controls">
+              <button type="button" :disabled="page <= 1" @click="page -= 1">Previous</button>
+              <button type="button" class="pager__page" :aria-label="`Page ${page}`">
+                {{ page }}
+              </button>
+              <button type="button" :disabled="page >= totalPages" @click="page += 1">Next</button>
+            </div>
+          </footer>
+        </template>
+      </section>
 
       <BulkActionBar
         :selected-count="selectedIds.length"
@@ -654,7 +830,9 @@ watch(
       <div class="template-modal__card" @click.stop>
         <div class="template-modal__header">
           <h3>Start a new page</h3>
-          <button type="button" class="template-modal__close" @click="showTemplateModal = false">×</button>
+          <button type="button" class="template-modal__close" @click="showTemplateModal = false">
+            ×
+          </button>
         </div>
 
         <div class="template-modal__grid">
@@ -686,8 +864,15 @@ watch(
     >
       <template #body>
         <div class="confirm-delete-wrap">
-          <label for="delete-confirm">Type <strong>{{ deleteTarget?.id ?? '' }}</strong> or DELETE to confirm.</label>
-          <input id="delete-confirm" v-model="deleteConfirmationText" type="text" placeholder="Type here" />
+          <label for="delete-confirm"
+            >Type <strong>{{ deleteTarget?.id ?? '' }}</strong> or DELETE to confirm.</label
+          >
+          <input
+            id="delete-confirm"
+            v-model="deleteConfirmationText"
+            type="text"
+            placeholder="Type here"
+          />
         </div>
       </template>
     </ConfirmDialog>
@@ -706,37 +891,41 @@ watch(
 .page__body {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
   padding: 1.5rem;
 }
 
-.page__header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+.head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.75rem 0;
-  background: rgba(11, 12, 15, 0.92);
-  backdrop-filter: blur(10px);
+  flex-wrap: wrap;
+
+  &__title {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-strong);
+  }
+
+  &__subtitle {
+    margin: 0.3rem 0 0;
+    font-size: 0.85rem;
+    color: var(--text-subtle);
+  }
 }
 
-.eyebrow {
-  margin: 0 0 0.2rem;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--text-subtle);
-  text-transform: uppercase;
+.pages {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-.title {
+.pages-error {
   margin: 0;
-  font-size: clamp(1.5rem, 2vw, 2rem);
-  font-weight: 800;
-  color: var(--text-strong);
+  font-size: 0.82rem;
+  color: var(--danger);
 }
 
 .toolbar {
@@ -885,25 +1074,32 @@ watch(
   font: inherit;
 }
 
-.card-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem;
-}
-
-.page-card {
+.page-list {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
-  padding: 1rem;
-  border-radius: 12px;
+  gap: 1rem;
+
+  &--compact {
+    gap: 0.7rem;
+  }
+}
+
+.page-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 126px;
+  padding: 0.85rem 1rem 0.85rem 0.5rem;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  border-radius: 14px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 
   &:hover {
     border-color: var(--border);
-    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
   }
 
   &--selected {
@@ -911,100 +1107,126 @@ watch(
     border-color: rgb(var(--accent-rgb) / 0.5);
   }
 
-  &__head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-
-  &__status {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
   &__check {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
+    padding-left: 0.25rem;
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.35rem;
   }
 
   &__title {
-    border: none;
-    background: transparent;
-    color: var(--text-strong);
-    text-align: left;
-    padding: 0;
-    font-size: 1.05rem;
+    margin: 0 0 0.2rem;
+    font-size: 1rem;
     font-weight: 700;
-    cursor: pointer;
+    color: var(--text-strong);
   }
 
   &__excerpt {
     margin: 0;
     color: var(--text-subtle);
-    font-size: 0.86rem;
-    line-height: 1.5;
+    font-size: 0.82rem;
+    line-height: 1.45;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
-  &__meta {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.6rem;
-    font-size: 0.77rem;
-    color: var(--text-subtle);
-  }
-
-  &__meta-label {
-    font-weight: 700;
-    color: var(--text-body);
-  }
-
-  &__slug-row {
+  &__details {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.6rem;
     flex-wrap: wrap;
-    font-size: 0.75rem;
+    margin-top: 0.55rem;
+    color: var(--text-subtle);
+    font-size: 0.72rem;
+  }
+
+  &__details span:not(:last-child)::after {
+    content: '•';
+    margin-left: 0.6rem;
+    color: var(--text-faint);
+  }
+
+  &__cta {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  &__cta-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 122px;
+    padding: 0.4rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-strong);
+    background: var(--surface-track);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
   }
 
   &__actions {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    flex-wrap: wrap;
   }
 }
 
-.primary-action,
-.secondary-action,
-.mini-action,
-.pager__controls button,
-.alert-card__retry {
-  appearance: none;
-  border: none;
-  border-radius: 10px;
-  font: inherit;
-  cursor: pointer;
+.page-list--compact .page-row {
+  min-height: 108px;
+  padding: 0.7rem 0.85rem 0.7rem 0.35rem;
+
+  &__excerpt {
+    display: none;
+  }
 }
 
-.primary-action {
-  background: rgb(var(--accent-rgb));
-  color: var(--ink-on-accent);
-  padding: 0.62rem 0.8rem;
-  font-weight: 700;
-}
-
-.secondary-action {
-  background: var(--surface-alt);
-  color: var(--text-body);
-  padding: 0.62rem 0.8rem;
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background: var(--surface);
   border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-body);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    background: var(--surface-alt);
+  }
+
+  svg {
+    width: 17px;
+    height: 17px;
+    stroke: currentColor;
+    stroke-width: 1.7;
+  }
 }
 
 .needs-review {
@@ -1020,37 +1242,6 @@ watch(
   text-transform: uppercase;
 }
 
-.slug-copy,
-.title-link {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--text-strong);
-  font: inherit;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-.slug-label {
-  color: var(--text-subtle);
-  font-weight: 700;
-}
-
-.updated-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.meta-tooltip {
-  width: 1.2rem;
-  height: 1.2rem;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-subtle);
-}
-
 .table-shell {
   overflow-x: auto;
   border: 1px solid var(--border);
@@ -1063,7 +1254,8 @@ watch(
   border-collapse: collapse;
   min-width: 760px;
 
-  th, td {
+  th,
+  td {
     padding: 0.85rem 0.9rem;
     border-bottom: 1px solid var(--border-subtle);
     text-align: left;
@@ -1146,14 +1338,23 @@ watch(
 .skeleton-card {
   height: 220px;
   border-radius: 12px;
-  background: linear-gradient(90deg, var(--surface) 25%, rgba(255,255,255,0.05) 50%, var(--surface) 75%);
+  background: linear-gradient(
+    90deg,
+    var(--surface) 25%,
+    rgba(255, 255, 255, 0.05) 50%,
+    var(--surface) 75%
+  );
   background-size: 200% 100%;
   animation: shine 1.3s linear infinite;
 }
 
 @keyframes shine {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 .alert-card {
