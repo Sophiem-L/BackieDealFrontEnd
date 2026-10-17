@@ -34,6 +34,7 @@ describe('staff and manager permission filtering', () => {
         'orders.view',
         'logs.view',
         'stock.view',
+        'reviews.view',
       ],
     }
 
@@ -48,6 +49,7 @@ describe('staff and manager permission filtering', () => {
     expect(auth.hasPermission('logs.view')).toBe(false)
     expect(auth.hasPermission('stock.view')).toBe(false)
     expect(auth.hasPermission('users.view')).toBe(false)
+    expect(auth.hasPermission('reviews.view')).toBe(true)
 
     expect(auth.hasAnyPermission(['products.update', 'orders.update'])).toBe(true)
     expect(auth.hasAnyPermission(['orders.view', 'logs.view'])).toBe(false)
@@ -84,6 +86,7 @@ describe('staff and manager permission filtering', () => {
         'users.view',
         'logs.view',
         'stock.view',
+        'reviews.view',
       ],
     }
 
@@ -99,6 +102,7 @@ describe('staff and manager permission filtering', () => {
     expect(auth.hasPermission('stock.view')).toBe(false)
     expect(auth.hasPermission('customers.view')).toBe(false)
     expect(auth.hasPermission('logs.view')).toBe(false)
+    expect(auth.hasPermission('reviews.view')).toBe(true)
     expect(auth.hasAnyPermission(['orders.approve', 'stock.view'])).toBe(true)
     expect(auth.hasAnyPermission(['stock.view', 'logs.view'])).toBe(false)
   })

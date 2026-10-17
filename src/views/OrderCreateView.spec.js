@@ -44,7 +44,7 @@ const stubs = {
 function mockReferenceData() {
   apiFetch.mockImplementation((path) => {
     if (path.startsWith('/admin/products')) {
-      return Promise.resolve({ data: { items: [{ id: 5, name: 'Keyboard', price: 20 }] } })
+      return Promise.resolve({ data: { items: [{ id: 5, name: 'Keyboard', description: 'Mechanical keyboard', sku: 'KEY-5', price: 20, stock_quantity: 12 }], pagination: { current_page: 1, last_page: 1 } } })
     }
     return Promise.resolve({ data: { id: 99 } })
   })
@@ -54,10 +54,12 @@ function mockReferenceData() {
 }
 
 async function fillRequiredFields(wrapper) {
-  const selects = wrapper.findAll('select')
-  await selects.find((s) => s.text().includes('Keyboard')).setValue(5)
-  await selects.find((s) => s.text().includes('Dara Sok')).setValue(3)
-  await selects.find((s) => s.text().includes('Cash on Delivery')).setValue('cod')
+  await wrapper.find('button[aria-label="Add Products"]').trigger('click')
+  await flushPromises()
+  await wrapper.find('.product-option input[type="checkbox"]').setValue(true)
+  await wrapper.find('button').filter((button) => button.text().includes('Add Selected Products')).trigger('click')
+  wrapper.vm.customerId = 3
+  wrapper.vm.payment.method = 'cod'
   await flushPromises()
 }
 
@@ -98,5 +100,13 @@ describe('OrderCreateView', () => {
     await fillRequiredFields(wrapper)
 
     expect(wrapper.text()).toContain('dara@example.com')
+  })
+
+  it('merges selected products instead of adding duplicate order rows', async () => {
+    const wrapper = mount(OrderCreateView, { global: { stubs } })
+    await flushPromises()
+    await fillRequiredFields(wrapper)
+    expect(wrapper.findAll('.order-product')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Keyboard')
   })
 })

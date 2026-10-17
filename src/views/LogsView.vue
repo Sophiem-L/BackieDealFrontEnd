@@ -163,29 +163,48 @@ function exportLogs() {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  background: var(--surface);
+  background: var(--surface-alt);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0 0.7rem;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 
-  &:focus-within { border-color: var(--border); }
+  &:hover { background: var(--surface-hover); }
+  &:focus-within {
+    border-color: var(--border-strong);
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.1);
+  }
 
   &__icon {
     display: inline-flex;
-    color: var(--text-muted);
+    color: var(--text-strong);
     svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
   }
 
   select {
+    min-width: 0;
     border: none;
-    background: transparent;
-    padding: 0.55rem 0.4rem 0.55rem 0;
+    background-color: var(--surface-alt);
+    padding: 0.55rem 1.5rem 0.55rem 0;
     font-family: inherit;
     font-size: 0.84rem;
     font-weight: 600;
-    color: var(--text-body);
+    color: var(--text-strong);
     cursor: pointer;
+    appearance: none;
+    color-scheme: inherit;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-strong) 50%), linear-gradient(135deg, var(--text-strong) 50%, transparent 50%);
+    background-position: calc(100% - 10px) 50%, calc(100% - 6px) 50%;
+    background-size: 4px 4px, 4px 4px;
+    background-repeat: no-repeat;
+
+    &:hover { color: var(--text-body); }
     &:focus { outline: none; }
+  }
+
+  option {
+    background-color: var(--surface-alt);
+    color: var(--text-strong);
   }
 }
 

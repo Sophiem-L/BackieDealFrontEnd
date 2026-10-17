@@ -13,7 +13,7 @@ export default defineConfig({
     // (no CORS config needed in dev). Override via VITE_API_BASE_URL in prod.
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

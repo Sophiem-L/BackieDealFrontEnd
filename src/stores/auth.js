@@ -23,6 +23,7 @@ const STAFF_ALLOWED_PERMISSIONS = new Set([
   'promotions.update',
   'media.view',
   'media.create',
+  'reviews.view',
 ])
 const MANAGER_ALLOWED_PERMISSIONS = new Set([
   'admin.auth.logout',
@@ -47,6 +48,7 @@ const MANAGER_ALLOWED_PERMISSIONS = new Set([
   'promotions.update',
   'media.view',
   'media.create',
+  'reviews.view',
 ])
 
 function loadPersisted() {

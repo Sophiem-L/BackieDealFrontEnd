@@ -31,25 +31,55 @@ const statuses = [
   { value: 'archived', label: 'Archived' },
 ]
 
-const categories = [
-  'Product News',
-  'Guides',
-  'Reviews',
-  'Promotions',
-  'Company',
-  'Announcements',
-]
+// GET /admin/categories hard-codes paginate(20) and ignores per_page, so walk
+// the pages (guarded at 10 = 200 categories), same as CategoriesView.
+const MAX_CATEGORY_PAGES = 10
+
+// The article category field should offer the same categories as the
+// Categories admin page rather than a guessed-at or usage-derived list.
+const fetchedCategories = ref([])
+
+const categories = computed(() => {
+  const base = fetchedCategories.value
+  // Keep the article's own category selectable even if it's since been
+  // removed from the Categories page (or the fetch above hasn't resolved yet).
+  return form.category && !base.includes(form.category) ? [form.category, ...base] : base
+})
+
+async function loadCategories() {
+  try {
+    const collected = []
+    let current = 1
+    let last = 1
+    do {
+      const response = await apiFetch(`/admin/categories?page=${current}`, {
+        token: auth.accessToken,
+      })
+      // The endpoint wraps a paginator, so `data` may be the array itself or {data: [...]}.
+      const payload = response?.data
+      const rows = Array.isArray(payload) ? payload : (payload?.data ?? [])
+      collected.push(...rows)
+      last = payload?.meta?.last_page ?? 1
+      current += 1
+    } while (current <= last && current <= MAX_CATEGORY_PAGES)
+
+    fetchedCategories.value = collected.map((row) => row?.name).filter(Boolean)
+  } catch {
+    // Leave fetchedCategories empty — the computed above still keeps the
+    // article's own category selectable, and this picker isn't critical
+    // enough to surface an error.
+  }
+}
 
 // The scoped `.is-invalid` rule below only reaches native controls; the Select
 // trigger is a Tailwind-styled button, so its error state is expressed the same
 // way FORM_SELECT expresses its focus ring.
-const INVALID_TRIGGER =
-  'border-[var(--danger)] shadow-[0_0_0_3px_rgb(var(--danger-rgb)/0.14)]'
+const INVALID_TRIGGER = 'border-[var(--danger)] shadow-[0_0_0_3px_rgb(var(--danger-rgb)/0.14)]'
 
 const form = reactive({
   title: '',
   body: '',
-  category: 'Product News',
+  category: '',
   imageUrl: '',
   status: 'draft',
   // datetime-local wants `YYYY-MM-DDTHH:mm`; empty means "leave it to the API".
@@ -82,12 +112,14 @@ async function loadArticle() {
   loading.value = true
   error.value = ''
   try {
-    const response = await apiFetch(`/admin/content/${articleId.value}`, { token: auth.accessToken })
+    const response = await apiFetch(`/admin/content/${articleId.value}`, {
+      token: auth.accessToken,
+    })
     const data = response?.data
     Object.assign(form, {
       title: data?.title ?? '',
       body: data?.body ?? '',
-      category: data?.category ?? 'Product News',
+      category: data?.category ?? '',
       imageUrl: data?.image_url ?? '',
       status: data?.status ?? 'draft',
       publishedAt: toLocalInput(data?.published_at),
@@ -102,7 +134,10 @@ async function loadArticle() {
   }
 }
 
-onMounted(loadArticle)
+onMounted(() => {
+  loadArticle()
+  loadCategories()
+})
 
 const pageTitle = computed(() =>
   isEdit.value ? `Edit Article: ${form.title || 'Article'}` : 'New Article',
@@ -164,149 +199,154 @@ async function save() {
       <p v-if="error" class="alert" role="alert">{{ error }}</p>
       <p v-if="loading" class="loading">Loading article…</p>
 
-      <form v-else class="grid" @submit.prevent="save">
-        <!-- Main column -->
-        <div class="col col--main">
-          <section class="card">
-            <h3 class="card__title">Article Content</h3>
+      <form v-else @submit.prevent="save">
+        <div class="grid">
+          <!-- Main column -->
+          <div class="col col--main">
+            <section class="card">
+              <h3 class="card__title">Article Content</h3>
 
-            <div class="field">
-              <label for="title">Title</label>
-              <input
-                id="title"
-                v-model="form.title"
-                type="text"
-                maxlength="255"
-                placeholder="e.g. RTX 50-Series Graphics Cards Now In Stock"
-                :class="{ 'is-invalid': firstError('title') }"
-              />
-              <p v-if="firstError('title')" class="field__error">{{ firstError('title') }}</p>
-            </div>
+              <div class="field">
+                <label for="title">Title</label>
+                <input
+                  id="title"
+                  v-model="form.title"
+                  type="text"
+                  maxlength="255"
+                  placeholder="e.g. RTX 50-Series Graphics Cards Now In Stock"
+                  :class="{ 'is-invalid': firstError('title') }"
+                />
+                <p v-if="firstError('title')" class="field__error">{{ firstError('title') }}</p>
+              </div>
 
-            <div class="field">
-              <label for="body">Body</label>
-              <textarea
-                id="body"
-                v-model="form.body"
-                rows="16"
-                placeholder="Write your article here…"
-                :class="{ 'is-invalid': firstError('body') }"
-              ></textarea>
-              <p v-if="firstError('body')" class="field__error">{{ firstError('body') }}</p>
-              <p class="field__hint">
-                Plain text. Whatever your website renders for this article is stored here as-is.
-              </p>
-            </div>
-          </section>
+              <div class="field">
+                <label for="body">Body</label>
+                <textarea
+                  id="body"
+                  v-model="form.body"
+                  rows="16"
+                  placeholder="Write your article here…"
+                  :class="{ 'is-invalid': firstError('body') }"
+                ></textarea>
+                <p v-if="firstError('body')" class="field__error">{{ firstError('body') }}</p>
+                <p class="field__hint">
+                  Plain text. Whatever your website renders for this article is stored here as-is.
+                </p>
+              </div>
+            </section>
+          </div>
+
+          <!-- Side column -->
+          <div class="col col--side">
+            <section class="card">
+              <h3 class="card__title">Publishing</h3>
+
+              <div class="field">
+                <label for="status">Status</label>
+                <Select v-model="form.status">
+                  <SelectTrigger
+                    id="status"
+                    :class="[FORM_SELECT.trigger, firstError('status') && INVALID_TRIGGER]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent :class="FORM_SELECT.content">
+                    <SelectItem
+                      v-for="opt in statuses"
+                      :key="opt.value"
+                      :value="opt.value"
+                      :class="FORM_SELECT.item"
+                    >
+                      {{ opt.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p v-if="firstError('status')" class="field__error">{{ firstError('status') }}</p>
+              </div>
+
+              <div class="field">
+                <label for="published-at">Publish date</label>
+                <input
+                  id="published-at"
+                  v-model="form.publishedAt"
+                  type="datetime-local"
+                  :class="{ 'is-invalid': firstError('published_at') }"
+                />
+                <p v-if="firstError('published_at')" class="field__error">
+                  {{ firstError('published_at') }}
+                </p>
+                <p class="field__hint">
+                  Optional. Leave empty and publishing from the list stamps the date for you.
+                </p>
+              </div>
+            </section>
+
+            <section class="card">
+              <h3 class="card__title">Category</h3>
+              <div class="field">
+                <label for="category">Article category</label>
+                <Select v-model="form.category">
+                  <SelectTrigger
+                    id="category"
+                    :class="[FORM_SELECT.trigger, firstError('category') && INVALID_TRIGGER]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent :class="FORM_SELECT.content">
+                    <SelectItem
+                      v-for="opt in categories"
+                      :key="opt"
+                      :value="opt"
+                      :class="FORM_SELECT.item"
+                    >
+                      {{ opt }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p v-if="firstError('category')" class="field__error">
+                  {{ firstError('category') }}
+                </p>
+              </div>
+            </section>
+
+            <section class="card">
+              <h3 class="card__title">Cover Image</h3>
+
+              <div
+                v-if="form.imageUrl"
+                class="cover-preview"
+                :style="{ backgroundImage: `url(${form.imageUrl})` }"
+              ></div>
+
+              <div class="field">
+                <label for="image-url">Image URL</label>
+                <input
+                  id="image-url"
+                  v-model="form.imageUrl"
+                  type="url"
+                  maxlength="2048"
+                  placeholder="https://…"
+                  :class="{ 'is-invalid': firstError('image_url') }"
+                />
+                <p v-if="firstError('image_url')" class="field__error">
+                  {{ firstError('image_url') }}
+                </p>
+                <p class="field__hint">
+                  Optional. Shown at the top of the article and in listings. Recommended:
+                  1200x630px.
+                </p>
+              </div>
+            </section>
+          </div>
         </div>
 
-        <!-- Side column -->
-        <div class="col col--side">
-          <section class="card">
-            <h3 class="card__title">Publishing</h3>
-
-            <div class="field">
-              <label for="status">Status</label>
-              <Select v-model="form.status">
-                <SelectTrigger
-                  id="status"
-                  :class="[FORM_SELECT.trigger, firstError('status') && INVALID_TRIGGER]"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent :class="FORM_SELECT.content">
-                  <SelectItem
-                    v-for="opt in statuses"
-                    :key="opt.value"
-                    :value="opt.value"
-                    :class="FORM_SELECT.item"
-                  >
-                    {{ opt.label }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="firstError('status')" class="field__error">{{ firstError('status') }}</p>
-            </div>
-
-            <div class="field">
-              <label for="published-at">Publish date</label>
-              <input
-                id="published-at"
-                v-model="form.publishedAt"
-                type="datetime-local"
-                :class="{ 'is-invalid': firstError('published_at') }"
-              />
-              <p v-if="firstError('published_at')" class="field__error">
-                {{ firstError('published_at') }}
-              </p>
-              <p class="field__hint">
-                Optional. Leave empty and publishing from the list stamps the date for you.
-              </p>
-            </div>
-          </section>
-
-          <section class="card">
-            <h3 class="card__title">Category</h3>
-            <div class="field">
-              <label for="category">Article category</label>
-              <Select v-model="form.category">
-                <SelectTrigger
-                  id="category"
-                  :class="[FORM_SELECT.trigger, firstError('category') && INVALID_TRIGGER]"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent :class="FORM_SELECT.content">
-                  <SelectItem
-                    v-for="opt in categories"
-                    :key="opt"
-                    :value="opt"
-                    :class="FORM_SELECT.item"
-                  >
-                    {{ opt }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="firstError('category')" class="field__error">{{ firstError('category') }}</p>
-            </div>
-          </section>
-
-          <section class="card">
-            <h3 class="card__title">Cover Image</h3>
-
-            <div
-              v-if="form.imageUrl"
-              class="cover-preview"
-              :style="{ backgroundImage: `url(${form.imageUrl})` }"
-            ></div>
-
-            <div class="field">
-              <label for="image-url">Image URL</label>
-              <input
-                id="image-url"
-                v-model="form.imageUrl"
-                type="url"
-                maxlength="2048"
-                placeholder="https://…"
-                :class="{ 'is-invalid': firstError('image_url') }"
-              />
-              <p v-if="firstError('image_url')" class="field__error">
-                {{ firstError('image_url') }}
-              </p>
-              <p class="field__hint">
-                Optional. Shown at the top of the article and in listings. Recommended: 1200x630px.
-              </p>
-            </div>
-          </section>
-
-          <div class="actions">
-            <BaseButton type="submit" variant="primary" block :disabled="!canSave">
-              {{ saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Article' }}
-            </BaseButton>
-            <BaseButton type="button" variant="ghost" block @click="router.push({ name: 'news' })">
-              Cancel
-            </BaseButton>
-          </div>
+        <div class="form-footer">
+          <BaseButton type="button" variant="ghost" @click="router.push({ name: 'news' })">
+            Cancel
+          </BaseButton>
+          <BaseButton type="submit" variant="primary" :disabled="!canSave">
+            {{ saving ? 'Saving…' : isEdit ? 'Update Article' : 'Create Article' }}
+          </BaseButton>
         </div>
       </form>
     </div>
@@ -314,7 +354,6 @@ async function save() {
 </template>
 
 <style scoped lang="scss">
-
 .page {
   display: flex;
   flex-direction: column;
@@ -342,9 +381,16 @@ async function save() {
     color: var(--text-subtle);
     text-decoration: none;
 
-    &:hover { color: var(--text-strong); }
+    &:hover {
+      color: var(--text-strong);
+    }
 
-    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
+    svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
   }
 }
 
@@ -418,7 +464,9 @@ async function save() {
   flex-direction: column;
   gap: 0.4rem;
 
-  & + & { margin-top: 1rem; }
+  & + & {
+    margin-top: 1rem;
+  }
 
   label {
     font-size: 0.8rem;
@@ -437,7 +485,9 @@ async function save() {
     border: 1px solid var(--border);
     border-radius: 10px;
     outline: none;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
 
     &:focus {
       border-color: rgb(var(--accent-rgb));
@@ -468,9 +518,11 @@ async function save() {
   }
 }
 
-.actions {
+.form-footer {
   display: flex;
-  flex-direction: column;
+  justify-content: flex-end;
   gap: 0.6rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-subtle);
 }
 </style>

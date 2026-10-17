@@ -110,11 +110,7 @@ function openCategory(cat) {
 }
 
 function editCategory(cat) {
-  router.push({
-    name: 'category-detail',
-    params: { id: cat.id },
-    query: { name: cat.name, edit: '1' },
-  })
+  router.push({ name: 'category-detail', params: { id: cat.id }, query: { name: cat.name } })
 }
 
 async function deleteCategory(cat) {

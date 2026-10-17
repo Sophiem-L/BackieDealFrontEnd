@@ -54,6 +54,7 @@ const form = reactive({
   // `price` / `stock` are derived from the variants at save time.
   sku: '',
   isActive: true,
+  isSerialized: false,
 })
 
 /**
@@ -122,6 +123,7 @@ async function loadProduct() {
       description: p.description ?? '',
       images: toGalleryEntries(p),
       isActive: p.is_active == null ? true : Boolean(p.is_active),
+      isSerialized: Boolean(p.is_serialized),
       variants: (p.variants ?? []).map(fromApiVariant),
       promotionIds: (p.promotion_ids ?? []).map(Number),
     })
@@ -189,6 +191,7 @@ async function save() {
     min_stock_alert: 0,
     in_stock: productStock > 0,
     is_active: form.isActive,
+    is_serialized: form.isSerialized,
   }
 
   if (form.categoryId) body.category_id = Number(form.categoryId)
@@ -289,6 +292,13 @@ function cancel() {
               <label for="description">Description</label>
               <textarea id="description" v-model="form.description" rows="4" placeholder="Describe the product..."></textarea>
             </div>
+            <label class="serialized-toggle">
+              <input v-model="form.isSerialized" type="checkbox" />
+              <span>
+                <strong>Track individual serial numbers</strong>
+                <small>Require a physical serial for receiving and checkout.</small>
+              </span>
+            </label>
             <div class="field">
               <label for="meta-description">Meta Description</label>
               <textarea id="meta-description" v-model="form.metaDescription" rows="2" placeholder="SEO Description"></textarea>
@@ -346,6 +356,19 @@ function cancel() {
     flex-direction: column;
     gap: 1.25rem;
   }
+}
+
+.serialized-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: .7rem;
+  margin-top: 1rem;
+  color: var(--text-strong);
+  cursor: pointer;
+
+  input { margin-top: .2rem; }
+  strong, small { display: block; }
+  small { margin-top: .2rem; color: var(--text-muted); font-size: .78rem; }
 }
 
 .subhead {

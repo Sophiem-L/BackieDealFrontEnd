@@ -4,8 +4,12 @@ import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import { apiFetch } from '@/services/api'
+import { ACCEPT_ATTR, uploadImage, validateImageFile } from '@/services/media'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 
 const form = reactive({
   name: '',
@@ -15,17 +19,58 @@ const form = reactive({
 })
 
 const fileInput = ref(null)
+const coverUploading = ref(false)
+const coverError = ref('')
 function pickCover() {
   fileInput.value?.click()
 }
-function onFileChange(event) {
+async function onFileChange(event) {
   const file = event.target.files?.[0]
-  if (file) form.coverUrl = URL.createObjectURL(file)
+  event.target.value = ''
+  if (!file) return
+
+  coverError.value = ''
+  const problem = validateImageFile(file)
+  if (problem) {
+    coverError.value = problem
+    return
+  }
+
+  coverUploading.value = true
+  try {
+    const { url } = await uploadImage(file, { token: auth.accessToken, folder: 'categories' })
+    form.coverUrl = url
+  } catch (err) {
+    coverError.value = err.message || 'Upload failed.'
+  } finally {
+    coverUploading.value = false
+  }
 }
 
-function save() {
-  // TODO: POST to the categories API.
-  router.push({ name: 'categories' })
+const saving = ref(false)
+const saveError = ref('')
+
+async function save() {
+  saving.value = true
+  saveError.value = ''
+  try {
+    await apiFetch('/admin/categories', {
+      method: 'POST',
+      body: {
+        name: form.name,
+        description: form.description || null,
+        image: form.coverUrl || null,
+        is_active: form.active,
+      },
+      token: auth.accessToken,
+    })
+    router.push({ name: 'categories' })
+  } catch (err) {
+    const fieldError = Object.values(err.errors ?? {})[0]
+    saveError.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to create this category.'
+  } finally {
+    saving.value = false
+  }
 }
 </script>
 
@@ -49,6 +94,7 @@ function save() {
       <form class="grid" @submit.prevent="save">
         <!-- Main column -->
         <div class="col col--main">
+          <p v-if="saveError" class="alert">{{ saveError }}</p>
           <section class="card">
             <h3 class="card__title">General Information</h3>
             <div class="field">
@@ -67,7 +113,7 @@ function save() {
           <!-- Cover image -->
           <section class="card">
             <h3 class="card__title">Cover Image</h3>
-            <button type="button" class="image" @click="pickCover">
+            <button type="button" class="image" :disabled="coverUploading" @click="pickCover">
               <img v-if="form.coverUrl" :src="form.coverUrl" alt="Cover preview" />
               <span v-else class="image__placeholder">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -75,11 +121,12 @@ function save() {
                   <circle cx="8.5" cy="9.5" r="1.5" />
                   <path d="m4 18 5-4 4 3 3-2 4 3" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
-                <span>Click to upload</span>
+                <span>{{ coverUploading ? 'Uploading…' : 'Click to upload' }}</span>
               </span>
             </button>
-            <input ref="fileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden @change="onFileChange" />
-            <p class="card__hint">Recommended: 1200x675px (16:9).</p>
+            <input ref="fileInput" type="file" :accept="ACCEPT_ATTR" hidden @change="onFileChange" />
+            <p v-if="coverError" class="card__hint card__hint--error">{{ coverError }}</p>
+            <p v-else class="card__hint">Recommended: 1200x675px (16:9).</p>
           </section>
 
           <!-- Visibility -->
@@ -94,8 +141,11 @@ function save() {
 
         <!-- Form actions -->
         <div class="actions">
-          <BaseButton variant="ghost" :to="{ name: 'categories' }">Cancel</BaseButton>
-          <BaseButton variant="primary" type="submit">Create</BaseButton>
+          <BaseButton variant="ghost" :disabled="saving" :to="{ name: 'categories' }">Cancel</BaseButton>
+          <BaseButton variant="primary" type="submit" :disabled="saving">
+            <template v-if="saving">Creating…</template>
+            <template v-else>Create</template>
+          </BaseButton>
         </div>
       </form>
     </div>
@@ -196,7 +246,24 @@ function save() {
     color: var(--text-muted);
   }
 
-  &__hint { margin: 0.75rem 0 0; font-size: 0.72rem; color: var(--text-subtle); text-align: center; }
+  &__hint {
+    margin: 0.75rem 0 0;
+    font-size: 0.72rem;
+    color: var(--text-subtle);
+    text-align: center;
+
+    &--error { color: var(--danger); }
+  }
+}
+
+.alert {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
 }
 
 /* Cover upload (shared pattern with the product form) */
@@ -214,6 +281,7 @@ function save() {
   padding: 0;
 
   &:hover { border-color: rgb(var(--accent-rgb)); }
+  &:disabled { cursor: not-allowed; opacity: 0.7; }
   img { width: 100%; height: 100%; object-fit: cover; }
 
   &__placeholder {

@@ -162,6 +162,10 @@ function addArticle() {
   router.push({ name: 'news-create' })
 }
 
+function viewArticle(article) {
+  router.push({ name: 'news-view', params: { id: article.id } })
+}
+
 function editArticle(article) {
   router.push({ name: 'news-edit', params: { id: article.id } })
 }
@@ -254,7 +258,14 @@ async function deleteArticle(article) {
         <p v-else-if="error" class="alert" role="alert">{{ error }}</p>
 
         <template v-else>
-          <article v-for="item in filtered" :key="item.id" class="news">
+          <article
+            v-for="item in filtered"
+            :key="item.id"
+            class="news"
+            tabindex="0"
+            @click="viewArticle(item)"
+            @keyup.enter="viewArticle(item)"
+          >
             <div
               class="news__cover"
               :class="{ 'news__cover--empty': !item.image }"
@@ -297,7 +308,7 @@ async function deleteArticle(article) {
                 :disabled="busyId === item.id"
                 :aria-label="`Publish ${item.title}`"
                 title="Publish"
-                @click="setStatus(item, 'publish')"
+                @click.stop="setStatus(item, 'publish')"
               >
                 <svg viewBox="0 0 24 24" fill="none">
                   <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
@@ -311,7 +322,7 @@ async function deleteArticle(article) {
                 :disabled="busyId === item.id"
                 :aria-label="`Archive ${item.title}`"
                 title="Archive"
-                @click="setStatus(item, 'archive')"
+                @click.stop="setStatus(item, 'archive')"
               >
                 <svg viewBox="0 0 24 24" fill="none">
                   <rect x="3" y="4" width="18" height="4" rx="1" />
@@ -326,7 +337,7 @@ async function deleteArticle(article) {
                 class="icon-btn"
                 :aria-label="`Edit ${item.title}`"
                 title="Edit"
-                @click="editArticle(item)"
+                @click.stop="editArticle(item)"
               >
                 <svg viewBox="0 0 24 24" fill="none">
                   <path d="M4 20h4l10-10-4-4L4 16v4Z" stroke-linejoin="round" />
@@ -341,7 +352,7 @@ async function deleteArticle(article) {
                 :disabled="busyId === item.id"
                 :aria-label="`Delete ${item.title}`"
                 title="Delete"
-                @click="deleteArticle(item)"
+                @click.stop="deleteArticle(item)"
               >
                 <svg viewBox="0 0 24 24" fill="none">
                   <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" />
@@ -527,12 +538,16 @@ async function deleteArticle(article) {
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 1.1rem 1.25rem;
+  cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
-  &:hover {
+  &:hover,
+  &:focus-visible {
     border-color: var(--border);
     box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
   }
+
+  &:focus-visible { outline: 2px solid rgb(var(--accent-rgb) / 0.5); outline-offset: 2px; }
 
   &__cover {
     flex-shrink: 0;

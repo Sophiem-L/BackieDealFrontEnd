@@ -72,6 +72,12 @@ const router = createRouter({
       component: () => import('@/views/CustomersView.vue'),
     },
     {
+      path: '/reviews',
+      name: 'reviews',
+      meta: { permission: 'reviews.view' },
+      component: () => import('@/views/ReviewsView.vue'),
+    },
+    {
       path: '/customers/new',
       name: 'customer-create',
       meta: { permission: 'users.create' },
@@ -132,6 +138,12 @@ const router = createRouter({
       component: () => import('@/views/StockDetailView.vue'),
     },
     {
+      path: '/serials',
+      name: 'serials',
+      meta: { permission: 'product-serials.view' },
+      component: () => import('@/views/SerialsView.vue'),
+    },
+    {
       path: '/reports',
       name: 'reports',
       meta: { permission: 'logs.view' },
@@ -174,6 +186,12 @@ const router = createRouter({
       component: () => import('@/views/NewsFormView.vue'),
     },
     {
+      path: '/news/:id',
+      name: 'news-view',
+      meta: { permission: 'content.view' },
+      component: () => import('@/views/NewsDetailView.vue'),
+    },
+    {
       path: '/news/:id/edit',
       name: 'news-edit',
       meta: { permission: 'content.update' },
@@ -190,6 +208,12 @@ const router = createRouter({
       name: 'page-create',
       meta: { permission: 'content.create' },
       component: () => import('@/views/PageFormView.vue'),
+    },
+    {
+      path: '/pages/:id',
+      name: 'page-view',
+      meta: { permission: 'content.view' },
+      component: () => import('@/views/PageDetailView.vue'),
     },
     {
       path: '/pages/:id/edit',
@@ -239,7 +263,42 @@ const router = createRouter({
     {
       path: '/settings',
       name: 'settings',
-      component: () => import('@/views/StoreSettingsView.vue'),
+      redirect: { name: 'settings-general' },
+    },
+    {
+      path: '/settings/general',
+      name: 'settings-general',
+      component: () => import('@/views/settings/SettingsGeneralView.vue'),
+    },
+    {
+      path: '/settings/payments',
+      name: 'settings-payments',
+      component: () => import('@/views/settings/SettingsPaymentsView.vue'),
+    },
+    {
+      path: '/settings/shipping',
+      name: 'settings-shipping',
+      component: () => import('@/views/settings/SettingsShippingView.vue'),
+    },
+    {
+      path: '/settings/taxes',
+      name: 'settings-taxes',
+      component: () => import('@/views/settings/SettingsTaxesView.vue'),
+    },
+    {
+      path: '/settings/notifications',
+      name: 'settings-notifications',
+      component: () => import('@/views/settings/SettingsNotificationsView.vue'),
+    },
+    {
+      path: '/settings/team',
+      name: 'settings-team',
+      component: () => import('@/views/settings/SettingsTeamView.vue'),
+    },
+    {
+      path: '/settings/integrations',
+      name: 'settings-integrations',
+      component: () => import('@/views/settings/SettingsIntegrationsView.vue'),
     },
     {
       path: '/login',
