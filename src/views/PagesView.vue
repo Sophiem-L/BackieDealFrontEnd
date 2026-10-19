@@ -83,6 +83,10 @@ const currentPageItems = computed(() => {
   const start = (page.value - 1) * itemsPerPage.value
   return visiblePages.value.slice(start, start + itemsPerPage.value)
 })
+const rangeStart = computed(() =>
+  visiblePages.value.length === 0 ? 0 : (page.value - 1) * itemsPerPage.value + 1,
+)
+const rangeEnd = computed(() => (page.value - 1) * itemsPerPage.value + currentPageItems.value.length)
 const deleteConfirmReady = computed(() => {
   if (!deleteTarget.value) return false
   const expected = String(deleteTarget.value.id)
@@ -225,6 +229,7 @@ function handleOpenTemplate(template = 'blank') {
 }
 
 function openLivePage(item) {
+  if (!item.slug) return
   const url = item.slug.startsWith('http') ? item.slug : `${window.location.origin}${item.slug}`
   window.open(url, '_blank', 'noopener,noreferrer')
 }
@@ -239,6 +244,7 @@ function openPage(item) {
 
 function copySlug(item) {
   const text = item.slug || ''
+  if (!text) return
   navigator.clipboard
     ?.writeText(text)
     .then(() => {
@@ -439,6 +445,11 @@ async function destroyPage() {
   }
 }
 
+function clearFilters() {
+  queryText.value = ''
+  statusFilter.value = 'all'
+}
+
 function clearSelection() {
   selectedIds.value = []
   lastSelectedId.value = null
@@ -454,13 +465,6 @@ function toggleSelectAllVisible() {
   }
 
   selectedIds.value = [...new Set([...selectedIds.value, ...visibleIds])]
-}
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
 }
 
 onMounted(() => {
@@ -501,43 +505,56 @@ watch(
         </BaseButton>
       </section>
 
-      <p v-if="error" class="pages-error" role="alert">{{ error }}</p>
+      <p v-if="error" class="alert" role="alert">{{ error }}</p>
 
       <section class="pages" aria-label="Pages list">
         <div class="toolbar" aria-label="Page list controls">
-          <div class="search-box">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
-              <path
-                d="m20 20-3.4-3.4"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-width="1.8"
+          <div class="toolbar__row">
+            <div class="toolbar__search">
+              <span class="toolbar__search-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.4-3.4" stroke-linecap="round" />
+                </svg>
+              </span>
+              <input
+                ref="searchRef"
+                v-model="queryText"
+                type="search"
+                placeholder="Search pages by title, slug or excerpt"
+                aria-label="Search pages"
               />
-            </svg>
-            <input
-              ref="searchRef"
-              v-model="queryText"
-              type="search"
-              placeholder="Search pages by title, slug or excerpt"
-              aria-label="Search pages"
-            />
-            <button
-              v-if="queryText"
-              type="button"
-              class="search-box__clear"
-              aria-label="Clear search"
-              @click="queryText = ''"
-            >
-              ×
-            </button>
-          </div>
+              <button
+                v-if="queryText"
+                type="button"
+                class="toolbar__clear"
+                aria-label="Clear search"
+                @click="queryText = ''"
+              >
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
+                </svg>
+              </button>
+            </div>
 
-          <div class="toolbar__right">
-            <div class="view-toggle" role="tablist" aria-label="Layout view">
+            <label class="select">
+              <span class="select__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M8 4v16M8 20l-3-3M8 20l3-3M16 20V4M16 4l-3 3M16 4l3 3" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </span>
+              <select v-model="sortBy" aria-label="Sort pages">
+                <option v-for="option in sortOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+
+            <div class="toggle" role="group" aria-label="Layout view">
               <button
                 type="button"
                 :class="{ 'is-active': viewMode === 'list' }"
+                :aria-pressed="viewMode === 'list'"
                 @click="viewMode = 'list'"
               >
                 List
@@ -545,16 +562,19 @@ watch(
               <button
                 type="button"
                 :class="{ 'is-active': viewMode === 'table' }"
+                :aria-pressed="viewMode === 'table'"
                 @click="viewMode = 'table'"
               >
                 Table
               </button>
             </div>
 
-            <div class="density-toggle" aria-label="Density">
+            <!-- Density only changes the list layout; in the table it would do nothing. -->
+            <div v-if="viewMode === 'list'" class="toggle" role="group" aria-label="Density">
               <button
                 type="button"
                 :class="{ 'is-active': density === 'comfortable' }"
+                :aria-pressed="density === 'comfortable'"
                 @click="density = 'comfortable'"
               >
                 Comfortable
@@ -562,46 +582,37 @@ watch(
               <button
                 type="button"
                 :class="{ 'is-active': density === 'compact' }"
+                :aria-pressed="density === 'compact'"
                 @click="density = 'compact'"
               >
                 Compact
               </button>
             </div>
           </div>
+
+          <div class="filters" role="group" aria-label="Filter by status">
+            <button
+              v-for="filter in statusFilters"
+              :key="filter.value"
+              type="button"
+              class="filter"
+              :class="{ 'filter--active': statusFilter === filter.value }"
+              :aria-pressed="statusFilter === filter.value"
+              @click="statusFilter = filter.value"
+            >
+              {{ filter.label }}
+              <span class="filter__count">{{ statusCounts[filter.value] ?? 0 }}</span>
+            </button>
+          </div>
         </div>
 
-        <nav class="filters" aria-label="Page status filters" role="tablist">
-          <button
-            v-for="filter in statusFilters"
-            :key="filter.value"
-            type="button"
-            class="filter-pill"
-            :class="{ 'filter-pill--active': statusFilter === filter.value }"
-            :aria-pressed="statusFilter === filter.value"
-            :aria-live="filter.value === statusFilter ? 'polite' : 'off'"
-            @click="statusFilter = filter.value"
-          >
-            <span>{{ filter.label }}</span>
-            <span class="filter-pill__count">{{ statusCounts[filter.value] ?? 0 }}</span>
-          </button>
-        </nav>
-
-        <section class="sort-row" aria-label="Sort pages">
-          <label class="sort-row__label" for="page-sort">Sort by</label>
-          <select id="page-sort" v-model="sortBy" class="sort-row__select">
-            <option v-for="option in sortOptions" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </option>
-          </select>
-        </section>
-
-        <div v-if="loading" class="list-skeleton" aria-live="polite" aria-busy="true">
-          <div v-for="n in 4" :key="n" class="skeleton-card" />
+        <div v-if="loading" class="skeletons" aria-live="polite" aria-busy="true">
+          <div v-for="n in 4" :key="n" class="skeleton" />
         </div>
 
         <template v-else>
           <EmptyState
-            v-if="visiblePages.length === 0 && !debouncedQuery && statusFilter === 'all'"
+            v-if="!error && visiblePages.length === 0 && !debouncedQuery && statusFilter === 'all'"
             title="No pages yet"
             description="Create your first website page to start publishing policy content and storefront details."
             action-label="Create your first page"
@@ -609,20 +620,21 @@ watch(
           />
 
           <EmptyState
-            v-else-if="visiblePages.length === 0"
+            v-else-if="!error && visiblePages.length === 0"
             :title="`No pages match “${debouncedQuery || statusFilter}”`"
             description="Try a different search, or switch to another filter to broaden the list."
-            action-label="Clear search"
-            @action="queryText = ''"
+            action-label="Clear filters"
+            @action="clearFilters()"
           />
 
-          <div v-else-if="viewMode === 'table'" class="table-shell">
-            <table class="page-table" role="table">
+          <div v-else-if="viewMode === 'table'" class="table-card">
+            <table class="table">
               <thead>
                 <tr>
-                  <th class="table-check">
+                  <th class="table__check">
                     <input
                       type="checkbox"
+                      aria-label="Select all pages on this screen"
                       :checked="
                         currentPageItems.length > 0 &&
                         currentPageItems.every((item) => selectedIds.includes(item.id))
@@ -632,9 +644,9 @@ watch(
                   </th>
                   <th>Title</th>
                   <th>Status</th>
-                  <th>Author</th>
+                  <th class="table__author">Author</th>
                   <th>Updated</th>
-                  <th>Slug</th>
+                  <th class="table__slug">Slug</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -644,60 +656,70 @@ watch(
                   :key="item.id"
                   :class="{ 'is-selected': selectedIds.includes(item.id) }"
                 >
-                  <td>
+                  <td class="table__check">
                     <input
                       type="checkbox"
+                      :aria-label="`Select ${item.title}`"
                       :checked="selectedIds.includes(item.id)"
                       @change="toggleSelection(item.id, $event)"
                     />
                   </td>
                   <td>
                     <button type="button" class="title-link" @click="openPage(item)">
-                      <span
-                        v-html="
-                          escapeHtml(item.title).replace(
-                            new RegExp(
-                              `(${debouncedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
-                              'ig',
-                            ),
-                            '<mark>$1</mark>',
-                          )
-                        "
-                      />
+                      <span v-html="highlightMatch(item.title, debouncedQuery)" />
                     </button>
                   </td>
                   <td><StatusChip :status="item.status" /></td>
-                  <td>{{ item.author }}</td>
+                  <td class="table__author">{{ item.author }}</td>
                   <td>
-                    <div class="updated-cell">
-                      <span>{{ formatRelativeTime(getUpdatedAtValue(item)) }}</span>
-                      <button
-                        type="button"
-                        class="meta-tooltip"
-                        :title="`Updated ${formatShortDate(getUpdatedAtValue(item))}`"
-                      >
-                        i
-                      </button>
-                    </div>
+                    <span class="muted" :title="`Updated ${formatShortDate(getUpdatedAtValue(item))}`">
+                      {{ formatRelativeTime(getUpdatedAtValue(item)) }}
+                    </span>
                   </td>
-                  <td>
-                    <button type="button" class="slug-copy" @click="copySlug(item)">
+                  <td class="table__slug">
+                    <button
+                      v-if="item.slug"
+                      type="button"
+                      class="slug-copy"
+                      title="Copy slug"
+                      @click="copySlug(item)"
+                    >
                       {{ item.slug }}
                     </button>
+                    <span v-else class="faint">—</span>
                   </td>
                   <td>
-                    <div class="table-actions">
-                      <button type="button" class="mini-action" @click="openPage(item)">
-                        Edit
+                    <div class="row-actions">
+                      <button
+                        type="button"
+                        class="icon-btn icon-btn--sm"
+                        :aria-label="`Edit ${item.title}`"
+                        title="Edit"
+                        @click="openEditor(item)"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none">
+                          <path d="M4 20h4l10-10-4-4L4 16v4Z" stroke-linejoin="round" />
+                          <path d="m13.5 6.5 4 4" stroke-linecap="round" />
+                        </svg>
                       </button>
                       <button
                         type="button"
-                        class="mini-action mini-action--ghost"
+                        class="icon-btn icon-btn--sm"
+                        :disabled="!item.slug"
+                        :aria-label="`View ${item.title} live`"
+                        :title="item.slug ? 'View live' : 'No URL yet'"
                         @click="openLivePage(item)"
                       >
-                        View live
+                        <svg viewBox="0 0 24 24" fill="none">
+                          <path
+                            d="M14 5h5v5M10 14 19 5M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg>
                       </button>
                       <PageActionsMenu
+                        compact
                         :item="item"
                         :busy="actionBusyId === item.id"
                         @view="openLivePage(item)"
@@ -733,12 +755,20 @@ watch(
               <label class="page-row__check">
                 <input
                   type="checkbox"
+                  :aria-label="`Select ${item.title}`"
                   :checked="selectedIds.includes(item.id)"
                   @change="toggleSelection(item.id, $event)"
                 />
               </label>
 
-              <div class="page-row__body" role="button" @click="openPage(item)">
+              <div
+                class="page-row__body"
+                role="button"
+                tabindex="0"
+                @click="openPage(item)"
+                @keydown.enter.self.prevent="openPage(item)"
+                @keydown.space.self.prevent="openPage(item)"
+              >
                 <div class="page-row__meta">
                   <StatusChip :status="item.status" />
                   <span v-if="isPageStale(item)" class="needs-review">Needs review</span>
@@ -748,24 +778,39 @@ watch(
                   class="page-row__excerpt"
                   v-html="highlightMatch(item.excerpt, debouncedQuery)"
                 />
-                <div class="page-row__details">
-                  <span>{{ item.author }}</span>
-                  <span>Updated {{ formatRelativeTime(getUpdatedAtValue(item)) }}</span>
-                  <span>{{ item.slug }}</span>
+                <div class="page-row__footer">
+                  <span class="byline">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <circle cx="12" cy="8" r="3.5" />
+                      <path d="M5 20a7 7 0 0 1 14 0" stroke-linecap="round" />
+                    </svg>
+                    {{ item.author }}
+                  </span>
+                  <span class="dot" aria-hidden="true">·</span>
+                  <span :title="`Updated ${formatShortDate(getUpdatedAtValue(item))}`">
+                    Updated {{ formatRelativeTime(getUpdatedAtValue(item)) }}
+                  </span>
+                  <template v-if="item.slug">
+                    <span class="dot" aria-hidden="true">·</span>
+                    <span>{{ item.slug }}</span>
+                  </template>
                 </div>
               </div>
 
-              <div class="page-row__cta">
-                <button type="button" class="page-row__cta-pill" @click="performMainAction(item)">
-                  {{ actionBusyId === item.id ? 'Working…' : getPrimaryActionLabel(item) }}
-                </button>
-              </div>
-
               <div class="page-row__actions">
+                <BaseButton
+                  variant="ghost"
+                  size="sm"
+                  :disabled="actionBusyId === item.id"
+                  @click="performMainAction(item)"
+                >
+                  {{ actionBusyId === item.id ? 'Working…' : getPrimaryActionLabel(item) }}
+                </BaseButton>
                 <button
                   type="button"
                   class="icon-btn"
-                  aria-label="Edit page"
+                  :aria-label="`Edit ${item.title}`"
+                  title="Edit"
                   @click="openEditor(item)"
                 >
                   <svg viewBox="0 0 24 24" fill="none">
@@ -776,7 +821,9 @@ watch(
                 <button
                   type="button"
                   class="icon-btn"
-                  aria-label="View live page"
+                  :disabled="!item.slug"
+                  :aria-label="`View ${item.title} live`"
+                  :title="item.slug ? 'View live' : 'No URL yet'"
                   @click="openLivePage(item)"
                 >
                   <svg viewBox="0 0 24 24" fill="none">
@@ -803,14 +850,23 @@ watch(
             </article>
           </div>
 
-          <footer v-if="visiblePages.length" class="pager">
-            <span>Showing {{ currentPageItems.length }} of {{ visiblePages.length }} pages</span>
-            <div class="pager__controls">
-              <button type="button" :disabled="page <= 1" @click="page -= 1">Previous</button>
-              <button type="button" class="pager__page" :aria-label="`Page ${page}`">
-                {{ page }}
+          <footer v-if="visiblePages.length" class="pagination">
+            <p class="pagination__info">
+              Showing {{ rangeStart }}–{{ rangeEnd }} of {{ visiblePages.length }} pages
+            </p>
+            <div class="pagination__controls">
+              <button type="button" class="page-btn" :disabled="page <= 1" @click="page -= 1">
+                Previous
               </button>
-              <button type="button" :disabled="page >= totalPages" @click="page += 1">Next</button>
+              <span class="page-btn page-btn--active" aria-current="page">{{ page }}</span>
+              <button
+                type="button"
+                class="page-btn"
+                :disabled="page >= totalPages"
+                @click="page += 1"
+              >
+                Next
+              </button>
             </div>
           </footer>
         </template>
@@ -826,16 +882,29 @@ watch(
       />
     </div>
 
-    <div v-if="showTemplateModal" class="template-modal" @click="showTemplateModal = false">
-      <div class="template-modal__card" @click.stop>
-        <div class="template-modal__header">
-          <h3>Start a new page</h3>
-          <button type="button" class="template-modal__close" @click="showTemplateModal = false">
-            ×
+    <div v-if="showTemplateModal" class="modal" @click="showTemplateModal = false">
+      <div
+        class="modal__card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="template-modal-title"
+        @click.stop
+      >
+        <div class="modal__header">
+          <h3 id="template-modal-title">Start a new page</h3>
+          <button
+            type="button"
+            class="icon-btn icon-btn--sm"
+            aria-label="Close"
+            @click="showTemplateModal = false"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
+            </svg>
           </button>
         </div>
 
-        <div class="template-modal__grid">
+        <div class="modal__grid">
           <button type="button" class="template-option" @click="handleOpenTemplate('blank')">
             <span class="template-option__label">Blank</span>
             <small>Start from a clean page</small>
@@ -863,7 +932,7 @@ watch(
       @confirm="destroyPage()"
     >
       <template #body>
-        <div class="confirm-delete-wrap">
+        <div class="confirm-delete">
           <label for="delete-confirm"
             >Type <strong>{{ deleteTarget?.id ?? '' }}</strong> or DELETE to confirm.</label
           >
@@ -883,18 +952,19 @@ watch(
 
 <style scoped lang="scss">
 .page {
-  min-height: 100vh;
-  background: var(--bg);
-  color: var(--text-body);
-}
-
-.page__body {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  padding: 1.5rem;
+  min-height: 100vh;
+
+  &__body {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
 }
 
+/* Section heading */
 .head {
   display: flex;
   align-items: flex-start;
@@ -916,171 +986,289 @@ watch(
   }
 }
 
+.alert {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+}
+
 .pages {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+
+  /* Search matches are injected through v-html, so scoped styles need :deep. */
+  :deep(mark) {
+    padding: 0 1px;
+    color: inherit;
+    background: rgb(var(--accent-rgb) / 0.3);
+    border-radius: 3px;
+  }
 }
 
-.pages-error {
-  margin: 0;
-  font-size: 0.82rem;
-  color: var(--danger);
-}
-
+/* Toolbar: the same card the Customers and Orders lists use */
 .toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.5rem 0;
-  flex-wrap: wrap;
-}
-
-.search-box {
-  flex: 1;
-  min-width: min(100%, 20rem);
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.7rem 0.9rem;
-  border-radius: 12px;
+  flex-direction: column;
+  gap: 0.85rem;
   background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
 
-  svg {
-    width: 17px;
-    height: 17px;
-    flex-shrink: 0;
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
   }
 
-  input {
+  /* The only growing item in the row, so it pushes the controls to the right. */
+  &__search {
     flex: 1;
+    min-width: 240px;
+    display: flex;
+    align-items: center;
+    background: var(--bg);
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 0 0.75rem;
+
+    &:focus-within {
+      background: var(--surface);
+      border-color: var(--border);
+    }
+
+    input {
+      flex: 1;
+      min-width: 0;
+      border: none;
+      background: transparent;
+      padding: 0.6rem;
+      font-size: 0.85rem;
+      font-family: inherit;
+      color: var(--text-strong);
+
+      &:focus {
+        outline: none;
+      }
+
+      &::-webkit-search-cancel-button {
+        display: none;
+      }
+    }
+  }
+
+  &__search-icon {
+    display: inline-flex;
+    color: var(--text-subtle);
+
+    svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
+  }
+
+  &__clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text-strong);
+      background: var(--surface-hover);
+      border-color: transparent;
+    }
+
+    svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      stroke-width: 2;
+    }
+  }
+}
+
+/* Sort select: same control as System Logs */
+.select {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 0.7rem;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+
+  &:hover {
+    background: var(--surface-hover);
+  }
+
+  &:focus-within {
+    border-color: var(--border-strong);
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.1);
+  }
+
+  &__icon {
+    display: inline-flex;
+    color: var(--text-strong);
+
+    svg {
+      width: 15px;
+      height: 15px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
+  }
+
+  select {
     min-width: 0;
     border: none;
-    background: transparent;
+    background-color: transparent;
+    padding: 0.55rem 1.5rem 0.55rem 0;
+    font-family: inherit;
+    font-size: 0.84rem;
+    font-weight: 600;
     color: var(--text-strong);
-    font: inherit;
-    padding: 0;
+    cursor: pointer;
+    appearance: none;
+    color-scheme: inherit;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text-strong) 50%),
+      linear-gradient(135deg, var(--text-strong) 50%, transparent 50%);
+    background-position:
+      calc(100% - 10px) 50%,
+      calc(100% - 6px) 50%;
+    background-size:
+      4px 4px,
+      4px 4px;
+    background-repeat: no-repeat;
 
     &:focus {
       outline: none;
     }
   }
 
-  &__clear {
-    appearance: none;
-    width: 1.8rem;
-    height: 1.8rem;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    background: var(--surface-alt);
-    color: var(--text-body);
-    cursor: pointer;
+  option {
+    background-color: var(--surface-alt);
+    color: var(--text-strong);
   }
 }
 
-.toolbar__right {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.view-toggle,
-.density-toggle {
+/* Two-option switches (layout, density), styled like the Stock detail toggle */
+.toggle {
   display: inline-flex;
-  padding: 0.2rem;
-  border: 1px solid var(--border);
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: var(--surface-hover);
   border-radius: 10px;
-  background: var(--surface);
 
   button {
-    border: none;
-    background: transparent;
-    color: var(--text-subtle);
-    padding: 0.5rem 0.8rem;
-    border-radius: 8px;
-    cursor: pointer;
-    font: inherit;
+    padding: 0.4rem 0.75rem;
+    font-family: inherit;
+    font-size: 0.8rem;
     font-weight: 600;
-  }
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
 
-  .is-active {
-    background: rgb(var(--accent-rgb) / 0.12);
-    color: var(--text-strong);
+    &:hover {
+      color: var(--text-strong);
+      border-color: transparent;
+    }
+
+    &.is-active {
+      color: var(--text-strong);
+      background: var(--surface);
+      border-color: var(--border);
+    }
   }
 }
 
+/* Status filter pills: News list, plus a count */
 .filters {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
-.filter-pill {
+.filter {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.5rem 0.8rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  gap: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
   color: var(--text-body);
-  font: inherit;
-  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
   cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 
-  &--active {
-    background: rgb(var(--accent-rgb) / 0.12);
-    border-color: rgb(var(--accent-rgb) / 0.4);
-    color: var(--text-strong);
+  &:hover {
+    background: var(--surface-alt);
+    border-color: var(--border);
+  }
+
+  &--active,
+  &--active:hover {
+    background: rgb(var(--accent-rgb) / 0.16);
+    border-color: transparent;
+    color: var(--nav-active-ink);
   }
 
   &__count {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 1.4rem;
-    height: 1.4rem;
-    padding: 0 0.35rem;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
+    min-width: 1.35rem;
+    padding: 0.05rem 0.4rem;
     font-size: 0.72rem;
+    font-weight: 700;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--surface-track);
+    border-radius: 999px;
+  }
+
+  &--active &__count {
+    color: var(--nav-active-ink);
+    background: rgb(var(--accent-rgb) / 0.28);
   }
 }
 
-.sort-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
-  width: fit-content;
-  color: var(--text-subtle);
-}
-
-.sort-row__label {
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-
-.sort-row__select {
-  appearance: none;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text-body);
-  padding: 0.6rem 0.8rem;
-  font: inherit;
-}
-
+/* Page rows: the News card */
 .page-list {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 
   &--compact {
-    gap: 0.7rem;
+    gap: 0.6rem;
   }
 }
 
@@ -1088,11 +1276,10 @@ watch(
   display: flex;
   align-items: center;
   gap: 1rem;
-  min-height: 126px;
-  padding: 0.85rem 1rem 0.85rem 0.5rem;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
+  padding: 1.1rem 1.25rem;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -1102,85 +1289,73 @@ watch(
     box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
   }
 
-  &--selected {
-    background: rgb(var(--accent-rgb) / 0.06);
+  &--selected,
+  &--selected:hover {
+    background: var(--surface);
     border-color: rgb(var(--accent-rgb) / 0.5);
+    box-shadow: inset 0 0 0 9999px rgb(var(--accent-rgb) / 0.06);
   }
 
   &__check {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
-    padding-left: 0.25rem;
+
+    input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: rgb(var(--accent-rgb));
+      cursor: pointer;
+    }
   }
 
   &__body {
     flex: 1;
     min-width: 0;
     cursor: pointer;
+    border-radius: 8px;
+
+    &:focus-visible {
+      outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+      outline-offset: 4px;
+    }
   }
 
   &__meta {
     display: flex;
     align-items: center;
-    gap: 0.55rem;
+    gap: 0.6rem;
     flex-wrap: wrap;
-    margin-bottom: 0.35rem;
   }
 
   &__title {
-    margin: 0 0 0.2rem;
-    font-size: 1rem;
+    margin: 0.5rem 0 0.3rem;
+    font-size: 1.02rem;
     font-weight: 700;
     color: var(--text-strong);
   }
 
   &__excerpt {
     margin: 0;
-    color: var(--text-subtle);
-    font-size: 0.82rem;
+    font-size: 0.85rem;
     line-height: 1.45;
+    color: var(--text-body);
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
-  &__details {
+  &__footer {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.5rem;
     flex-wrap: wrap;
-    margin-top: 0.55rem;
+    margin-top: 0.7rem;
+    font-size: 0.78rem;
     color: var(--text-subtle);
-    font-size: 0.72rem;
-  }
-
-  &__details span:not(:last-child)::after {
-    content: '•';
-    margin-left: 0.6rem;
-    color: var(--text-faint);
-  }
-
-  &__cta {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-  }
-
-  &__cta-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 122px;
-    padding: 0.4rem 0.9rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--text-strong);
-    background: var(--surface-track);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    cursor: pointer;
   }
 
   &__actions {
@@ -1192,12 +1367,53 @@ watch(
 }
 
 .page-list--compact .page-row {
-  min-height: 108px;
-  padding: 0.7rem 0.85rem 0.7rem 0.35rem;
+  padding: 0.7rem 1.25rem;
 
-  &__excerpt {
+  .page-row__excerpt {
     display: none;
   }
+
+  .page-row__title {
+    margin-bottom: 0;
+  }
+
+  .page-row__footer {
+    margin-top: 0.4rem;
+  }
+}
+
+.byline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 600;
+  color: var(--text-body);
+
+  svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    stroke-width: 1.8;
+  }
+}
+
+.dot {
+  color: var(--text-faint);
+}
+
+/* Stale pages: outlined, so it doesn't compete with the status badge */
+.needs-review {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: nowrap;
 }
 
 .icon-btn {
@@ -1217,8 +1433,19 @@ watch(
     border-color 0.15s ease,
     color 0.15s ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: var(--surface-alt);
+    border-color: var(--border);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+    outline-offset: 2px;
   }
 
   svg {
@@ -1227,124 +1454,218 @@ watch(
     stroke: currentColor;
     stroke-width: 1.7;
   }
+
+  /* Table rows use the denser 32px button, as Customers does. */
+  &--sm {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    color: var(--text-muted);
+
+    &:hover:not(:disabled) {
+      color: var(--text-strong);
+    }
+
+    svg {
+      width: 16px;
+      height: 16px;
+      stroke-width: 1.8;
+    }
+  }
 }
 
-.needs-review {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.18rem 0.5rem;
-  border-radius: 999px;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.33);
-  color: #f8d572;
-  font-size: 0.66rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.table-shell {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+/* Table view: the Customers / Orders table */
+.table-card {
   background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
 }
 
-.page-table {
+.table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
 
   th,
   td {
-    padding: 0.85rem 0.9rem;
-    border-bottom: 1px solid var(--border-subtle);
     text-align: left;
-    vertical-align: top;
+    padding: 0.9rem 1rem;
+    vertical-align: middle;
   }
 
-  th {
-    color: var(--text-subtle);
-    font-size: 0.75rem;
+  thead th {
+    font-size: 0.72rem;
     font-weight: 700;
-    text-transform: uppercase;
     letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
+  }
+
+  thead th:first-child {
+    border-top-left-radius: 14px;
+  }
+
+  thead th:last-child {
+    border-top-right-radius: 14px;
+  }
+
+  tbody tr + tr td {
+    border-top: 1px solid var(--border-subtle);
   }
 
   tbody tr:hover {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-sunken);
   }
 
-  .is-selected {
-    background: rgb(var(--accent-rgb) / 0.06);
+  /* Selected rows win over the hover tint so the selection stays visible. */
+  tbody tr.is-selected td {
+    background: rgb(var(--accent-rgb) / 0.08);
+  }
+
+  td {
+    font-size: 0.84rem;
+    color: var(--text-body);
+  }
+
+  input[type='checkbox'] {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: rgb(var(--accent-rgb));
+    cursor: pointer;
+  }
+
+  &__check {
+    width: 44px;
   }
 }
 
-.table-check {
-  width: 44px;
+.title-link {
+  display: inline;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-align: left;
+  color: var(--text-strong);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+    border-color: transparent;
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 }
 
-.table-actions {
+.slug-copy {
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-strong);
+    border-color: transparent;
+  }
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.faint {
+  color: var(--text-faint);
+}
+
+.row-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
-.mini-action {
-  background: var(--surface-alt);
-  color: var(--text-body);
-  padding: 0.45rem 0.65rem;
-  border: 1px solid var(--border);
-}
-
-.mini-action--ghost {
-  background: transparent;
-}
-
-.pager {
+/* Pagination: the News list */
+.pagination {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  color: var(--text-subtle);
-  font-size: 0.82rem;
-  padding: 0.5rem 0.2rem 0;
-}
+  padding: 0.5rem 0.25rem;
+  flex-wrap: wrap;
 
-.pager__controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
+  &__info {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--text-subtle);
+  }
 
-  button {
-    background: var(--surface);
-    color: var(--text-body);
-    border: 1px solid var(--border);
-    padding: 0.5rem 0.8rem;
+  &__controls {
+    display: flex;
+    gap: 0.4rem;
   }
 }
 
-.pager__page {
-  background: rgb(var(--accent-rgb));
-  color: var(--ink-on-accent);
+.page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--surface-alt);
+    border-color: var(--border);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &--active {
+    background: rgb(var(--accent-rgb));
+    border-color: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
+    cursor: default;
+  }
 }
 
-.list-skeleton {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+/* Loading: row-shaped placeholders in the surface tokens */
+.skeletons {
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
 }
 
-.skeleton-card {
-  height: 220px;
-  border-radius: 12px;
+.skeleton {
+  height: 118px;
   background: linear-gradient(
     90deg,
     var(--surface) 25%,
-    rgba(255, 255, 255, 0.05) 50%,
+    var(--surface-alt) 50%,
     var(--surface) 75%
   );
   background-size: 200% 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
   animation: shine 1.3s linear infinite;
 }
 
@@ -1357,73 +1678,53 @@ watch(
   }
 }
 
-.alert-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-  padding: 1.2rem;
-  border-radius: 12px;
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: var(--text-body);
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
 }
 
-.alert-card__retry {
-  align-self: flex-start;
-  padding: 0.55rem 0.8rem;
-  background: rgb(var(--accent-rgb));
-  color: var(--ink-on-accent);
-  font-weight: 700;
-}
-
-.template-modal {
+/* New-page template picker */
+.modal {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.56);
+  background: var(--backdrop);
   z-index: 45;
   padding: 1rem;
-}
 
-.template-modal__card {
-  width: min(38rem, 100%);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.22);
-}
-
-.template-modal__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.15rem;
-  border-bottom: 1px solid var(--border-subtle);
-
-  h3 {
-    margin: 0;
-    color: var(--text-strong);
+  &__card {
+    width: min(38rem, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow-md);
   }
-}
 
-.template-modal__close {
-  width: 2rem;
-  height: 2rem;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--surface-alt);
-  color: var(--text-body);
-  cursor: pointer;
-}
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border-subtle);
 
-.template-modal__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  padding: 1rem 1.15rem 1.2rem;
+    h3 {
+      margin: 0;
+      font-size: 1.02rem;
+      font-weight: 700;
+      color: var(--text-strong);
+    }
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 0.75rem;
+    padding: 1.1rem 1.25rem 1.25rem;
+  }
 }
 
 .template-option {
@@ -1431,46 +1732,91 @@ watch(
   flex-direction: column;
   align-items: flex-start;
   gap: 0.3rem;
-  min-height: 110px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--surface-alt);
-  color: var(--text-body);
+  min-height: 96px;
   padding: 1rem;
   text-align: left;
+  font-family: inherit;
+  color: var(--text-body);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 12px;
   cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+
+  &:hover {
+    background: var(--surface);
+    border-color: rgb(var(--accent-rgb) / 0.6);
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+    outline-offset: 2px;
+  }
 
   small {
+    font-size: 0.78rem;
     color: var(--text-subtle);
+  }
+
+  &__label {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-strong);
   }
 }
 
-.template-option__label {
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--text-strong);
-}
-
-.confirm-delete-wrap {
+/* Delete confirmation field, inside ConfirmDialog */
+.confirm-delete {
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
-  margin-top: 0.75rem;
+  gap: 0.6rem;
+  margin-top: 0.85rem;
+
+  label {
+    font-size: 0.84rem;
+    color: var(--text-subtle);
+  }
+
+  input {
+    width: 100%;
+    padding: 0.65rem 0.75rem;
+    font: inherit;
+    font-size: 0.85rem;
+    color: var(--text-strong);
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+
+    &:focus {
+      outline: none;
+      border-color: var(--border-strong);
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.1);
+    }
+  }
 }
 
-.confirm-delete-wrap label {
-  font-size: 0.84rem;
-  color: var(--text-subtle);
+@media (max-width: 900px) {
+  .table__author,
+  .table__slug {
+    display: none;
+  }
 }
 
-.confirm-delete-wrap input {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface-alt);
-  color: var(--text-strong);
-  padding: 0.75rem 0.8rem;
-  font: inherit;
+@media (max-width: 720px) {
+  .page-row {
+    flex-wrap: wrap;
+
+    &__body {
+      flex-basis: calc(100% - 2rem);
+    }
+
+    &__actions {
+      width: 100%;
+      justify-content: flex-end;
+    }
+  }
 }
 
 @media (max-width: 640px) {
@@ -1478,23 +1824,9 @@ watch(
     padding: 1rem;
   }
 
-  .page__header,
-  .toolbar,
-  .sort-row,
-  .pager {
-    align-items: flex-start;
+  .pagination {
     flex-direction: column;
-  }
-
-  .toolbar__right {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .filter-pill,
-  .view-toggle,
-  .density-toggle {
-    width: auto;
+    align-items: flex-start;
   }
 }
 </style>

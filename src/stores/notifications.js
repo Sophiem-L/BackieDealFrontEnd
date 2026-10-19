@@ -2,8 +2,10 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead } from '@/services/notifications'
 import { connectRealtime, disconnectRealtime } from '@/services/realtime'
+import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
 
 export const useNotificationsStore = defineStore('notifications', () => {
+  const unviewedOrders = useUnviewedOrdersStore()
   const items = ref([])
   const unreadCount = ref(0)
   const loading = ref(false)
@@ -30,7 +32,12 @@ export const useNotificationsStore = defineStore('notifications', () => {
       unreadCount.value = result.unreadCount
 
       const channel = connectRealtime(token).private(`App.Models.User.${userId}`)
-      channel.notification(addNotification)
+      channel.notification((notification) => {
+        addNotification(notification)
+        // The order's uuid is not in the payload (only the numeric id), so ask
+        // the server which orders are unviewed rather than guessing a row.
+        if (notification?.category === 'orders') unviewedOrders.refresh(token)
+      })
     } catch (err) {
       error.value = err.message || 'Unable to load notifications.'
     } finally {
@@ -43,6 +50,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
     await markNotificationRead(item.id, token)
     item.read_at = new Date().toISOString()
     unreadCount.value = Math.max(0, unreadCount.value - 1)
+    // Reading an order notification is what marks that order viewed.
+    if (item.category === 'orders') unviewedOrders.refresh(token)
   }
 
   async function markAllRead(token) {
@@ -53,6 +62,9 @@ export const useNotificationsStore = defineStore('notifications', () => {
       if (!item.read_at) item.read_at = timestamp
     })
     unreadCount.value = 0
+    // Unviewed orders are the admin's unread order notifications, so the
+    // server just cleared them too.
+    unviewedOrders.clear()
   }
 
   function reset() {
@@ -61,6 +73,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
     items.value = []
     unreadCount.value = 0
     error.value = ''
+    unviewedOrders.clear()
   }
 
   return { items, unreadCount, unreadItems, loading, error, initialize, markRead, markAllRead, reset }

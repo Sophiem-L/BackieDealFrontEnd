@@ -14,10 +14,12 @@ import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
 import { downloadCsv, downloadJson } from '@/services/tableExport'
 import { useAuthStore } from '@/stores/auth'
+import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const unviewedOrders = useUnviewedOrdersStore()
 
 /* ---------------------------------------------------------------------------
  * "Just created" highlight
@@ -41,6 +43,14 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => clearTimeout(highlightTimer))
+
+// Orders this admin has not opened yet get a "New" marker until they do. The
+// green just-created highlight above takes over for the order they just saved.
+const isUnviewed = (order) => order.id !== justCreatedId.value && unviewedOrders.isUnviewed(order.id)
+
+// App.vue keeps this fresh app-wide; re-reading when the list opens covers a
+// realtime connection that dropped while the admin was elsewhere.
+onMounted(() => unviewedOrders.refresh(auth.accessToken))
 
 // Customer orders are always scoped to one of four calendar periods — there is
 // no unscoped "all dates" view. Yearly is the default so the list opens with the
@@ -943,6 +953,7 @@ async function exportOrders(format) {
               :class="{
                 'is-selected': selected.has(order.id),
                 'is-new': order.id === justCreatedId,
+                'is-unviewed': isUnviewed(order),
               }"
             >
               <td class="table__check">
@@ -957,6 +968,7 @@ async function exportOrders(format) {
                 <p class="order__id" :title="order.id">
                   {{ order.reference }}
                   <span v-if="order.id === justCreatedId" class="new-flag">New</span>
+                  <span v-else-if="isUnviewed(order)" class="new-flag new-flag--unviewed" title="You have not opened this order yet">New</span>
                 </p>
               </td>
               <td>
@@ -1352,6 +1364,12 @@ async function exportOrders(format) {
   }
   tbody tr.is-new td:first-child { border-left: 3px solid var(--success); }
 
+  /* An order this admin has not opened yet: an accent bar on the left edge, the
+     same yellow as the sidebar badge. Drawn as an inset shadow so the first
+     column does not shift, and with no row tint so it is never mistaken for a
+     selected row. */
+  tbody tr.is-unviewed td:first-child { box-shadow: inset 3px 0 0 rgb(var(--accent-rgb)); }
+
   &__check { width: 44px; }
   /* Needs the element in the selector: `.table th` above is (0,1,1) and would
      otherwise outrank a bare class and keep the label left of its icons. */
@@ -1386,6 +1404,13 @@ async function exportOrders(format) {
   background: var(--success-solid);
   border-radius: 4px;
   vertical-align: middle;
+
+  /* Not-yet-opened orders use the accent, matching the sidebar badge; green
+     stays reserved for the order that was just saved. */
+  &--unviewed {
+    color: var(--ink-on-accent);
+    background: rgb(var(--accent-rgb));
+  }
 }
 
 /* Order ID cell */

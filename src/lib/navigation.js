@@ -14,7 +14,15 @@ export const NAV_SECTIONS = [
   {
     title: 'E-Commerce',
     items: [
-      { label: 'Orders', icon: 'orders', to: '/orders', permission: 'orders.view', badge: 12 },
+      // `badgeKey` names the live figure the sidebar shows on this item; the
+      // count itself is per admin and lives in the unviewed-orders store.
+      {
+        label: 'Orders',
+        icon: 'orders',
+        to: '/orders',
+        permission: 'orders.view',
+        badgeKey: 'unviewedOrders',
+      },
       { label: 'Products', icon: 'products', to: '/products', permission: 'products.view' },
       { label: 'Categories', icon: 'categories', to: '/categories', permission: 'categories.view' },
       { label: 'Promotions', icon: 'promotions', to: '/promotions', permission: 'promotions.view' },
@@ -76,4 +84,17 @@ export function visibleSections(hasPermission) {
     ...section,
     items: section.items.filter((item) => hasPermission(item.permission)),
   })).filter((section) => section.items.length > 0)
+}
+
+// The live figure an item's badge shows, looked up by the `badgeKey` it names.
+// Items that name none, and figures that have not loaded yet, count as zero so
+// no badge is drawn rather than a wrong one.
+export function badgeCount(item, counts) {
+  if (!item.badgeKey) return 0
+  return Number(counts[item.badgeKey]) || 0
+}
+
+// A three-digit count would outgrow the pill, so anything past 99 is capped.
+export function badgeLabel(count) {
+  return count > 99 ? '99+' : String(count)
 }

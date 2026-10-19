@@ -17,50 +17,36 @@ const displayLabel = computed(() => props.label || labels[normalized.value] || '
 </script>
 
 <template>
-  <span class="status-chip" :class="[`status-chip--${normalized}`]" aria-label="Page status">
-    <span class="status-chip__dot" aria-hidden="true" />
-    {{ displayLabel }}
-  </span>
+  <span class="status-chip" :class="[`status-chip--${normalized}`]">{{ displayLabel }}</span>
 </template>
 
 <style scoped lang="scss">
+// Same badge as the News list: pages and articles are one content table, so a
+// status should read the same on both screens.
 .status-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.28rem 0.7rem;
-  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  font-size: 0.64rem;
   font-weight: 700;
-  font-size: 0.68rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  border: 1px solid transparent;
+  border-radius: 6px;
   white-space: nowrap;
 
-  &__dot {
-    width: 0.52rem;
-    height: 0.52rem;
-    border-radius: 50%;
-    background: currentColor;
-    display: inline-block;
-  }
-
   &--published {
-    background: rgba(34, 197, 94, 0.12);
-    color: #8ae6b1;
-    border-color: rgba(34, 197, 94, 0.35);
+    color: var(--success);
+    background: var(--success-bg);
   }
 
   &--draft {
-    background: rgba(251, 191, 36, 0.12);
-    color: #f7d66b;
-    border-color: rgba(251, 191, 36, 0.35);
+    color: var(--text-muted);
+    background: var(--surface-track);
   }
 
   &--archived {
-    background: rgba(148, 163, 184, 0.12);
-    color: #dfe3ec;
-    border-color: rgba(148, 163, 184, 0.25);
+    color: var(--accent-ink);
+    background: rgb(var(--accent-rgb) / 0.18);
   }
 }
 </style>

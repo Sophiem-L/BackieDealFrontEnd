@@ -105,15 +105,32 @@ export function sortPages(pages, sortKey = 'updated') {
   return sorted
 }
 
+// The editor saves `body` as HTML, and the list falls back to it when a page has
+// no excerpt. Reduce it to the text a reader would see.
+function htmlToText(value) {
+  return String(value ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function makePageRow(row) {
   const title = row?.title || `Page ${row?.id ?? 'Untitled'}`
   const slug = String(row?.slug || row?.path || '').trim()
-  const excerpt = String(row?.excerpt || row?.body || '').replace(/\s+/g, ' ').trim()
+  const excerpt = htmlToText(row?.excerpt || row?.body)
 
   return {
     id: row?.id ?? null,
     title,
-    slug: slug.startsWith('/') ? slug : `/${slug || 'page'}`,
+    // A page with no slug has no URL yet; showing a made-up one would put the
+    // same fake path on every such row and give "View live" nowhere to go.
+    slug: slug && !slug.startsWith('/') ? `/${slug}` : slug,
     excerpt: excerpt || 'No preview available.',
     status: normalizeStatus(row?.status),
     author: row?.author?.name || row?.author || 'Unknown',
@@ -124,11 +141,27 @@ export function makePageRow(row) {
   }
 }
 
+export function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+// Returns HTML for `v-html`. Matching runs on the raw text and each piece is
+// escaped on its own, so page content can't inject markup and a query like
+// "amp" can't land inside an `&amp;` it just produced.
 export function highlightMatch(text = '', query = '') {
   const safeText = String(text ?? '')
   const safeQuery = String(query ?? '').trim()
-  if (!safeQuery) return safeText
+  if (!safeQuery) return escapeHtml(safeText)
 
   const regex = new RegExp(`(${safeQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig')
-  return safeText.replace(regex, '<mark>$1</mark>')
+  // With one capture group, split() puts every match at an odd index.
+  return safeText
+    .split(regex)
+    .map((part, index) => (index % 2 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)))
+    .join('')
 }

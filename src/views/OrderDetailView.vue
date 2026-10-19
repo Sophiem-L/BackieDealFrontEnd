@@ -5,10 +5,12 @@ import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const unviewedOrders = useUnviewedOrdersStore()
 
 // The list links here with the order uuid (routes bind on it server-side).
 const orderUuid = String(route.params.id ?? '')
@@ -190,6 +192,10 @@ async function loadOrder() {
   try {
     const response = await apiFetch(`/admin/orders/${orderUuid}`, { token: auth.accessToken })
     applyOrder(response?.data ?? {})
+    // Opening an order is what clears its "unviewed" marker for this admin. Only
+    // after it loaded, so a missing order is not recorded as seen; deliberately
+    // not awaited, since the page should not wait on the badge.
+    unviewedOrders.markViewed(orderUuid, auth.accessToken)
   } catch (err) {
     error.value =
       err.status === 404

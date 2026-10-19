@@ -3,10 +3,16 @@ import { computed } from 'vue'
 import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
-import { visibleSections } from '@/lib/navigation'
+import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
+import { badgeCount, badgeLabel, visibleSections } from '@/lib/navigation'
 
 const ui = useUiStore()
 const auth = useAuthStore()
+const unviewedOrders = useUnviewedOrdersStore()
+
+// Live figures behind the nav badges, keyed by the `badgeKey` an item names.
+// Per admin: each admin sees only the orders they have not opened.
+const badgeCounts = computed(() => ({ unviewedOrders: unviewedOrders.count }))
 const router = useRouter()
 const route = useRoute()
 
@@ -161,9 +167,17 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
                     stroke-linejoin="round"
                   />
                 </svg>
+                <!-- Collapsed rail hides the number pill, so a dot keeps the signal. -->
+                <span v-if="badgeCount(item, badgeCounts)" class="nav__pip"></span>
               </span>
               <span class="nav__label">{{ item.label }}</span>
-              <span v-if="item.badge" class="nav__badge">{{ item.badge }}</span>
+              <span
+                v-if="badgeCount(item, badgeCounts)"
+                class="nav__badge"
+                :aria-label="`${badgeCount(item, badgeCounts)} unviewed`"
+              >
+                {{ badgeLabel(badgeCount(item, badgeCounts)) }}
+              </span>
             </RouterLink>
           </li>
         </ul>
@@ -224,6 +238,9 @@ $sidebar-rail: 74px;
       justify-content: center;
       padding-inline: 0;
     }
+    .nav__pip {
+      display: block;
+    }
     .sidebar__footer .nav__link {
       justify-content: center;
     }
@@ -258,6 +275,10 @@ $sidebar-rail: 74px;
       .nav__label,
       .nav__badge {
         display: revert;
+      }
+      // The off-canvas drawer shows full rows, so the pill carries the count.
+      .nav__pip {
+        display: none;
       }
     }
   }
@@ -347,6 +368,7 @@ $sidebar-rail: 74px;
   }
 
   &__icon {
+    position: relative;
     display: inline-flex;
     flex-shrink: 0;
 
@@ -379,6 +401,20 @@ $sidebar-rail: 74px;
     color: var(--ink-on-accent);
     background: rgb(var(--accent-rgb));
     border-radius: 999px;
+  }
+
+  // Only drawn on the collapsed icon rail, where the number pill is hidden.
+  // Same accent dot as the header bell.
+  &__pip {
+    display: none;
+    position: absolute;
+    top: -2px;
+    right: -3px;
+    width: 8px;
+    height: 8px;
+    background: rgb(var(--accent-rgb));
+    border: 1.5px solid var(--surface);
+    border-radius: 50%;
   }
 
   &__link--logout {

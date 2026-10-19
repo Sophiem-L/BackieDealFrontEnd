@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import OrderDetailView from '@/views/OrderDetailView.vue'
 import { apiFetch } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 vi.mock('@/services/api', () => ({
   apiFetch: vi.fn(),
@@ -42,6 +43,38 @@ function order(tracking) {
 function deliveryRow(wrapper) {
   return wrapper.findAll('.kv__row').find((row) => row.find('dt').text() === 'Delivery')
 }
+
+describe('OrderDetailView marks the order viewed', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore().accessToken = 'test-token'
+  })
+
+  it('tells the server once the order has loaded', async () => {
+    apiFetch.mockResolvedValue({ data: order({ status: 'pending' }) })
+
+    mount(OrderDetailView, { global: { stubs } })
+    await flushPromises()
+
+    expect(apiFetch).toHaveBeenCalledWith('/admin/orders/abc-123/viewed', {
+      method: 'POST',
+      token: 'test-token',
+    })
+  })
+
+  it('does not mark an order viewed that failed to load', async () => {
+    apiFetch.mockRejectedValue(Object.assign(new Error('Not found'), { status: 404 }))
+
+    mount(OrderDetailView, { global: { stubs } })
+    await flushPromises()
+
+    expect(apiFetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/viewed'),
+      expect.anything(),
+    )
+  })
+})
 
 describe('OrderDetailView customer link', () => {
   beforeEach(() => {

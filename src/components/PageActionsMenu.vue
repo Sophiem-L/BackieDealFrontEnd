@@ -6,17 +6,21 @@ const props = defineProps({
   canEdit: { type: Boolean, default: true },
   canDelete: { type: Boolean, default: true },
   busy: { type: Boolean, default: false },
+  // 32px trigger for table rows, matching the other tables' icon buttons.
+  compact: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['view', 'edit', 'publish', 'unpublish', 'archive', 'restore', 'duplicate', 'delete'])
 
 const isOpen = ref(false)
+const rootRef = ref(null)
 const buttonRef = ref(null)
 const itemRefs = ref([])
 
 const actionItems = computed(() => {
   const actions = [
-    { label: 'View live', action: 'view', visible: true },
+    // A page with no slug has no public URL to open yet.
+    { label: 'View live', action: 'view', visible: Boolean(props.item.slug) },
     { label: 'Edit', action: 'edit', visible: props.canEdit },
     { label: 'Duplicate', action: 'duplicate', visible: true },
   ]
@@ -70,6 +74,14 @@ function handleKeydown(event) {
   }
 }
 
+// Every row has its own menu; without this, opening one leaves the previous
+// one hanging open until Escape.
+function handlePointerDown(event) {
+  if (isOpen.value && rootRef.value && !rootRef.value.contains(event.target)) {
+    isOpen.value = false
+  }
+}
+
 function onAction(action) {
   isOpen.value = false
   switch (action) {
@@ -102,29 +114,38 @@ function onAction(action) {
 
 onMounted(() => {
   document.addEventListener('keydown', handleKeydown)
+  document.addEventListener('pointerdown', handlePointerDown)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('pointerdown', handlePointerDown)
 })
 </script>
 
 <template>
-  <div class="menu" @keydown.stop="handleKeydown">
+  <div ref="rootRef" class="menu" @keydown.stop="handleKeydown">
     <button
       ref="buttonRef"
       type="button"
       class="menu__trigger"
+      :class="{ 'menu__trigger--compact': compact }"
       :aria-label="`Open actions for ${item.title}`"
+      aria-haspopup="menu"
+      :aria-expanded="isOpen"
       :disabled="busy"
       @click="isOpen = !isOpen"
     >
-      <span aria-hidden="true">⋯</span>
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <circle cx="5" cy="12" r="1.7" />
+        <circle cx="12" cy="12" r="1.7" />
+        <circle cx="19" cy="12" r="1.7" />
+      </svg>
     </button>
 
     <div v-if="isOpen" class="menu__panel" role="menu" aria-label="Page actions">
       <button
-        v-for="(action, index) in actionItems"
+        v-for="action in actionItems"
         :key="action.label"
         ref="itemRefs"
         type="button"
@@ -145,58 +166,87 @@ onBeforeUnmount(() => {
   display: inline-flex;
 }
 
+// Same box as the row icon buttons next to it (38px; 32px in tables).
 .menu__trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text-body);
   cursor: pointer;
-  font-size: 1.35rem;
-  line-height: 1;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+
+  svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  &--compact {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    color: var(--text-muted);
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+  }
 
   &:hover:not(:disabled) {
     background: var(--surface-alt);
-    border-color: var(--border-strong);
+    color: var(--text-strong);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
 
   &:focus-visible {
-    outline: 2px solid rgb(var(--accent-rgb));
+    outline: 2px solid rgb(var(--accent-rgb) / 0.5);
     outline-offset: 2px;
   }
 }
 
+// Popup matches the Orders export menu.
 .menu__panel {
   position: absolute;
   right: 0;
-  top: calc(100% + 0.4rem);
-  min-width: 180px;
+  top: calc(100% + 6px);
+  min-width: 176px;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
   padding: 0.35rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 18px 28px rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 23, 28, 0.12);
   z-index: 20;
 }
 
 .menu__item {
   appearance: none;
-  padding: 0.7rem 0.8rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
   border: none;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-body);
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 500;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
-  font: inherit;
 
   &:hover,
   &:focus-visible {
@@ -206,6 +256,11 @@ onBeforeUnmount(() => {
 
   &--danger {
     color: var(--danger);
+
+    &:hover,
+    &:focus-visible {
+      background: var(--danger-bg);
+    }
   }
 }
 </style>
