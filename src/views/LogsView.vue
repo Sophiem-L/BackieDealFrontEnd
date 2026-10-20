@@ -1,24 +1,85 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { activityLogs, actionFilters, userFilters } from '@/data/activityLogs'
+import { useAuthStore } from '@/stores/auth'
+import { fetchActivityLogs } from '@/services/activityLogs'
 
-const actionFilter = ref('All Actions')
-const userFilter = ref('All Users')
+const auth = useAuthStore()
+const actionFilter = ref('')
+const userFilter = ref('')
+const logs = ref([])
+const loading = ref(false)
+const errorMessage = ref('')
+const page = ref(1)
+const pagination = ref({ total: 0, per_page: 50, current_page: 1, last_page: 1, count: 0 })
+let requestSequence = 0
 
-const filtered = computed(() =>
-  activityLogs.filter((log) => {
-    const actionOk = actionFilter.value === 'All Actions' || log.action === actionFilter.value
-    const userOk = userFilter.value === 'All Users' || log.user === userFilter.value
-    return actionOk && userOk
-  }),
-)
+const actionFilters = ['viewed', 'created', 'updated', 'deleted']
+const userFilters = computed(() => {
+  const users = new Map()
+  for (const log of logs.value) {
+    if (log.userId) users.set(log.userId, log.user)
+  }
+  return [...users].map(([id, name]) => ({ id, name }))
+})
+const visibleRange = computed(() => {
+  const total = Number(pagination.value.total ?? 0)
+  if (!total) return '0 records'
+  const perPage = Number(pagination.value.per_page ?? 50)
+  const currentPage = Number(pagination.value.current_page ?? page.value)
+  const first = (currentPage - 1) * perPage + 1
+  return `${first}-${Math.min(first + logs.value.length - 1, total)} of ${total}`
+})
+
+async function loadLogs() {
+  const sequence = ++requestSequence
+  loading.value = true
+  errorMessage.value = ''
+
+  try {
+    const result = await fetchActivityLogs({
+      token: auth.accessToken,
+      action: actionFilter.value,
+      userId: userFilter.value,
+      page: page.value,
+    })
+
+    if (sequence !== requestSequence) return
+    logs.value = result.items
+    pagination.value = {
+      total: Number(result.pagination.total ?? 0),
+      per_page: Number(result.pagination.per_page ?? 50),
+      current_page: Number(result.pagination.current_page ?? page.value),
+      last_page: Number(result.pagination.last_page ?? 1),
+      count: Number(result.pagination.count ?? result.items.length),
+    }
+  } catch (error) {
+    if (sequence !== requestSequence) return
+    logs.value = []
+    errorMessage.value = error.status === 403
+      ? 'You do not have permission to view activity logs.'
+      : error.message || 'Unable to load activity logs.'
+  } finally {
+    if (sequence === requestSequence) loading.value = false
+  }
+}
+
+watch([actionFilter, userFilter], () => {
+  if (page.value !== 1) {
+    page.value = 1
+    return
+  }
+  loadLogs()
+})
+
+watch(page, loadLogs)
+onMounted(loadLogs)
+onUnmounted(() => { requestSequence += 1 })
 
 function exportLogs() {
-  // TODO: wire to a real export endpoint. For now, download the current view as CSV.
   const header = ['Timestamp', 'User', 'Action Type', 'Details', 'Source']
-  const rows = filtered.value.map((l) => [l.timestamp, l.user, l.action, l.details, l.ip])
+  const rows = logs.value.map((l) => [l.timestamp, l.user, l.action, l.details, l.ip])
   const csv = [header, ...rows]
     .map((cols) => cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
     .join('\n')
@@ -44,7 +105,8 @@ function exportLogs() {
               <path d="M4 6h16M7 12h10M10 18h4" stroke-linecap="round" />
             </svg>
           </span>
-          <select v-model="actionFilter">
+          <select v-model="actionFilter" aria-label="Filter by action">
+            <option value="">All Actions</option>
             <option v-for="opt in actionFilters" :key="opt" :value="opt">{{ opt }}</option>
           </select>
         </label>
@@ -56,8 +118,9 @@ function exportLogs() {
               <path d="M5 20a7 7 0 0 1 14 0" stroke-linecap="round" />
             </svg>
           </span>
-          <select v-model="userFilter">
-            <option v-for="opt in userFilters" :key="opt" :value="opt">{{ opt }}</option>
+          <select v-model="userFilter" aria-label="Filter by user">
+            <option value="">All Users</option>
+            <option v-for="opt in userFilters" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
           </select>
         </label>
 
@@ -68,25 +131,29 @@ function exportLogs() {
               <path d="M12 11v5M12 8h.01" stroke-linecap="round" />
             </svg>
           </span>
-          Tracking all IP addresses and sensitive administrative changes.
+          Authenticated API activity recorded by the server.
         </p>
 
         <div class="toolbar__spacer"></div>
 
-        <BaseButton variant="ghost" @click="exportLogs">
+        <BaseButton variant="ghost" :disabled="loading || logs.length === 0" @click="exportLogs">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none">
               <path d="M12 3v12M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
               <path d="M5 21h14" stroke-linecap="round" />
             </svg>
           </template>
-          Export logs
+          Export current page
         </BaseButton>
       </section>
 
-      <!-- Table -->
+      <p v-if="errorMessage" class="notice notice--error" role="alert">
+        {{ errorMessage }}
+        <BaseButton variant="ghost" size="sm" :disabled="loading" @click="loadLogs">Retry</BaseButton>
+      </p>
+
       <section class="table-card">
-        <table class="table">
+        <table class="table" :aria-busy="loading">
           <thead>
             <tr>
               <th>Timestamp</th>
@@ -97,7 +164,7 @@ function exportLogs() {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="log in filtered" :key="log.id">
+            <tr v-for="log in logs" :key="log.id">
               <td class="timestamp">{{ log.timestamp }}</td>
               <td class="user">{{ log.user }}</td>
               <td>
@@ -106,12 +173,33 @@ function exportLogs() {
               <td class="details">{{ log.details }}</td>
               <td class="ip">{{ log.ip }}</td>
             </tr>
-            <tr v-if="filtered.length === 0">
-              <td colspan="5" class="table__empty">No log entries match your filters.</td>
+            <tr v-if="loading">
+              <td colspan="5" class="table__empty">Loading activity logs…</td>
+            </tr>
+            <tr v-else-if="!errorMessage && logs.length === 0">
+              <td colspan="5" class="table__empty">No activity logs match these filters.</td>
             </tr>
           </tbody>
         </table>
       </section>
+
+      <nav class="pagination" aria-label="Activity log pages">
+        <span>{{ visibleRange }}</span>
+        <div class="pagination__actions">
+          <BaseButton variant="ghost" size="sm" :disabled="loading || page <= 1" @click="page -= 1">
+            Previous
+          </BaseButton>
+          <span>Page {{ pagination.current_page }} of {{ pagination.last_page }}</span>
+          <BaseButton
+            variant="ghost"
+            size="sm"
+            :disabled="loading || page >= pagination.last_page"
+            @click="page += 1"
+          >
+            Next
+          </BaseButton>
+        </div>
+      </nav>
     </div>
   </div>
 </template>
@@ -213,6 +301,7 @@ function exportLogs() {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
+  overflow-x: auto;
 }
 
 .table {
@@ -249,6 +338,7 @@ function exportLogs() {
   font-family: 'SFMono-Regular', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
   font-size: 0.68rem;
   font-weight: 600;
+  text-transform: uppercase;
   letter-spacing: 0.02em;
   color: var(--text-body);
   background: var(--surface-track);
@@ -262,5 +352,38 @@ function exportLogs() {
   font-size: 0.8rem;
   color: var(--text-faint);
   white-space: nowrap;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--text-subtle);
+  font-size: 0.84rem;
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 560px) {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>
