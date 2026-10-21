@@ -10,6 +10,7 @@ const props = defineProps({
   description: { type: String, default: 'Manage your store configuration.' },
   dirty: { type: Boolean, default: false },
   saving: { type: Boolean, default: false },
+  loadError: { type: String, default: '' },
   pageClass: { type: String, default: '' },
 })
 
@@ -20,7 +21,7 @@ const navLinks = computed(() => SETTINGS_LINKS)
 const saveLabel = computed(() => (props.saving ? 'Saving...' : 'Save changes'))
 
 function handleSave() {
-  emit('save')
+  if (props.dirty && !props.loadError && !props.saving) emit('save')
 }
 
 function handleDiscard() {
@@ -32,7 +33,7 @@ function isCurrent(path) {
 }
 
 function handleShortcuts(event) {
-  if (!props.dirty) return
+  if (!props.dirty || props.loadError || props.saving) return
   const key = event.key.toLowerCase()
   if ((event.ctrlKey || event.metaKey) && key === 's') {
     event.preventDefault()
@@ -62,6 +63,8 @@ onBeforeUnmount(() => {
         <p>{{ description }}</p>
       </header>
 
+      <div v-if="loadError" class="settings-load-error" role="alert">{{ loadError }}</div>
+
       <div class="settings-page__layout">
         <aside class="settings-nav" aria-label="Settings sections">
           <RouterLink
@@ -81,7 +84,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="dirty" class="settings-savebar">
+      <div v-if="dirty && !loadError" class="settings-savebar">
         <span class="settings-savebar__label">You have unsaved changes</span>
         <div class="settings-savebar__actions">
           <BaseButton variant="ghost" size="sm" @click="handleDiscard">Discard</BaseButton>
@@ -143,6 +146,8 @@ onBeforeUnmount(() => {
   color: var(--text-subtle);
   font-size: 0.92rem;
 }
+
+.settings-load-error { margin: 0 0 1rem; padding: 0.85rem 1rem; border: 1px solid var(--danger-border); border-radius: 9px; background: var(--danger-bg); color: var(--danger); font-size: 0.84rem; }
 
 .settings-page__layout {
   display: grid;

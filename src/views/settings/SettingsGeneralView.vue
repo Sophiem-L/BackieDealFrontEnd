@@ -1,7 +1,14 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { fetchSettingsSection, saveSettingsSection, FALLBACK_SETTINGS } from '@/services/settingsApi.js'
+import {
+  fetchSettingsSection,
+  fetchStoreSettings,
+  saveSettingsSection,
+  saveStoreSettings,
+  FALLBACK_SETTINGS,
+} from '@/services/settingsApi.js'
+import { uploadImage } from '@/services/media'
 import SettingsShell from '@/views/settings/SettingsShell.vue'
 
 const auth = useAuthStore()
@@ -10,24 +17,66 @@ const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
 const toast = ref('')
+const loadError = ref('')
+const logoInput = ref(null)
+const faviconInput = ref(null)
+const uploading = ref({ logo: false, favicon: false })
 
 const dirty = () => JSON.stringify(form) !== JSON.stringify(initialState.value)
 
 onMounted(async () => {
   try {
-    const remote = await fetchSettingsSection('general', auth.accessToken)
-    Object.assign(form, JSON.parse(JSON.stringify(remote)))
-    Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
+    const [remote, storeResponse] = await Promise.all([
+      fetchSettingsSection('general', auth.accessToken),
+      fetchStoreSettings(auth.accessToken),
+    ])
+    const store = storeResponse.settings || {}
+    const merged = {
+      ...remote,
+      storeName: store.store_name || remote.storeName,
+      storeUrl: store.store_url || remote.storeUrl,
+      contactEmail: store.contact_email || remote.contactEmail,
+      timezone: store.timezone || remote.timezone,
+      currency: store.currency || remote.currency,
+    }
+    Object.assign(form, JSON.parse(JSON.stringify(merged)))
+    Object.assign(initialState.value, JSON.parse(JSON.stringify(merged)))
   } catch (error) {
+    loadError.value = error.message || 'General settings could not be loaded from the API. Saving is disabled.'
     console.warn('General settings failed to load from API.', error)
   }
 })
+
+async function persistGeneralSettings() {
+  const normalizedUrl = form.storeUrl.trim()
+    ? (/^https?:\/\//i.test(form.storeUrl) ? form.storeUrl.trim() : `https://${form.storeUrl.trim()}`)
+    : null
+  const [remote, storeResponse] = await Promise.all([
+    saveSettingsSection('general', form, auth.accessToken),
+    saveStoreSettings({
+      store_name: form.storeName,
+      store_url: normalizedUrl,
+      contact_email: form.contactEmail || null,
+      timezone: form.timezone,
+      currency: form.currency,
+    }, auth.accessToken),
+  ])
+  const store = storeResponse.settings || {}
+  return {
+    ...remote,
+    storeName: store.store_name || remote.storeName,
+    storeUrl: store.store_url || remote.storeUrl,
+    contactEmail: store.contact_email || remote.contactEmail,
+    timezone: store.timezone || remote.timezone,
+    currency: store.currency || remote.currency,
+  }
+}
 
 async function save() {
   saving.value = true
 
   try {
-    const remote = await saveSettingsSection('general', form, auth.accessToken)
+    const remote = await persistGeneralSettings()
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
     toast.value = 'General settings saved successfully.'
@@ -45,6 +94,34 @@ function discard() {
   toast.value = 'Changes discarded.'
   setTimeout(() => (toast.value = ''), 1400)
 }
+
+async function uploadBrandAsset(kind, event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+
+  const urlKey = kind === 'logo' ? 'logoUrl' : 'faviconUrl'
+  const pathKey = kind === 'logo' ? 'logoPath' : 'faviconPath'
+  const previous = { url: form[urlKey], path: form[pathKey] }
+  uploading.value[kind] = true
+
+  try {
+    const uploaded = await uploadImage(file, { token: auth.accessToken, folder: 'store-branding' })
+    form[urlKey] = uploaded.url
+    form[pathKey] = uploaded.path || ''
+    const remote = await persistGeneralSettings()
+    Object.assign(form, JSON.parse(JSON.stringify(remote)))
+    Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
+    toast.value = `${kind === 'logo' ? 'Logo' : 'Favicon'} uploaded and saved.`
+  } catch (error) {
+    form[urlKey] = previous.url
+    form[pathKey] = previous.path
+    toast.value = error.message || `Unable to upload ${kind}.`
+  } finally {
+    uploading.value[kind] = false
+    setTimeout(() => (toast.value = ''), 3000)
+  }
+}
 </script>
 
 <template>
@@ -54,6 +131,7 @@ function discard() {
     description="Manage your store profile, address, and branding details."
     :dirty="dirty()"
     :saving="saving"
+    :load-error="loadError"
     @save="save"
     @discard="discard"
   >
@@ -68,11 +146,11 @@ function discard() {
 
         <div class="field-grid">
           <label class="field"><span>Name</span><input v-model="form.storeName" placeholder="Beckie Deal Webstore" /></label>
-          <label class="field"><span>Store URL</span><input v-model="form.storeUrl" placeholder="beckiedeal.com" /></label>
+          <label class="field"><span>Store URL</span><input v-model="form.storeUrl" type="url" placeholder="https://beckiedeal.com" /></label>
           <label class="field"><span>Contact email</span><input v-model="form.contactEmail" type="email" placeholder="orders@yourstore.com" /></label>
           <label class="field"><span>Phone</span><input v-model="form.phone" placeholder="+855 12 345 678" /></label>
-          <label class="field"><span>Timezone</span><select v-model="form.timezone"><option value="Asia/Phnom_Penh">Asia/Phnom_Penh</option><option value="UTC">UTC</option><option value="America/Los_Angeles">America/Los_Angeles</option></select></label>
-          <label class="field"><span>Currency</span><select v-model="form.currency"><option value="USD">USD</option><option value="KHR">KHR</option><option value="THB">THB</option></select></label>
+          <label class="field"><span>Timezone</span><select v-model="form.timezone"><option value="Asia/Phnom_Penh">Asia/Phnom_Penh</option><option value="Asia/Bangkok">Asia/Bangkok</option><option value="UTC">UTC</option></select></label>
+          <label class="field"><span>Currency</span><select v-model="form.currency"><option value="USD">USD</option><option value="KHR">KHR</option></select></label>
           <label class="field"><span>Language</span><select v-model="form.language"><option value="English">English</option><option value="Khmer">Khmer</option></select></label>
           <label class="field"><span>Weight unit</span><select v-model="form.weightUnit"><option value="kg">kg</option><option value="lb">lb</option></select></label>
           <label class="field"><span>Length unit</span><select v-model="form.lengthUnit"><option value="cm">cm</option><option value="in">in</option></select></label>
@@ -107,19 +185,21 @@ function discard() {
 
         <div class="upload-grid">
           <div class="upload-box">
-            <div class="upload-box__preview dark"><span>Logo</span></div>
+            <div class="upload-box__preview dark"><img v-if="form.logoUrl" :src="form.logoUrl" alt="Store logo preview" /><span v-else>Logo</span></div>
             <div class="upload-box__details">
               <strong>Store logo</strong>
-              <small>PNG, JPG, WebP up to 2MB</small>
-              <button type="button">Upload logo</button>
+              <small>PNG, JPG, WebP up to 5MB</small>
+              <input ref="logoInput" class="file-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml" @change="uploadBrandAsset('logo', $event)" />
+              <button type="button" :disabled="uploading.logo" @click="logoInput?.click()">{{ uploading.logo ? 'Uploading…' : 'Upload logo' }}</button>
             </div>
           </div>
           <div class="upload-box">
-            <div class="upload-box__preview light"><span>Favicon</span></div>
+            <div class="upload-box__preview light"><img v-if="form.faviconUrl" :src="form.faviconUrl" alt="Favicon preview" /><span v-else>Favicon</span></div>
             <div class="upload-box__details">
               <strong>Favicon</strong>
-              <small>ICO or PNG up to 2MB</small>
-              <button type="button">Upload favicon</button>
+              <small>PNG, JPG, WebP up to 5MB</small>
+              <input ref="faviconInput" class="file-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml" @change="uploadBrandAsset('favicon', $event)" />
+              <button type="button" :disabled="uploading.favicon" @click="faviconInput?.click()">{{ uploading.favicon ? 'Uploading…' : 'Upload favicon' }}</button>
             </div>
           </div>
         </div>
@@ -240,6 +320,20 @@ function discard() {
 .upload-box__preview.light {
   background: #f6f2e7;
   color: #1f1f1f;
+}
+
+.upload-box__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
 }
 
 .upload-box__details {

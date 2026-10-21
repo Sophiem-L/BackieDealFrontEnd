@@ -10,7 +10,7 @@ export const SETTINGS_LINKS = [
 
 export const generalMock = {
   storeName: 'Beckie Deal Webstore',
-  storeUrl: 'beckiedeal.com',
+  storeUrl: 'https://beckiedeal.com',
   contactEmail: 'orders@yourstore.com',
   phone: '+855 12 345 678',
   timezone: 'Asia/Phnom_Penh',
@@ -20,15 +20,13 @@ export const generalMock = {
   lengthUnit: 'cm',
   businessAddress: '15 Street 184, Phnom Penh, Cambodia',
   country: 'Cambodia',
+  logoUrl: '',
+  logoPath: '',
+  faviconUrl: '',
+  faviconPath: '',
 }
 
 export const paymentsMock = {
-  providers: [
-    { id: 'cod', name: 'Cash on delivery', status: 'Active', enabled: true, mode: 'Live', connected: true },
-    { id: 'bank', name: 'Bank transfer', status: 'Needs setup', enabled: false, mode: 'Test', connected: false },
-    { id: 'card', name: 'Card', status: 'Active', enabled: true, mode: 'Live', connected: true },
-    { id: 'paypal', name: 'PayPal', status: 'Inactive', enabled: false, mode: 'Test', connected: false },
-  ],
   minimumOrder: 15,
   instructions: 'Please pay the total upon delivery and keep the receipt for confirmation.',
 }
@@ -82,15 +80,12 @@ export const teamMock = {
 
 export const integrationsMock = {
   cards: [
-    { id: 'analytics', name: 'Analytics', status: 'Connected', description: 'Track orders, traffic, and conversions', enabled: true },
+    { id: 'analytics', name: 'Analytics', status: 'Not connected', description: 'Track orders, traffic, and conversions', enabled: false },
     { id: 'facebook', name: 'Facebook Pixel', status: 'Not connected', description: 'Track ad conversions and retargeting', enabled: false },
-    { id: 'telegram', name: 'Telegram', status: 'Connected', description: 'Send order and stock alerts', enabled: true },
+    { id: 'telegram', name: 'Telegram', status: 'Not connected', description: 'Send order and stock alerts', enabled: false },
     { id: 'email', name: 'Email service', status: 'Needs setup', description: 'Sync product emails and automation', enabled: false },
-    { id: 'maps', name: 'Google Maps', status: 'Connected', description: 'Store location and directions', enabled: true },
-    { id: 'webhooks', name: 'Webhooks', status: 'Connected', description: 'Sent to fulfillment and CRM tools', enabled: true },
+    { id: 'maps', name: 'Google Maps', status: 'Not connected', description: 'Store location and directions', enabled: false },
+    { id: 'webhooks', name: 'Webhooks', status: 'Not connected', description: 'Send events to fulfillment and CRM tools', enabled: false },
   ],
-  webhooks: [
-    { endpoint: 'https://hooks.example.com/shipments', events: 'Order shipped', secret: '••••••••', status: 'Healthy' },
-    { endpoint: 'https://hooks.example.com/inventory', events: 'Low stock', secret: '••••••••', status: 'Failed 2h ago' },
-  ],
+  webhooks: [],
 }

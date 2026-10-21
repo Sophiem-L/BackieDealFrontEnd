@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import BaseButton from '@/components/BaseButton.vue'
 import { useAuthStore } from '@/stores/auth'
 import { fetchSettingsSection, saveSettingsSection, FALLBACK_SETTINGS } from '@/services/settingsApi.js'
 import SettingsShell from '@/views/settings/SettingsShell.vue'
@@ -10,6 +11,9 @@ const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
 const toast = ref('')
+const loadError = ref('')
+const newRecipient = ref('')
+const recipientError = ref('')
 const dirty = () => JSON.stringify(form) !== JSON.stringify(initialState.value)
 
 onMounted(async () => {
@@ -18,6 +22,7 @@ onMounted(async () => {
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
   } catch (error) {
+    loadError.value = error.message || 'Notification settings could not be loaded from the API. Saving is disabled.'
     console.warn('Notification settings failed to load from API.', error)
   }
 })
@@ -44,6 +49,21 @@ function discard() {
   toast.value = 'Changes discarded.'
   setTimeout(() => (toast.value = ''), 1400)
 }
+
+function addRecipient() {
+  const email = newRecipient.value.trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    recipientError.value = 'Enter a valid email address.'
+    return
+  }
+  if (form.recipients.some((recipient) => recipient.toLowerCase() === email)) {
+    recipientError.value = 'This recipient is already listed.'
+    return
+  }
+  form.recipients.push(email)
+  newRecipient.value = ''
+  recipientError.value = ''
+}
 </script>
 
 <template>
@@ -53,6 +73,7 @@ function discard() {
     description="Control alerts, recpients, and transactional messaging across your store."
     :dirty="dirty()"
     :saving="saving"
+    :load-error="loadError"
     @save="save"
     @discard="discard"
   >
@@ -95,13 +116,18 @@ function discard() {
       </div>
 
       <div class="chip-list">
-        <span v-for="recipient in form.recipients" :key="recipient" class="chip">{{ recipient }}</span>
+        <span v-for="(recipient, index) in form.recipients" :key="recipient" class="chip">{{ recipient }}<button type="button" :aria-label="`Remove ${recipient}`" @click="form.recipients.splice(index, 1)">×</button></span>
       </div>
 
       <div class="field-grid">
         <label class="field"><span>Sender name</span><input v-model="form.senderName" placeholder="Beckie Deal" /></label>
-        <label class="field"><span>Reply-to</span><input v-model="form.replyTo" placeholder="support@beckiedeal.com" /></label>
+        <label class="field"><span>Reply-to</span><input v-model="form.replyTo" type="email" placeholder="support@beckiedeal.com" /></label>
       </div>
+      <form class="recipient-form" @submit.prevent="addRecipient">
+        <label class="field"><span>Add email recipient</span><input v-model="newRecipient" type="email" placeholder="name@example.com" /></label>
+        <BaseButton type="submit" variant="ghost">Add recipient</BaseButton>
+      </form>
+      <p v-if="recipientError" class="recipient-error" role="alert">{{ recipientError }}</p>
     </section>
 
     <div v-if="toast" class="settings-toast" role="status">{{ toast }}</div>
@@ -182,6 +208,13 @@ input[type='checkbox'] {
   font-size: 0.75rem;
 }
 
+.chip button { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; }
+.chip button:hover { background: var(--surface-hover); color: var(--text-strong); }
+.recipient-form { display: flex; align-items: end; gap: 0.75rem; max-width: 540px; margin-top: 1rem; }
+.recipient-form .field { flex: 1; }
+.recipient-form :deep(.btn) { min-height: 42px; }
+.recipient-error { margin: 0.5rem 0 0; color: var(--danger); font-size: 0.78rem; }
+
 .field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -228,5 +261,6 @@ input[type='checkbox'] {
   .field-grid {
     grid-template-columns: 1fr;
   }
+  .recipient-form { align-items: stretch; flex-direction: column; }
 }
 </style>

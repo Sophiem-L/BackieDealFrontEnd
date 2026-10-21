@@ -32,12 +32,19 @@ const SECTION_KEY_MAP = {
     lengthUnit: 'length_unit',
     businessAddress: 'business_address',
     country: 'country',
+    logoUrl: 'logo_url',
+    logoPath: 'logo_path',
+    faviconUrl: 'favicon_url',
+    faviconPath: 'favicon_path',
   },
   payments: {
     minimumOrder: 'minimum_order',
     instructions: 'instructions',
   },
   shipping: {
+    zones: 'zones',
+    delivery: 'delivery',
+    warehouse: 'warehouse',
     packageWeight: 'package_weight',
     freeShippingThreshold: 'free_shipping_threshold',
   },
@@ -45,13 +52,19 @@ const SECTION_KEY_MAP = {
     pricesIncludeTax: 'prices_include_tax',
     showTaxAtCheckout: 'show_tax_at_checkout',
     taxId: 'tax_id',
+    rates: 'rates',
   },
   notifications: {
+    rows: 'rows',
+    recipients: 'recipients',
     senderName: 'sender_name',
     replyTo: 'reply_to',
   },
   team: {},
-  integrations: {},
+  integrations: {
+    cards: 'cards',
+    webhooks: 'webhooks',
+  },
 }
 
 function clone(value) {
@@ -78,6 +91,10 @@ function normalizeSection(section, value) {
         lengthUnit: source.length_unit ?? source.lengthUnit ?? fallback.lengthUnit ?? 'cm',
         businessAddress: source.business_address ?? source.businessAddress ?? fallback.businessAddress ?? '',
         country: source.country ?? fallback.country ?? 'Cambodia',
+        logoUrl: source.logo_url ?? source.logoUrl ?? fallback.logoUrl ?? '',
+        logoPath: source.logo_path ?? source.logoPath ?? fallback.logoPath ?? '',
+        faviconUrl: source.favicon_url ?? source.faviconUrl ?? fallback.faviconUrl ?? '',
+        faviconPath: source.favicon_path ?? source.faviconPath ?? fallback.faviconPath ?? '',
       }
     case 'payments':
       return {
@@ -100,6 +117,10 @@ function normalizeSection(section, value) {
         pricesIncludeTax: source.prices_include_tax ?? source.pricesIncludeTax ?? fallback.pricesIncludeTax ?? false,
         showTaxAtCheckout: source.show_tax_at_checkout ?? source.showTaxAtCheckout ?? fallback.showTaxAtCheckout ?? false,
         taxId: source.tax_id ?? source.taxId ?? fallback.taxId ?? '',
+        rates: Array.isArray(source.rates) ? source.rates.map((rate) => ({
+          ...rate,
+          appliesTo: rate.applies_to ?? rate.appliesTo ?? '',
+        })) : fallback.rates,
       }
     case 'notifications':
       return {
@@ -149,6 +170,13 @@ function denormalizeSection(section, value) {
     }))
   }
 
+  if (section === 'taxes' && Array.isArray(source.rates)) {
+    mapped.rates = source.rates.map((rate) => {
+      const { appliesTo, ...rest } = rate
+      return { ...rest, applies_to: rate.applies_to ?? appliesTo ?? '' }
+    })
+  }
+
   if (section === 'general' && source.businessAddress !== undefined) {
     mapped.business_address = source.businessAddress
   }
@@ -157,14 +185,10 @@ function denormalizeSection(section, value) {
 }
 
 export async function fetchSettingsSection(section, token) {
-  try {
-    const response = await apiFetch('/admin/settings', { token })
-    const sectionData = response?.data?.settings?.[section] ?? response?.settings?.[section] ?? FALLBACK_SETTINGS[section]
-    return normalizeSection(section, sectionData)
-  } catch (error) {
-    console.warn(`Settings API unavailable for ${section}; using local fallback values.`, error)
-    return clone(FALLBACK_SETTINGS[section])
-  }
+  const response = await apiFetch('/admin/settings', { token })
+  const sectionData = response?.data?.settings?.[section] ?? response?.settings?.[section]
+  if (!sectionData) throw new Error(`The API did not return the ${section} settings section.`)
+  return normalizeSection(section, sectionData)
 }
 
 export async function saveSettingsSection(section, payload, token) {
@@ -187,4 +211,56 @@ export async function saveSettingsSection(section, payload, token) {
     console.warn(`Unable to save ${section} settings via API.`, error)
     throw error
   }
+}
+
+export async function fetchStoreSettings(token) {
+  const response = await apiFetch('/admin/settings/store', { token })
+  return response?.data ?? {}
+}
+
+export async function saveStoreSettings(payload, token) {
+  const response = await apiFetch('/admin/settings/store', {
+    method: 'PATCH',
+    token,
+    body: payload,
+  })
+  return response?.data ?? {}
+}
+
+export async function checkPaywayConnection(token) {
+  const response = await apiFetch('/admin/settings/store/payway/check', {
+    method: 'POST',
+    token,
+  })
+  return response?.data?.payway ?? null
+}
+
+export async function fetchShippingMethods(token) {
+  const response = await apiFetch('/admin/shipping-methods', { token })
+  return response?.data ?? []
+}
+
+export async function createShippingMethod(payload, token) {
+  const response = await apiFetch('/admin/shipping-methods', {
+    method: 'POST',
+    token,
+    body: payload,
+  })
+  return response?.data ?? null
+}
+
+export async function updateShippingMethod(id, payload, token) {
+  const response = await apiFetch(`/admin/shipping-methods/${id}`, {
+    method: 'PATCH',
+    token,
+    body: payload,
+  })
+  return response?.data ?? null
+}
+
+export async function deleteShippingMethod(id, token) {
+  return apiFetch(`/admin/shipping-methods/${id}`, {
+    method: 'DELETE',
+    token,
+  })
 }

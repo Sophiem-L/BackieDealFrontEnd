@@ -29,7 +29,7 @@ export const NAV_SECTIONS = [
       { label: 'Stock Management', icon: 'stock', to: '/stock', permission: 'stock.view' },
       {
         label: 'Serial Numbers',
-        icon: 'stock',
+        icon: 'serials',
         to: '/serials',
         permission: 'product-serials.view',
       },

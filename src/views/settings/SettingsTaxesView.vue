@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { fetchSettingsSection, saveSettingsSection, FALLBACK_SETTINGS } from '@/services/settingsApi.js'
 import SettingsShell from '@/views/settings/SettingsShell.vue'
@@ -10,6 +10,16 @@ const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
 const toast = ref('')
+const loadError = ref('')
+const currency = ref('USD')
+const previewAmount = ref(150)
+const previewRegion = ref(fallback.rates[0]?.region || '')
+const selectedRate = computed(() => form.rates.find((rate) => rate.region === previewRegion.value)?.rate ?? 0)
+const taxAmount = computed(() => {
+  const rate = Number(selectedRate.value) || 0
+  const amount = Number(previewAmount.value) || 0
+  return form.pricesIncludeTax ? amount * rate / (100 + rate) : amount * rate / 100
+})
 
 const dirty = () => JSON.stringify(form) !== JSON.stringify(initialState.value)
 
@@ -18,7 +28,15 @@ onMounted(async () => {
     const remote = await fetchSettingsSection('taxes', auth.accessToken)
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
+    previewRegion.value = remote.rates[0]?.region || ''
+    try {
+      const generalSettings = await fetchSettingsSection('general', auth.accessToken)
+      currency.value = generalSettings.currency || 'USD'
+    } catch {
+      currency.value = 'USD'
+    }
   } catch (error) {
+    loadError.value = error.message || 'Tax settings could not be loaded from the API. Saving is disabled.'
     console.warn('Tax settings failed to load from API.', error)
   }
 })
@@ -45,6 +63,14 @@ function discard() {
   toast.value = 'Changes discarded.'
   setTimeout(() => (toast.value = ''), 1400)
 }
+
+function addRate() {
+  form.rates.push({ region: '', name: '', rate: 0, appliesTo: '' })
+}
+
+function formatMoney(amount) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency.value }).format(amount)
+}
 </script>
 
 <template>
@@ -54,6 +80,7 @@ function discard() {
     description="Review tax rules and preview the final tax charge for customers."
     :dirty="dirty()"
     :saving="saving"
+    :load-error="loadError"
     @save="save"
     @discard="discard"
   >
@@ -98,20 +125,22 @@ function discard() {
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Region</th><th>Name</th><th>Rate %</th><th>Applies to</th></tr>
+            <tr><th>Region</th><th>Name</th><th>Rate %</th><th>Applies to</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            <tr v-for="rate in form.rates" :key="rate.name">
-              <td>{{ rate.region }}</td>
-              <td>{{ rate.name }}</td>
-              <td>{{ rate.rate }}%</td>
-              <td>{{ rate.appliesTo }}</td>
+            <tr v-for="(rate, index) in form.rates" :key="`${rate.name}-${index}`">
+              <td><input v-model="rate.region" aria-label="Rate region" /></td>
+              <td><input v-model="rate.name" aria-label="Rate name" /></td>
+              <td><input v-model.number="rate.rate" type="number" min="0" max="100" step="0.01" aria-label="Tax rate percent" /></td>
+              <td><input v-model="rate.appliesTo" aria-label="Tax applies to" /></td>
+              <td><button class="inline-button inline-button--danger" type="button" :aria-label="`Remove ${rate.name || 'tax rate'}`" @click="form.rates.splice(index, 1)">Remove</button></td>
             </tr>
+            <tr v-if="!form.rates.length"><td colspan="5" class="empty-rates">No tax rates configured.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <button class="inline-button" type="button">Add tax rate</button>
+      <button class="inline-button" type="button" @click="addRate">Add tax rate</button>
     </section>
 
     <section class="settings-card">
@@ -124,16 +153,16 @@ function discard() {
 
       <div class="preview-box">
         <div class="preview-box__line">
-          <span>Price</span>
-          <strong>$150.00</strong>
+          <label for="tax-preview-amount">Price</label>
+          <input id="tax-preview-amount" v-model.number="previewAmount" type="number" min="0" step="0.01" />
         </div>
         <div class="preview-box__line">
           <span>Region</span>
-          <strong>Cambodia</strong>
+          <select v-model="previewRegion" aria-label="Preview tax region"><option v-for="region in [...new Set(form.rates.map((rate) => rate.region).filter(Boolean))]" :key="region" :value="region">{{ region }}</option></select>
         </div>
         <div class="preview-box__line preview-box__line--total">
           <span>Tax</span>
-          <strong>$15.00</strong>
+          <strong>{{ formatMoney(taxAmount) }}</strong>
         </div>
       </div>
     </section>
@@ -247,6 +276,18 @@ table {
   border-collapse: collapse;
 }
 
+table input {
+  width: 100%;
+  min-width: 85px;
+  min-height: 36px;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--text-strong);
+  font: inherit;
+}
+
 th, td {
   padding: 0.75rem 0.6rem;
   text-align: left;
@@ -272,6 +313,9 @@ th {
   cursor: pointer;
 }
 
+.inline-button--danger { color: var(--danger); }
+.empty-rates { color: var(--text-muted); text-align: center; }
+
 .preview-box {
   display: grid;
   gap: 0.6rem;
@@ -286,6 +330,17 @@ th {
   justify-content: space-between;
   gap: 1rem;
   color: var(--text-body);
+}
+
+.preview-box__line input,
+.preview-box__line select {
+  width: min(55%, 180px);
+  min-height: 34px;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-strong);
 }
 
 .preview-box__line--total {
