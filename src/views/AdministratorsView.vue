@@ -231,8 +231,14 @@ async function loadAdministrators() {
   try {
     const response = await fetchAdministrators(auth.accessToken, currentPage.value, perPage.value)
     const payload = response?.data
-    const items = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : []
-    const meta = Array.isArray(payload) ? null : payload?.meta
+    const items = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : []
+    const meta = Array.isArray(payload) ? null : payload?.pagination || payload?.meta
 
     administrators.value = items
     totalPages.value = meta?.last_page || 1

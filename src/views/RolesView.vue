@@ -129,7 +129,8 @@
                     v-if="auth.hasPermission('roles.update')"
                     type="button"
                     class="icon-btn"
-                    title="Edit role"
+                    :title="`Edit ${roleItem.name}`"
+                    :aria-label="`Edit ${roleItem.name}`"
                     @click="router.push(`/roles/${roleItem.id}/edit`)"
                   >
                     <svg viewBox="0 0 24 24" fill="none">
@@ -140,7 +141,8 @@
                     v-if="auth.hasPermission('roles.delete')"
                     type="button"
                     class="icon-btn icon-btn--danger"
-                    title="Delete role"
+                    :title="`Delete ${roleItem.name}`"
+                    :aria-label="`Delete ${roleItem.name}`"
                     @click="deleteRole(roleItem)"
                   >
                     <svg viewBox="0 0 24 24" fill="none">
@@ -652,7 +654,7 @@ async function savePermissions() {
 .row-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 0.4rem;
 }
 
@@ -668,9 +670,42 @@ async function savePermissions() {
   border-radius: 8px;
   color: var(--text-muted);
   cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
 
-  &:hover:not(:disabled) { background: var(--surface-alt); color: var(--text-strong); }
-  &--danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+  svg {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    stroke-width: 1.8;
+  }
+
+  &:hover:not(:disabled) {
+    background: var(--surface-alt);
+    color: var(--text-strong);
+    border-color: var(--border);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.25);
+    border-color: rgb(var(--accent-rgb));
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &--danger {
+    color: var(--danger);
+    border-color: var(--danger-border);
+
+    &:hover:not(:disabled) {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border-color: var(--danger);
+    }
+  }
 }
 
 .pagination {

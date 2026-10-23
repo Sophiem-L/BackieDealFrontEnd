@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import BaseButton from '@/components/BaseButton.vue'
 import { useAuthStore } from '@/stores/auth'
 import { fetchSettingsSection, saveSettingsSection, FALLBACK_SETTINGS } from '@/services/settingsApi.js'
 import SettingsShell from '@/views/settings/SettingsShell.vue'
@@ -10,6 +11,8 @@ const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
 const toast = ref('')
+const loadError = ref('')
+const webhookDraft = reactive({ endpoint: '', events: '' })
 const dirty = () => JSON.stringify(form) !== JSON.stringify(initialState.value)
 
 onMounted(async () => {
@@ -18,6 +21,7 @@ onMounted(async () => {
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
   } catch (error) {
+    loadError.value = error.message || 'Integration settings could not be loaded from the API. Saving is disabled.'
     console.warn('Integration settings failed to load from API.', error)
   }
 })
@@ -44,6 +48,17 @@ function discard() {
   toast.value = 'Changes discarded.'
   setTimeout(() => (toast.value = ''), 1400)
 }
+
+function addWebhook() {
+  const endpoint = webhookDraft.endpoint.trim()
+  if (!endpoint || !/^https:\/\//i.test(endpoint) || !webhookDraft.events.trim()) return
+  if (form.webhooks.some((webhook) => webhook.endpoint === endpoint)) {
+    toast.value = 'This endpoint is already configured.'
+    return
+  }
+  form.webhooks.push({ endpoint, events: webhookDraft.events.trim(), status: 'Saved' })
+  Object.assign(webhookDraft, { endpoint: '', events: '' })
+}
 </script>
 
 <template>
@@ -53,6 +68,7 @@ function discard() {
     description="Connect analytics, messaging, and webhook tools for your storefront workflow."
     :dirty="dirty()"
     :saving="saving"
+    :load-error="loadError"
     @save="save"
     @discard="discard"
   >
@@ -60,7 +76,7 @@ function discard() {
       <div class="settings-section__header">
         <div>
           <p class="settings-section__eyebrow">Connections</p>
-          <h2>Connected tools</h2>
+          <h2>Available integrations</h2>
         </div>
       </div>
 
@@ -68,11 +84,11 @@ function discard() {
         <div v-for="card in form.cards" :key="card.id" class="integration-card">
           <div class="integration-card__top">
             <span class="integration-card__icon">{{ card.name.charAt(0) }}</span>
-            <span :class="['status-pill', card.status === 'Connected' ? 'status-pill--active' : card.status === 'Not connected' ? 'status-pill--inactive' : 'status-pill--needs']">{{ card.status }}</span>
+              <span :class="['status-pill', card.enabled ? 'status-pill--active' : 'status-pill--inactive']">{{ card.enabled ? 'Enabled' : 'Disabled' }}</span>
           </div>
           <strong>{{ card.name }}</strong>
           <small>{{ card.description }}</small>
-          <button type="button">{{ card.enabled ? 'Manage' : 'Connect' }}</button>
+            <label class="integration-toggle"><input v-model="card.enabled" type="checkbox" :aria-label="`${card.enabled ? 'Disable' : 'Enable'} ${card.name}`" /><span>{{ card.enabled ? 'Enabled in settings' : 'Enable in settings' }}</span></label>
         </div>
       </div>
     </section>
@@ -88,20 +104,26 @@ function discard() {
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Endpoint</th><th>Events</th><th>Secret</th><th>Status</th></tr>
+            <tr><th>Endpoint</th><th>Events</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            <tr v-for="item in form.webhooks" :key="item.endpoint">
+            <tr v-for="(item, index) in form.webhooks" :key="item.endpoint">
               <td>{{ item.endpoint }}</td>
               <td>{{ item.events }}</td>
-              <td>{{ item.secret }}</td>
-              <td>{{ item.status }}</td>
+              <td>Saved</td>
+              <td><button class="inline-button inline-button--danger" type="button" :aria-label="`Remove webhook ${item.endpoint}`" @click="form.webhooks.splice(index, 1)">Remove</button></td>
             </tr>
+            <tr v-if="!form.webhooks.length"><td colspan="4" class="empty-webhooks">No webhook endpoints configured.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <button class="inline-button" type="button">Add webhook</button>
+      <form class="webhook-form" @submit.prevent="addWebhook">
+        <label class="field"><span>HTTPS endpoint</span><input v-model="webhookDraft.endpoint" type="url" placeholder="https://example.com/webhooks/orders" required /></label>
+        <label class="field"><span>Events</span><input v-model="webhookDraft.events" placeholder="orders.created, orders.shipped" required /></label>
+        <BaseButton type="submit" variant="ghost">Add webhook</BaseButton>
+      </form>
+      <p class="integration-note">These integration flags and webhook definitions are saved to settings. External connections and event delivery require provider credentials and a dispatcher.</p>
     </section>
 
     <div v-if="toast" class="settings-toast" role="status">{{ toast }}</div>
@@ -182,6 +204,8 @@ function discard() {
 .status-pill--active { background: rgba(34,197,94,0.12); color: #86efac; }
 .status-pill--inactive { background: rgba(148,163,184,0.12); color: #cbd5e1; }
 .status-pill--needs { background: rgba(234,179,8,0.12); color: #facc15; }
+.integration-toggle { display: flex; align-items: center; gap: 0.5rem; color: var(--text-body); font-size: 0.76rem; }
+.integration-toggle input { width: 17px; height: 17px; accent-color: rgb(var(--accent-rgb)); }
 
 .integration-card strong {
   color: var(--text-strong);
@@ -205,6 +229,12 @@ function discard() {
   font: inherit;
   cursor: pointer;
 }
+
+.inline-button--danger { color: var(--danger); }
+.empty-webhooks { padding: 1.1rem; color: var(--text-muted); text-align: center; }
+.webhook-form { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 0.75rem; margin-top: 1rem; }
+.webhook-form :deep(.btn) { min-height: 42px; }
+.integration-note { margin: 0.8rem 0 0; color: var(--text-muted); font-size: 0.75rem; }
 
 .table-wrap {
   overflow-x: auto;
@@ -250,5 +280,6 @@ th {
   .card-grid {
     grid-template-columns: 1fr;
   }
+  .webhook-form { grid-template-columns: 1fr; }
 }
 </style>

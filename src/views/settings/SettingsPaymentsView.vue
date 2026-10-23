@@ -1,7 +1,14 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { fetchSettingsSection, saveSettingsSection, FALLBACK_SETTINGS } from '@/services/settingsApi.js'
+import {
+  checkPaywayConnection,
+  fetchSettingsSection,
+  fetchStoreSettings,
+  saveSettingsSection,
+  saveStoreSettings,
+  FALLBACK_SETTINGS,
+} from '@/services/settingsApi.js'
 import SettingsShell from '@/views/settings/SettingsShell.vue'
 
 const auth = useAuthStore()
@@ -10,15 +17,33 @@ const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
 const toast = ref('')
+const loadError = ref('')
+const storeSettings = ref(null)
+const paymentMethods = ref(['cod'])
+const initialPaymentMethods = ref(['cod'])
+const checkingPayway = ref(false)
+
+const providers = [
+  { id: 'aba_payway', name: 'ABA PayWay', description: 'Online payments through ABA', mode: 'Live' },
+  { id: 'cod', name: 'Cash on delivery', description: 'Collect payment at delivery', mode: 'Manual' },
+]
 
 const dirty = () => JSON.stringify(form) !== JSON.stringify(initialState.value)
+  || JSON.stringify(paymentMethods.value) !== JSON.stringify(initialPaymentMethods.value)
 
 onMounted(async () => {
   try {
-    const remote = await fetchSettingsSection('payments', auth.accessToken)
+    const [remote, storeRemote] = await Promise.all([
+      fetchSettingsSection('payments', auth.accessToken),
+      fetchStoreSettings(auth.accessToken),
+    ])
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
+    storeSettings.value = storeRemote
+    paymentMethods.value = storeRemote.settings?.payment_methods || ['cod']
+    initialPaymentMethods.value = [...paymentMethods.value]
   } catch (error) {
+    loadError.value = error.message || 'Payment settings could not be loaded from the API. Saving is disabled.'
     console.warn('Payment settings failed to load from API.', error)
   }
 })
@@ -27,9 +52,14 @@ async function save() {
   saving.value = true
 
   try {
-    const remote = await saveSettingsSection('payments', form, auth.accessToken)
+    const [remote, storeRemote] = await Promise.all([
+      saveSettingsSection('payments', form, auth.accessToken),
+      saveStoreSettings({ payment_methods: paymentMethods.value }, auth.accessToken),
+    ])
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
+    storeSettings.value = { ...storeSettings.value, ...storeRemote }
+    initialPaymentMethods.value = [...paymentMethods.value]
     toast.value = 'Payment settings saved.'
   } catch (error) {
     toast.value = 'Unable to save payment settings right now.'
@@ -42,8 +72,50 @@ async function save() {
 
 function discard() {
   Object.assign(form, JSON.parse(JSON.stringify(initialState.value)))
+  paymentMethods.value = storeSettings.value?.settings?.payment_methods || ['cod']
+  initialPaymentMethods.value = [...paymentMethods.value]
   toast.value = 'Changes discarded.'
   setTimeout(() => (toast.value = ''), 1400)
+}
+
+function togglePaymentMethod(id, enabled) {
+  const methods = new Set(paymentMethods.value)
+  if (enabled) methods.add(id)
+  else methods.delete(id)
+  if (!methods.size) {
+    toast.value = 'At least one payment method must remain enabled.'
+    return
+  }
+  paymentMethods.value = [...methods]
+}
+
+async function configureProvider(id) {
+  if (id !== 'aba_payway') {
+    document.getElementById('payment-instructions')?.focus()
+    return
+  }
+
+  checkingPayway.value = true
+  try {
+    const result = await checkPaywayConnection(auth.accessToken)
+    toast.value = result?.connected ? 'ABA PayWay connection verified.' : 'ABA PayWay is not configured on the server.'
+  } catch (error) {
+    toast.value = error.message || 'Unable to check ABA PayWay connection.'
+  } finally {
+    checkingPayway.value = false
+    setTimeout(() => (toast.value = ''), 3000)
+  }
+}
+
+function providerStatus(id) {
+  const enabled = paymentMethods.value.includes(id)
+  const connected = id === 'cod' || Boolean(storeSettings.value?.payway?.connected)
+  if (!enabled) return 'Inactive'
+  return connected ? 'Active' : 'Needs setup'
+}
+
+function providerStatusClass(id) {
+  return `status-pill--${providerStatus(id).toLowerCase().replace(/\s+/g, '-')}`
 }
 </script>
 
@@ -54,6 +126,7 @@ function discard() {
     description="Configure payment providers, checkout rules, and transaction settings."
     :dirty="dirty()"
     :saving="saving"
+    :load-error="loadError"
     @save="save"
     @discard="discard"
   >
@@ -66,22 +139,23 @@ function discard() {
       </div>
 
       <div class="provider-grid">
-        <div v-for="provider in form.providers" :key="provider.id" class="provider-card">
+        <div v-for="provider in providers" :key="provider.id" class="provider-card">
           <div class="provider-card__head">
             <span class="provider-card__logo">{{ provider.name.slice(0, 1) }}</span>
             <div>
               <strong>{{ provider.name }}</strong>
-              <span :class="['status-pill', `status-pill--${provider.status.toLowerCase().replace(/\s+/g, '-')}`]">{{ provider.status }}</span>
+              <span :class="['status-pill', providerStatusClass(provider.id)]">{{ providerStatus(provider.id) }}</span>
             </div>
           </div>
+          <small class="provider-description">{{ provider.description }}</small>
           <div class="provider-card__meta">
             <label class="switch">
-              <input v-model="provider.enabled" type="checkbox" />
+              <input :checked="paymentMethods.includes(provider.id)" type="checkbox" :aria-label="`Enable ${provider.name}`" @change="togglePaymentMethod(provider.id, $event.target.checked)" />
               <span />
             </label>
             <span class="mode-badge">{{ provider.mode }}</span>
           </div>
-          <button type="button">Configure</button>
+          <button type="button" :disabled="checkingPayway" @click="configureProvider(provider.id)">{{ provider.id === 'aba_payway' ? (checkingPayway ? 'Checking…' : 'Check connection') : 'Edit instructions' }}</button>
         </div>
       </div>
     </section>
@@ -96,7 +170,7 @@ function discard() {
 
       <div class="field-grid">
         <label class="field"><span>Minimum order amount</span><input v-model="form.minimumOrder" type="number" placeholder="15" /></label>
-        <label class="field field--wide"><span>Payment instructions</span><textarea v-model="form.instructions" rows="3" placeholder="Please pay the total upon delivery..." /></label>
+        <label class="field field--wide"><span>Payment instructions</span><textarea id="payment-instructions" v-model="form.instructions" rows="3" placeholder="Please pay the total upon delivery..." /></label>
       </div>
     </section>
 
