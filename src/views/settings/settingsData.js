@@ -4,8 +4,6 @@ export const SETTINGS_LINKS = [
   { label: 'Shipping', to: '/settings/shipping', icon: 'shipping', description: 'Zones, delivery, packaging', permission: null },
   { label: 'Taxes', to: '/settings/taxes', icon: 'taxes', description: 'Tax settings and rates', permission: null },
   { label: 'Notifications', to: '/settings/notifications', icon: 'notifications', description: 'Alerts and recipients', permission: null },
-  { label: 'Team', to: '/settings/team', icon: 'team', description: 'Members and permissions', permission: null },
-  { label: 'Integrations', to: '/settings/integrations', icon: 'integrations', description: 'Analytics and webhooks', permission: null },
 ]
 
 export const generalMock = {
