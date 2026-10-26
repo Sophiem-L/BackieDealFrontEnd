@@ -1,29 +1,50 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ACCEPT_ATTR, uploadImage, validateImageFile } from '@/services/media'
+import { SLIDE_TRANSITION_GROUPS as transitionGroups } from '@/services/slides'
 import { useAuthStore } from '@/stores/auth'
 
 // Editor for a slide's ordered image list. Frame 1 is the cover, so order
 // matters; playback settings only appear once there is something to play.
+//
+// `transitions` runs parallel to `images`: entry i is how image i comes in.
+// `transition` is the slide's default, given to images that have no entry yet
+// and to every image uploaded from here.
 const props = defineProps({
   images: { type: Array, default: () => [] },
   durationMs: { type: Number, default: 3000 },
+  transitions: { type: Array, default: () => [] },
   transition: { type: String, default: 'fade' },
 })
 
-const emit = defineEmits(['update:images', 'update:durationMs', 'update:transition'])
+const emit = defineEmits([
+  'update:images',
+  'update:durationMs',
+  'update:transitions',
+  'update:transition',
+])
 
 const durations = [2000, 3000, 5000]
-const transitions = [
-  { value: 'fade', label: 'Fade' },
-  { value: 'cut', label: 'Cut' },
-]
 
 const auth = useAuthStore()
 
 const fileInput = ref(null)
 const uploading = ref(0)
 const error = ref('')
+
+function transitionAt(index) {
+  return props.transitions[index] ?? props.transition
+}
+
+/** One entry per image, so a list that is short or missing never leaves gaps. */
+function transitionList() {
+  return props.images.map((_, i) => transitionAt(i))
+}
+
+const allSame = computed(() => {
+  const list = transitionList()
+  return list.every((t) => t === list[0]) ? list[0] : null
+})
 
 const summary = computed(() => {
   const count = props.images.length
@@ -83,13 +104,21 @@ async function onFiles(event) {
     }
   }
 
-  if (uploaded.length) emit('update:images', [...props.images, ...uploaded])
+  if (uploaded.length) {
+    emit('update:transitions', [...transitionList(), ...uploaded.map(() => props.transition)])
+    emit('update:images', [...props.images, ...uploaded])
+  }
   if (failures.length) error.value = failures.join(' ')
 }
 
+// A transition belongs to its image, so it follows the image when the list is
+// reordered and leaves with it when the image is removed.
 function removeImage(index) {
   const next = [...props.images]
   next.splice(index, 1)
+  const nextTransitions = transitionList()
+  nextTransitions.splice(index, 1)
+  emit('update:transitions', nextTransitions)
   emit('update:images', next)
 }
 
@@ -97,7 +126,21 @@ function moveImage(index, offset) {
   const target = index + offset
   const next = [...props.images]
   ;[next[index], next[target]] = [next[target], next[index]]
+  const nextTransitions = transitionList()
+  ;[nextTransitions[index], nextTransitions[target]] = [nextTransitions[target], nextTransitions[index]]
+  emit('update:transitions', nextTransitions)
   emit('update:images', next)
+}
+
+function setTransition(index, value) {
+  const next = transitionList()
+  next[index] = value
+  emit('update:transitions', next)
+}
+
+function setAllTransitions(value) {
+  emit('update:transition', value)
+  emit('update:transitions', props.images.map(() => value))
 }
 </script>
 
@@ -179,19 +222,44 @@ function moveImage(index, offset) {
       </div>
 
       <div class="settings__row">
-        <span class="settings__label">Transition</span>
-        <div class="settings__options">
-          <button
-            v-for="t in transitions"
-            :key="t.value"
-            type="button"
-            class="settings__option"
-            :class="{ 'settings__option--active': transition === t.value }"
-            @click="emit('update:transition', t.value)"
-          >
-            {{ t.label }}
-          </button>
-        </div>
+        <label class="settings__label" for="transition-all">Set every image to</label>
+        <select
+          id="transition-all"
+          class="settings__select"
+          :value="allSame ?? ''"
+          @change="setAllTransitions($event.target.value)"
+        >
+          <option v-if="allSame === null" value="" disabled>Mixed</option>
+          <optgroup v-for="group in transitionGroups" :key="group.label" :label="group.label">
+            <option v-for="t in group.options" :key="t.value" :value="t.value">{{ t.label }}</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="settings__row">
+        <span class="settings__label">Transition per image</span>
+        <ul class="per-image">
+          <li v-for="(src, i) in images" :key="`${i}-${src}`" class="per-image__row">
+            <img :src="src" alt="" class="per-image__thumb" />
+            <label :for="`transition-${i}`" class="per-image__name">Image {{ i + 1 }}</label>
+            <select
+              :id="`transition-${i}`"
+              class="per-image__select"
+              :value="transitionAt(i)"
+              @change="setTransition(i, $event.target.value)"
+            >
+              <optgroup v-for="group in transitionGroups" :key="group.label" :label="group.label">
+                <option v-for="t in group.options" :key="t.value" :value="t.value">
+                  {{ t.label }}
+                </option>
+              </optgroup>
+            </select>
+          </li>
+        </ul>
+        <p class="settings__hint">
+          Each image's transition plays as that image appears. Image 1's plays when the slide
+          loops back around to it.
+        </p>
       </div>
     </div>
   </div>
@@ -363,13 +431,38 @@ function moveImage(index, offset) {
     color: var(--text-muted);
   }
 
+  &__select {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--text-body);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      border-color: rgb(var(--accent-rgb));
+    }
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    color: var(--text-muted);
+  }
+
   &__options {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.35rem;
   }
 
   &__option {
-    flex: 1;
+    flex: 1 1 auto;
     padding: 0.4rem 0.5rem;
     font-size: 0.75rem;
     font-weight: 600;
@@ -388,6 +481,56 @@ function moveImage(index, offset) {
     &--active {
       color: var(--ink-on-accent);
       background: rgb(var(--accent-rgb));
+      border-color: rgb(var(--accent-rgb));
+    }
+  }
+}
+
+.per-image {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  &__thumb {
+    width: 40px;
+    height: 28px;
+    flex: none;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+
+  &__name {
+    flex: 1;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-body);
+  }
+
+  &__select {
+    flex: none;
+    min-width: 9.5rem;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--text-body);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
       border-color: rgb(var(--accent-rgb));
     }
   }

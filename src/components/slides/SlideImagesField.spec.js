@@ -105,4 +105,107 @@ describe('SlideImagesField', () => {
 
     expect(wrapper.emitted('update:images').at(-1)[0]).toEqual([images[1], images[0]])
   })
+
+  describe('per-image transitions', () => {
+    const images = ['https://cdn.test/a.png', 'https://cdn.test/b.png', 'https://cdn.test/c.png']
+    const transitions = ['fade', 'slide', 'blinds-right']
+
+    function lastTransitions(wrapper) {
+      return wrapper.emitted('update:transitions').at(-1)[0]
+    }
+
+    it('shows one picker per image holding that image\'s own transition', () => {
+      const wrapper = mount(SlideImagesField, { props: { images, transitions } })
+
+      const selects = wrapper.findAll('.per-image__select')
+      expect(selects.map((s) => s.element.value)).toEqual(transitions)
+    })
+
+    it('changes only the image that was picked', async () => {
+      const wrapper = mount(SlideImagesField, { props: { images, transitions } })
+
+      await wrapper.find('#transition-1').setValue('zoom')
+
+      expect(lastTransitions(wrapper)).toEqual(['fade', 'zoom', 'blinds-right'])
+    })
+
+    it('falls back to the slide default for images with no transition of their own', () => {
+      const wrapper = mount(SlideImagesField, { props: { images, transition: 'cut' } })
+
+      expect(wrapper.findAll('.per-image__select').map((s) => s.element.value)).toEqual([
+        'cut',
+        'cut',
+        'cut',
+      ])
+    })
+
+    it('shows "Mixed" for the shortcut while the images differ', () => {
+      const wrapper = mount(SlideImagesField, { props: { images, transitions } })
+
+      expect(wrapper.find('#transition-all').element.value).toBe('')
+      expect(wrapper.find('#transition-all option[disabled]').text()).toBe('Mixed')
+    })
+
+    it('shows the shared transition for the shortcut once every image matches', () => {
+      const wrapper = mount(SlideImagesField, {
+        props: { images, transitions: ['circle', 'circle', 'circle'] },
+      })
+
+      expect(wrapper.find('#transition-all').element.value).toBe('circle')
+      expect(wrapper.find('#transition-all option[disabled]').exists()).toBe(false)
+    })
+
+    it('offers every transition, grouped, on each image', () => {
+      const wrapper = mount(SlideImagesField, { props: { images, transitions } })
+
+      const select = wrapper.find('#transition-0')
+      expect(select.findAll('optgroup').map((g) => g.attributes('label'))).toEqual([
+        'Fade & zoom',
+        'Slide',
+        'Wipe',
+        'Blinds',
+        '3D',
+      ])
+      expect(select.findAll('option')).toHaveLength(17)
+    })
+
+    it('sets every image at once from the shortcut', async () => {
+      const wrapper = mount(SlideImagesField, { props: { images, transitions } })
+
+      await wrapper.find('#transition-all').setValue('zoom')
+
+      expect(wrapper.emitted('update:transition').at(-1)[0]).toBe('zoom')
+      expect(lastTransitions(wrapper)).toEqual(['zoom', 'zoom', 'zoom'])
+    })
+
+    it('keeps each transition with its image when frames are reordered', async () => {
+      const wrapper = mount(SlideImagesField, { props: { images, transitions } })
+
+      await wrapper.find('[aria-label="Move image 3 earlier"]').trigger('click')
+
+      expect(wrapper.emitted('update:images').at(-1)[0]).toEqual([images[0], images[2], images[1]])
+      expect(lastTransitions(wrapper)).toEqual(['fade', 'blinds-right', 'slide'])
+    })
+
+    it('drops a transition together with its image', async () => {
+      const wrapper = mount(SlideImagesField, { props: { images, transitions } })
+
+      await wrapper.find('[aria-label="Remove image 2"]').trigger('click')
+
+      expect(wrapper.emitted('update:images').at(-1)[0]).toEqual([images[0], images[2]])
+      expect(lastTransitions(wrapper)).toEqual(['fade', 'blinds-right'])
+    })
+
+    it('gives newly uploaded images the slide default', async () => {
+      uploadImage.mockResolvedValue({ url: 'https://cdn.test/new.png' })
+
+      const wrapper = mount(SlideImagesField, {
+        props: { images: images.slice(0, 2), transitions: ['fade', 'slide'], transition: 'zoom' },
+      })
+      await pickFiles(wrapper, [fakeImage('new.png')])
+      await lastEmitted(wrapper)
+
+      expect(lastTransitions(wrapper)).toEqual(['fade', 'slide', 'zoom'])
+    })
+  })
 })

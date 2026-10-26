@@ -1,17 +1,19 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowDown, ArrowUp, Eye, SlidersHorizontal } from '@lucide/vue'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { Button } from '@/components/ui/button'
-import { apiFetch } from '@/services/api'
+import DateRangeFilter from '@/components/DateRangeFilter.vue'
 import {
-  deriveStockStatus,
-  fetchStockSummary,
-  formatStockDate,
-  usableImage,
-} from '@/services/stock'
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { TOOLBAR_SELECT } from '@/lib/selectPresets'
+import { apiFetch } from '@/services/api'
+import { deriveStockStatus, fetchStockSummary, usableImage } from '@/services/stock'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -31,7 +33,6 @@ const total = ref(0)
 
 const query = ref('')
 const availability = ref('all')
-const filterOpen = ref(false)
 const filterTruncated = ref(false)
 
 const updatedFrom = ref('')
@@ -57,16 +58,24 @@ const availabilityLabels = {
   'out-of-stock': 'Out of stock',
 }
 
-const filterLabel = computed(
-  () =>
-    availabilityOptions.find((option) => option.value === availability.value)?.label ??
-    'All Stock',
+// The sortable columns, in table order. Every sort the API offers is reachable
+// from a header, so there is no separate sort control in the toolbar.
+const sortableColumns = [
+  { key: 'name', label: 'Product' },
+  { key: 'created_at', label: 'Added on', class: 'col-added' },
+  { key: 'updated_at', label: 'Last updated' },
+  { key: 'stock_quantity', label: 'On hand' },
+]
+
+const hasFilters = computed(() =>
+  Boolean(
+    query.value.trim() || availability.value !== 'all' || updatedFrom.value || updatedTo.value,
+  ),
 )
 
-function countLabel(value) {
+function formatCount(value) {
   return value == null ? '—' : Number(value).toLocaleString()
 }
-const formatCount = countLabel
 
 const stats = computed(() => [
   {
@@ -138,6 +147,7 @@ function formatRelativeTime(value) {
   return `${diffYears} year${diffYears === 1 ? '' : 's'} ago`
 }
 
+// The cell shows "3 days ago"; the tooltip carries the exact moment.
 function formatDateTooltip(value) {
   if (!value) return 'No date available'
   const date = new Date(value)
@@ -146,6 +156,8 @@ function formatDateTooltip(value) {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   }).format(date)
 }
 
@@ -154,6 +166,23 @@ function thumbInitials(name) {
     .replace(/[^A-Za-z0-9 ]/g, '')
     .slice(0, 2)
     .toUpperCase()
+}
+
+// How full the meter under "On hand" reads. It hits 100% at twice the alert
+// level, so a product sitting exactly on its threshold shows half full and a
+// healthy one fills the bar. Products with no alert level set have nothing to
+// compare against, so any stock reads as full. A product with stock never
+// drops below a sliver, which would otherwise look the same as out of stock.
+function stockLevel(item) {
+  if (item.onHand <= 0) return 0
+  if (item.threshold <= 0) return 100
+  return Math.min(100, Math.max(6, Math.round((item.onHand / (item.threshold * 2)) * 100)))
+}
+
+function levelTitle(item) {
+  return item.threshold > 0
+    ? `${item.onHand} on hand · low-stock alert at ${item.threshold}`
+    : `${item.onHand} on hand · no low-stock alert set`
 }
 
 function mapItem(row) {
@@ -286,11 +315,6 @@ function applyFilters() {
   }
 }
 
-function setFilter(value) {
-  availability.value = value
-  filterOpen.value = false
-}
-
 function toggleSort(columnKey) {
   if (sortBy.value === columnKey) {
     sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
@@ -305,9 +329,10 @@ function isSorted(columnKey) {
   return sortBy.value === columnKey
 }
 
-function getSortIcon(columnKey) {
-  if (!isSorted(columnKey)) return 'neutral'
-  return sortDirection.value === 'asc' ? 'asc' : 'desc'
+// Lets assistive tech announce which column the list is ordered by.
+function ariaSort(columnKey) {
+  if (!isSorted(columnKey)) return undefined
+  return sortDirection.value === 'asc' ? 'ascending' : 'descending'
 }
 
 let searchTimer
@@ -329,18 +354,12 @@ watch([updatedFrom, updatedTo, sortBy, sortDirection], () => {
   applyFilters()
 })
 
-function closeMenus() {
-  filterOpen.value = false
-}
-
 onMounted(() => {
-  document.addEventListener('click', closeMenus)
   loadItems()
   loadSummary()
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', closeMenus)
   clearTimeout(searchTimer)
 })
 
@@ -378,6 +397,7 @@ function nextPage() {
     <AppHeader title="Inventory & Stock Control" />
 
     <div class="page__body">
+      <!-- Toolbar -->
       <section class="toolbar">
         <label class="toolbar__search">
           <span class="toolbar__search-icon" aria-hidden="true">
@@ -390,90 +410,52 @@ function nextPage() {
             v-model="query"
             type="search"
             placeholder="Search by SKU, product name or serial..."
+            aria-label="Search stock"
           />
         </label>
 
         <div class="toolbar__actions">
-        <div class="filter" @click.stop>
-          <button
-            type="button"
-            class="select"
-            :class="{ 'select--active': availability !== 'all' }"
-            :aria-expanded="filterOpen"
-            @click="filterOpen = !filterOpen"
-          >
-            <span class="select__icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M12 3 2 20h20L12 3Z" stroke-linejoin="round" />
-                <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
+          <Select v-model="availability">
+            <SelectTrigger :class="TOOLBAR_SELECT.trigger" aria-label="Filter by availability">
+              <svg :class="TOOLBAR_SELECT.icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" stroke-linejoin="round" />
               </svg>
-            </span>
-            {{ filterLabel }}
-            <svg class="select__caret" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-
-          <div v-if="filterOpen" class="filter__popup" role="listbox">
-            <button
-              v-for="option in availabilityOptions"
-              :key="option.value"
-              type="button"
-              class="filter__item"
-              :class="{ 'filter__item--selected': availability === option.value }"
-              role="option"
-              :aria-selected="availability === option.value"
-              @click="setFilter(option.value)"
-            >
-              {{ option.label }}
-              <svg
-                v-if="availability === option.value"
-                class="filter__check"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent :class="TOOLBAR_SELECT.content">
+              <SelectItem
+                v-for="option in availabilityOptions"
+                :key="option.value"
+                :value="option.value"
+                :class="TOOLBAR_SELECT.item"
               >
-                <path d="m5 12.5 4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-          </div>
-        </div>
+                {{ option.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
 
-        <div class="toolbar__dates">
-          <input type="date" v-model="updatedFrom" placeholder="Updated From" class="date-input" title="Last updated from" />
-          <span>-</span>
-          <input type="date" v-model="updatedTo" placeholder="Updated To" class="date-input" title="Last updated to" />
-        </div>
+          <DateRangeFilter
+            v-model:from="updatedFrom"
+            v-model:to="updatedTo"
+            label="Last updated between"
+            from-label="Updated from"
+            to-label="Updated to"
+          />
 
-        <div class="toolbar__sort">
-          <select v-model="sortBy" class="select-input">
-            <option value="updated_at">Sort by Updated</option>
-            <option value="created_at">Sort by Created</option>
-            <option value="name">Sort by Name</option>
-            <option value="stock_quantity">Sort by Stock</option>
-          </select>
-          <Button
-            variant="outline"
-            size="icon"
-            type="button"
-            :title="sortDirection === 'desc' ? 'Sorted descending — click for ascending' : 'Sorted ascending — click for descending'"
-            :aria-label="sortDirection === 'desc' ? 'Sort ascending' : 'Sort descending'"
-            @click="sortDirection = sortDirection === 'desc' ? 'asc' : 'desc'"
+          <BaseButton
+            v-if="canAdjustStock"
+            variant="primary"
+            :to="{ name: 'stock-adjustment-create' }"
           >
-            <ArrowDown v-if="sortDirection === 'desc'" />
-            <ArrowUp v-else />
-          </Button>
-        </div>
-
-        <BaseButton variant="primary" :to="{ name: 'stock-adjustment-create' }">
-          <template #icon>
-            <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
-          </template>
-          Add Stock Adjustment
-        </BaseButton>
+            <template #icon>
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
+            </template>
+            Add Stock Adjustment
+          </BaseButton>
         </div>
       </section>
 
+      <!-- Stat cards -->
       <section class="stats">
         <article v-for="stat in stats" :key="stat.key" class="stat">
           <span class="stat__icon" :class="`stat__icon--${stat.tone}`" aria-hidden="true">
@@ -487,7 +469,7 @@ function nextPage() {
             </svg>
             <svg v-else-if="stat.icon === 'check'" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="9" />
-              <path d="m8.5 12 2.5 2.5 4.5-5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="m8.5 12 2.4 2.4 4.6-5" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <svg v-else viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="9" />
@@ -502,169 +484,161 @@ function nextPage() {
         </article>
       </section>
 
+      <!-- The status filter runs client-side; say so when it stopped early. -->
+      <p v-if="filterTruncated" class="notice">
+        Too many matches to filter in full — showing a partial list. Narrow your search to see
+        everything.
+      </p>
+
+      <!-- Table -->
       <section class="table-card">
-        <div v-if="error" class="table__alert table__alert--error">
-          <span>{{ error }}</span>
-          <button type="button" class="table__retry" @click="loadItems">Retry</button>
-        </div>
-
-        <p v-if="filterTruncated" class="table__alert table__alert--warning">
-          Too many matches to filter in full — showing a partial list. Narrow your search to see everything.
-        </p>
-
         <div class="table-wrap">
           <table class="table">
             <thead>
               <tr>
-                <th class="sortable" @click="toggleSort('name')" role="button" tabindex="0" @keydown.enter.prevent="toggleSort('name')" @keydown.space.prevent="toggleSort('name')">
-                  <span class="thead-label">Product</span>
-                  <span v-if="getSortIcon('name') !== 'neutral'" class="sort-indicator" aria-hidden="true">
-                    <ArrowUp v-if="sortDirection === 'asc'" />
-                    <ArrowDown v-else />
-                  </span>
-                </th>
-                <th class="added-on">Added on</th>
-                <th class="sortable" @click="toggleSort('updated_at')" role="button" tabindex="0" @keydown.enter.prevent="toggleSort('updated_at')" @keydown.space.prevent="toggleSort('updated_at')">
-                  <span class="thead-label">Last updated</span>
-                  <span v-if="getSortIcon('updated_at') !== 'neutral'" class="sort-indicator" aria-hidden="true">
-                    <ArrowUp v-if="sortDirection === 'asc'" />
-                    <ArrowDown v-else />
-                  </span>
-                </th>
-                <th class="sortable" @click="toggleSort('stock_quantity')" role="button" tabindex="0" @keydown.enter.prevent="toggleSort('stock_quantity')" @keydown.space.prevent="toggleSort('stock_quantity')">
-                  <span class="thead-label">On hand</span>
-                  <span v-if="getSortIcon('stock_quantity') !== 'neutral'" class="sort-indicator" aria-hidden="true">
-                    <ArrowUp v-if="sortDirection === 'asc'" />
-                    <ArrowDown v-else />
-                  </span>
+                <th
+                  v-for="column in sortableColumns"
+                  :key="column.key"
+                  :class="column.class"
+                  :aria-sort="ariaSort(column.key)"
+                >
+                  <button type="button" class="th-sort" @click="toggleSort(column.key)">
+                    {{ column.label }}
+                    <svg
+                      class="th-sort__icon"
+                      :class="{ 'th-sort__icon--idle': !isSorted(column.key) }"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path v-if="!isSorted(column.key)" d="m7 15 5 5 5-5M7 9l5-5 5 5" stroke-linecap="round" stroke-linejoin="round" />
+                      <path v-else-if="sortDirection === 'asc'" d="M12 19V5M5 12l7-7 7 7" stroke-linecap="round" stroke-linejoin="round" />
+                      <path v-else d="M12 5v14M19 12l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
                 </th>
                 <th>Availability</th>
-                <th class="table__actions-header" aria-label="Actions">Actions</th>
+                <th class="table__actions-head">Actions</th>
               </tr>
             </thead>
             <tbody>
-              <template v-if="loading && items.length === 0">
-                <tr>
-                  <td colspan="6" class="table__empty">
-                    <div class="skeleton-row" v-for="n in 5" :key="n" aria-hidden="true">
-                      <span class="skeleton skeleton--thumb" />
-                      <span class="skeleton skeleton--line wide" />
-                      <span class="skeleton skeleton--line" />
-                      <span class="skeleton skeleton--line short" />
-                      <span class="skeleton skeleton--line short" />
-                      <span class="skeleton skeleton--tiny" />
+              <tr v-if="loading && items.length === 0">
+                <td colspan="6" class="table__state">Loading stock…</td>
+              </tr>
+              <tr v-else-if="error">
+                <td colspan="6" class="table__state table__state--error">
+                  {{ error }}
+                  <button type="button" class="table__retry" @click="loadItems">Retry</button>
+                </td>
+              </tr>
+              <tr v-else-if="items.length === 0">
+                <td colspan="6" class="table__state">
+                  {{ hasFilters ? 'No inventory matches your filters.' : 'No stock records yet.' }}
+                </td>
+              </tr>
+              <template v-else>
+                <tr
+                  v-for="item in items"
+                  :key="item.id"
+                  class="table__row"
+                  :class="{ 'table__row--loading': loading }"
+                  @click="openItem(item.id)"
+                >
+                  <td>
+                    <div class="product">
+                      <span class="product__thumb" aria-hidden="true">
+                        <img
+                          v-if="item.thumbnail && !brokenThumbs.has(item.id)"
+                          :src="item.thumbnail"
+                          alt=""
+                          loading="lazy"
+                          @error="onThumbError(item.id)"
+                        />
+                        <template v-else>{{ thumbInitials(item.name) }}</template>
+                      </span>
+                      <div class="product__meta">
+                        <p class="product__name">{{ item.name }}</p>
+                        <p class="product__sku">SKU: {{ item.sku }}</p>
+                        <p class="product__submeta">
+                          <span>Added on {{ item.startDate }}</span>
+                          <span aria-hidden="true">•</span>
+                          <span>{{ item.lastUpdatedLabel }}</span>
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+
+                  <td class="col-added">{{ item.startDate }}</td>
+
+                  <td class="col-updated">
+                    <span :title="formatDateTooltip(item.lastUpdated)" class="updated-text">{{ item.lastUpdatedLabel }}</span>
+                  </td>
+
+                  <td class="col-onhand">
+                    <div class="onhand" :title="levelTitle(item)">
+                      <p class="onhand__count">
+                        <strong>{{ item.onHand.toLocaleString() }}</strong>
+                        <span>{{ item.onHand === 1 ? 'unit' : 'units' }}</span>
+                      </p>
+                      <div class="meter" :class="`meter--${item.availability}`" aria-hidden="true">
+                        <span class="meter__fill" :style="{ width: `${stockLevel(item)}%` }"></span>
+                      </div>
+                    </div>
+                  </td>
+
+                  <td>
+                    <span class="badge" :class="`badge--${item.availability}`">
+                      {{ availabilityLabels[item.availability] }}
+                    </span>
+                  </td>
+
+                  <td class="col-actions">
+                    <div v-if="canViewStock || canAdjustStock" class="row-actions">
+                      <button
+                        v-if="canViewStock"
+                        type="button"
+                        class="icon-btn"
+                        :title="`View details: ${item.name}`"
+                        :aria-label="`View details for ${item.name}`"
+                        @click.stop="openItem(item.id)"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none">
+                          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke-linejoin="round" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </button>
+                      <button
+                        v-if="canAdjustStock"
+                        type="button"
+                        class="icon-btn"
+                        :title="`Adjust stock: ${item.name}`"
+                        :aria-label="`Adjust stock for ${item.name}`"
+                        @click.stop="openAdjustment(item.id)"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none">
+                          <path d="M10 5H3M12 19H3M14 3v4M16 17v4M21 12h-9M21 19h-5M21 5h-7M8 10v4M8 12H3" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
                     </div>
                   </td>
                 </tr>
               </template>
-
-              <tr
-                v-else-if="items.length > 0"
-                v-for="item in items"
-                :key="item.id"
-                class="table__row"
-                @click="openItem(item.id)"
-              >
-                <td>
-                  <div class="product">
-                    <img
-                      v-if="item.thumbnail && !brokenThumbs.has(item.id)"
-                      :src="item.thumbnail"
-                      :alt="item.name"
-                      class="product__thumb product__thumb--img"
-                      loading="lazy"
-                      @error="onThumbError(item.id)"
-                    />
-                    <span v-else class="product__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
-                    <div class="product__meta">
-                      <p class="product__name">{{ item.name }}</p>
-                      <p class="product__sku">{{ item.sku }}</p>
-                      <p class="product__submeta">
-                        <span class="product__added">Added on {{ item.startDate }}</span>
-                        <span class="product__divider">•</span>
-                        <span class="product__updated">{{ item.lastUpdatedLabel }}</span>
-                      </p>
-                    </div>
-                  </div>
-                </td>
-
-                <td class="added-on-cell">{{ item.startDate }}</td>
-
-                <td class="updated-cell">
-                  <span :title="formatDateTooltip(item.lastUpdated)" class="updated-text">{{ item.lastUpdatedLabel }}</span>
-                </td>
-
-                <td class="onhand-cell">
-                  <div class="onhand-wrap">
-                    <span class="onhand" :class="`onhand--${item.availability}`">{{ item.onHand }}</span>
-                    <span class="onhand__unit">units</span>
-                  </div>
-                  <div class="stock-bar" :class="`stock-bar--${item.availability}`" aria-label="Stock level indicator">
-                    <span class="stock-bar__fill"></span>
-                  </div>
-                </td>
-
-                <td>
-                  <span class="status-chip" :class="`status-chip--${item.availability}`">
-                    <span class="status-chip__dot" aria-hidden="true"></span>
-                    {{ availabilityLabels[item.availability] }}
-                  </span>
-                </td>
-
-                <td class="table__actions cell-actions">
-                  <div v-if="canViewStock || canAdjustStock" class="action-buttons">
-                    <button
-                      v-if="canViewStock"
-                      type="button"
-                      class="icon-button icon-button--view"
-                      :title="`View details: ${item.name}`"
-                      :aria-label="`View details for ${item.name}`"
-                      @click.stop="openItem(item.id)"
-                    >
-                      <Eye :size="18" :stroke-width="1.75" stroke="currentColor" fill="none" aria-hidden="true" />
-                    </button>
-                    <button
-                      v-if="canAdjustStock"
-                      type="button"
-                      class="icon-button icon-button--adjust"
-                      :title="`Adjust stock: ${item.name}`"
-                      :aria-label="`Adjust stock for ${item.name}`"
-                      @click.stop="openAdjustment(item.id)"
-                    >
-                      <SlidersHorizontal :size="18" :stroke-width="1.75" stroke="currentColor" fill="none" aria-hidden="true" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-
-              <tr v-if="!loading && items.length === 0 && !error">
-                <td colspan="6" class="table__empty">
-                  <div class="empty-state">
-                    <div class="empty-state__icon" aria-hidden="true">◌</div>
-                    <strong>No inventory matches your filters.</strong>
-                    <span>Try a different search or reset the stock filters.</span>
-                  </div>
-                </td>
-              </tr>
             </tbody>
           </table>
         </div>
 
+        <!-- Pagination -->
         <footer v-if="total > 0" class="pagination">
-          <p class="pagination__range">
-            Showing <strong>{{ rangeStart }}</strong> to <strong>{{ rangeEnd }}</strong> of
-            <strong>{{ total.toLocaleString() }}</strong> products
+          <p class="pagination__info">
+            Showing {{ rangeStart }}-{{ rangeEnd }} of {{ total.toLocaleString() }} products
           </p>
-          <div class="pagination__pages">
-            <button
-              type="button"
-              class="page-btn"
-              :disabled="page <= 1 || loading"
-              @click="prevPage"
-            >
+          <div class="pagination__controls">
+            <button type="button" class="page-btn" :disabled="page <= 1 || loading" @click="prevPage">
               Previous
             </button>
-            <span class="pagination__info">Page {{ page }} of {{ lastPage }}</span>
+            <button type="button" class="page-btn page-btn--active" :aria-label="`Page ${page} of ${lastPage}`" aria-current="page">
+              {{ page }}
+            </button>
             <button
               type="button"
               class="page-btn"
@@ -681,6 +655,7 @@ function nextPage() {
 </template>
 
 <style scoped lang="scss">
+
 .page {
   display: flex;
   flex-direction: column;
@@ -694,6 +669,7 @@ function nextPage() {
   }
 }
 
+/* Toolbar */
 .toolbar {
   display: flex;
   align-items: center;
@@ -703,38 +679,6 @@ function nextPage() {
   border-radius: 14px;
   padding: 0.85rem 1rem;
   flex-wrap: wrap;
-
-  &__actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-left: auto;
-    flex-wrap: wrap;
-  }
-
-  &__dates {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--text-subtle);
-  }
-
-  &__sort {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .date-input, .select-input {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.45rem 0.6rem;
-    font-size: 0.8rem;
-    color: var(--text-strong);
-    font-family: inherit;
-    &:focus { outline: none; border-color: var(--accent-ink); }
-  }
 
   &__search {
     flex: 1;
@@ -750,6 +694,18 @@ function nextPage() {
       background: var(--surface);
       border-color: var(--border);
     }
+
+    input {
+      flex: 1;
+      min-width: 0;
+      border: none;
+      background: transparent;
+      padding: 0.6rem;
+      font-size: 0.85rem;
+      font-family: inherit;
+      color: var(--text-strong);
+      &:focus { outline: none; }
+    }
   }
 
   &__search-icon {
@@ -758,103 +714,16 @@ function nextPage() {
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
   }
 
-  input {
-    flex: 1;
-    min-width: 0;
-    border: none;
-    background: transparent;
-    padding: 0.6rem;
-    font-size: 0.85rem;
-    font-family: inherit;
-    color: var(--text-strong);
-    &:focus { outline: none; }
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+    flex-wrap: wrap;
   }
 }
 
-.filter { position: relative; }
-
-.select {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.55rem 0.8rem;
-  font-size: 0.82rem;
-  font-weight: 600;
-  font-family: inherit;
-  color: var(--text-strong);
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
-
-  &:hover { background: var(--surface-hover); }
-  &:focus-visible {
-    outline: none;
-    border-color: var(--border-strong);
-    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
-  }
-
-  &__icon {
-    display: inline-flex;
-    color: var(--text-strong);
-    svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; }
-  }
-
-  &__caret { width: 14px; height: 14px; stroke: var(--text-muted); stroke-width: 1.8; }
-
-  &--active {
-    color: var(--text-strong);
-    border-color: rgb(var(--accent-rgb) / 0.7);
-    background: rgb(var(--accent-rgb) / 0.12);
-  }
-}
-
-.filter__popup {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 20;
-  min-width: 168px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 10px 28px rgba(20, 23, 28, 0.12);
-  padding: 0.35rem;
-  display: flex;
-  flex-direction: column;
-}
-
-.filter__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  width: 100%;
-  padding: 0.55rem 0.6rem;
-  font-size: 0.84rem;
-  font-weight: 500;
-  font-family: inherit;
-  text-align: left;
-  color: var(--text-body);
-  background: transparent;
-  border: none;
-  border-radius: 7px;
-  cursor: pointer;
-  &:hover { background: var(--surface-alt); }
-
-  &--selected { color: var(--accent-ink); font-weight: 600; }
-}
-
-.filter__check {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  stroke: currentColor;
-  stroke-width: 2.2;
-}
-
+/* Stat cards */
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -884,456 +753,285 @@ function nextPage() {
 
     svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.8; }
 
-    &--neutral { background: var(--surface-track); color: var(--text-muted); }
+    &--neutral { background: var(--bg); color: var(--text-muted); }
     &--warning { background: rgb(var(--accent-rgb) / 0.16); color: var(--accent-ink); }
     &--danger { background: var(--danger-bg); color: var(--danger); }
     &--success { background: var(--success-bg); color: var(--success); }
   }
 
-  &__label { } 
-  &__value { }
-  &__note { }
+  &__label { margin: 0; font-size: 0.78rem; color: var(--text-subtle); }
+  &__value { margin: 0.15rem 0 0; font-size: 1.45rem; font-weight: 700; color: var(--text-strong); }
+  &__note { margin: 0.1rem 0 0; font-size: 0.72rem; color: var(--text-subtle); }
 }
 
+.notice {
+  margin: 0;
+  padding: 0.7rem 1rem;
+  font-size: 0.8rem;
+  color: var(--accent-ink);
+  background: rgb(var(--accent-rgb) / 0.12);
+  border: 1px solid rgb(var(--accent-rgb) / 0.4);
+  border-radius: 10px;
+}
+
+/* Table */
 .table-card {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 16px;
+  border-radius: 14px;
   overflow: hidden;
 }
 
-.table-wrap {
-  overflow-x: auto;
-}
+.table-wrap { overflow-x: auto; }
 
 .table {
   width: 100%;
-  border-collapse: collapse;
   min-width: 820px;
+  border-collapse: collapse;
+
+  th, td {
+    text-align: left;
+    padding: 0.9rem 1rem;
+    vertical-align: middle;
+  }
 
   thead th {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    background: rgba(15, 20, 27, 0.96);
-    color: var(--text-subtle);
     font-size: 0.72rem;
     font-weight: 700;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
-    padding: 0.8rem 0.9rem;
+    white-space: nowrap;
+    color: var(--text-subtle);
     border-bottom: 1px solid var(--border-subtle);
-    text-align: left;
+    background: var(--surface-sunken);
+
+    &.table__actions-head { text-align: center; }
   }
 
-  tbody td {
-    padding: 0.9rem 0.9rem;
-    border-bottom: 1px solid var(--border-subtle);
-    vertical-align: middle;
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
+
+  &__row { cursor: pointer; }
+  /* A refetch keeps the previous rows on screen rather than blanking the table. */
+  &__row--loading { opacity: 0.6; pointer-events: none; }
+
+  &__state {
+    text-align: center;
+    color: var(--text-subtle);
+    font-size: 0.88rem;
+    padding: 2.5rem 1rem;
+
+    &--error { color: var(--danger); }
+  }
+
+  &__retry {
+    margin-left: 0.6rem;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-family: inherit;
     color: var(--text-body);
-  }
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
 
-  tbody tr {
-    transition: background-color 150ms ease;
-    &:hover { background: rgba(255,255,255,0.02); }
-  }
-}
-
-.sortable {
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-
-  .thead-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
+    &:hover { background: var(--surface-alt); border-color: var(--border); }
   }
 }
 
-.sort-indicator {
+/* Sortable header — a real button inside the th so it is keyboard-reachable. */
+.th-sort {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 1rem;
-  height: 1rem;
-  color: var(--accent-ink);
+  gap: 0.35rem;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
 
-  svg {
-    width: 0.9rem;
-    height: 0.9rem;
-    stroke: currentColor;
-    stroke-width: 2;
-    fill: none;
-  }
-}
+  &:hover { color: var(--text-strong); border-color: transparent; }
+  &:focus-visible { outline: 2px solid rgb(var(--accent-rgb)); outline-offset: 3px; }
 
-.table__actions-header {
-  text-align: right;
-  width: 120px;
+  &__icon { width: 14px; height: 14px; stroke: var(--accent-ink); stroke-width: 2; }
+
+  /* A column that is not the active sort hints at being sortable on hover or
+     focus, and stays out of the way otherwise. */
+  &__icon--idle { stroke: currentColor; opacity: 0; transition: opacity 0.15s ease; }
+  &:hover &__icon--idle,
+  &:focus-visible &__icon--idle { opacity: 0.6; }
 }
 
 .product {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
-  min-width: 260px;
-}
+  gap: 0.75rem;
+  min-width: 240px;
 
-.product__thumb {
-  flex-shrink: 0;
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.03);
-  color: var(--text-strong);
-  display: grid;
-  place-items: center;
-  font-size: 0.72rem;
-  font-weight: 700;
-  overflow: hidden;
-}
-
-.product__thumb--img {
-  object-fit: cover;
-}
-
-.product__meta {
-  min-width: 0;
-}
-
-.product__name {
-  margin: 0;
-  color: var(--text-strong);
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.product__sku {
-  margin: 0.1rem 0 0;
-  color: var(--text-subtle);
-  font-size: 0.76rem;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-
-.product__submeta {
-  display: none;
-  margin: 0.3rem 0 0;
-  gap: 0.45rem;
-  align-items: center;
-  color: var(--text-subtle);
-  font-size: 0.72rem;
-}
-
-.product__divider { opacity: 0.65; }
-
-.added-on,
-.added-on-cell {
-  color: var(--text-subtle);
-  white-space: nowrap;
-}
-
-.updated-cell {
-  min-width: 120px;
-}
-
-.updated-text {
-  display: inline-flex;
-  align-items: center;
-  color: var(--text-body);
-  cursor: help;
-}
-
-.onhand-cell {
-  min-width: 150px;
-}
-
-.onhand-wrap {
-  display: flex;
-  align-items: baseline;
-  gap: 0.35rem;
-  margin-bottom: 0.35rem;
-}
-
-.onhand {
-  font-size: 1.1rem;
-  font-weight: 800;
-  color: var(--text-strong);
-  letter-spacing: -0.02em;
-}
-
-.onhand__unit {
-  font-size: 0.72rem;
-  color: var(--text-subtle);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.stock-bar {
-  position: relative;
-  width: 100%;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.07);
-  overflow: hidden;
-  max-width: 120px;
-}
-
-.stock-bar__fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 100%;
-  display: block;
-  border-radius: inherit;
-}
-
-.stock-bar--in-stock .stock-bar__fill { background: linear-gradient(90deg, #34d399, #22c55e); }
-.stock-bar--low-stock .stock-bar__fill { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
-.stock-bar--out-of-stock .stock-bar__fill { background: linear-gradient(90deg, #f87171, #ef4444); }
-
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  border-radius: 999px;
-  padding: 0.35rem 0.7rem;
-  font-size: 0.74rem;
-  font-weight: 700;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.02);
-  white-space: nowrap;
-}
-
-.status-chip__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.status-chip--in-stock {
-  color: #9ae6b4;
-  background: rgba(34, 197, 94, 0.09);
-  .status-chip__dot { background: #34d399; }
-}
-
-.status-chip--low-stock {
-  color: #fbbf24;
-  background: rgba(245, 158, 11, 0.09);
-  .status-chip__dot { background: #f59e0b; }
-}
-
-.status-chip--out-of-stock {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.09);
-  .status-chip__dot { background: #f87171; }
-}
-
-.cell-actions {
-  width: 112px;
-  text-align: right;
-}
-
-.action-buttons {
-  display: inline-flex;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: nowrap;
-  align-items: center;
-}
-
-.icon-button {
-  width: 36px;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface-alt);
-  color: var(--text-strong);
-  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
-  cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-
-  &:hover {
-    border-color: rgb(var(--accent-rgb));
-    color: var(--accent-ink);
-    background: rgb(var(--accent-rgb) / 0.12);
-  }
-
-  &:active {
-    transform: scale(0.96);
-  }
-
-  &:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px rgb(var(--accent-rgb)), 0 0 0 4px rgba(var(--accent-rgb), 0.2);
-    border-color: rgb(var(--accent-rgb));
-  }
-
-  @media (max-width: 768px) {
+  &__thumb {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 40px;
     height: 40px;
+    border-radius: 8px;
+    background: var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    flex-shrink: 0;
+    overflow: hidden;
+
+    img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  }
+
+  &__meta { min-width: 0; }
+  /* Same accent ink as the product name on the Products screen. */
+  &__name { margin: 0; font-size: 0.88rem; font-weight: 600; color: var(--accent-ink); }
+  &__sku { margin: 0.15rem 0 0; font-size: 0.74rem; color: var(--text-subtle); }
+
+  /* Stands in for the two date columns once they are hidden on narrow screens. */
+  &__submeta {
+    display: none;
+    margin: 0.3rem 0 0;
+    gap: 0.45rem;
+    align-items: center;
+    font-size: 0.72rem;
+    color: var(--text-subtle);
   }
 }
 
-.icon-button--view {
-  color: var(--text-strong);
-  background: var(--surface-alt);
+.col-added { color: var(--text-subtle); font-size: 0.86rem; white-space: nowrap; }
+.col-updated { min-width: 120px; font-size: 0.86rem; color: var(--text-body); }
+.updated-text { cursor: help; }
+.col-onhand { min-width: 150px; }
+
+.onhand {
+  &__count {
+    display: flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    margin: 0 0 0.4rem;
+
+    strong { font-size: 0.95rem; font-weight: 700; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+    span { font-size: 0.74rem; color: var(--text-subtle); }
+  }
 }
 
-.icon-button--adjust {
-  color: var(--accent-ink);
-  border-color: rgb(var(--accent-rgb) / 0.55);
-  background: rgb(var(--accent-rgb) / 0.1);
-}
-
-.table__empty {
-  padding: 1.1rem !important;
-  text-align: center;
-}
-
-.skeleton-row {
-  display: grid;
-  grid-template-columns: 44px 1.6fr 1fr 1fr 1fr 52px;
-  gap: 0.9rem;
-  align-items: center;
-  padding: 0.4rem 0;
-}
-
-.skeleton {
-  display: block;
-  height: 12px;
+.meter {
+  height: 5px;
+  max-width: 120px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.05) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.2s ease-in-out infinite;
+  background: var(--surface-track);
+  overflow: hidden;
+
+  &__fill { display: block; height: 100%; border-radius: inherit; transition: width 0.2s ease; }
+
+  &--in-stock .meter__fill { background: var(--success-solid); }
+  &--low-stock .meter__fill { background: rgb(var(--accent-rgb)); }
+  &--out-of-stock .meter__fill { background: var(--danger-solid); }
 }
 
-.skeleton--thumb {
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border-radius: 999px;
+
+  &--in-stock { background: var(--success-bg); color: var(--success); }
+  &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
+  &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
 }
 
-.skeleton--line {
-  width: 100%;
-  height: 12px;
-}
+.col-actions { width: 112px; }
 
-.skeleton--line.wide { width: 90%; }
-.skeleton--line.short { width: 55%; }
-.skeleton--tiny { width: 36px; height: 36px; border-radius: 8px; }
-
-.empty-state {
+.row-actions {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  padding: 2.2rem 1rem;
-  color: var(--text-subtle);
-
-  strong {
-    color: var(--text-strong);
-  }
 }
 
-.empty-state__icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.08);
-  display: grid;
-  place-items: center;
-  color: var(--accent-ink);
-  font-size: 1.2rem;
-  background: rgba(var(--accent-rgb), 0.08);
-}
-
-.table__alert {
-  display: flex;
+.icon-btn {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.8rem 1rem;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.85rem;
-}
-
-.table__alert--error {
-  color: #fecaca;
-  background: rgba(239, 68, 68, 0.08);
-}
-
-.table__alert--warning {
-  color: #fcd34d;
-  background: rgba(245, 158, 11, 0.07);
-}
-
-.table__retry {
-  border: 1px solid rgba(255,255,255,0.08);
-  background: transparent;
-  color: var(--text-strong);
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  flex-shrink: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0.45rem 0.7rem;
+  color: var(--text-muted);
   cursor: pointer;
+
+  &:hover { background: var(--surface-alt); color: var(--text-strong); border-color: var(--border); }
+  &:focus-visible { outline: none; border-color: rgb(var(--accent-rgb)); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18); }
+
+  svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; }
 }
 
+/* Pagination */
 .pagination {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1rem 1rem 1.2rem;
-  color: var(--text-subtle);
-}
+  padding: 1rem;
+  border-top: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
 
-.pagination__range {
-  margin: 0;
-}
-
-.pagination__pages {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  &__info { margin: 0; font-size: 0.82rem; color: var(--text-subtle); }
+  &__controls { display: flex; gap: 0.4rem; }
 }
 
 .page-btn {
-  border: 1px solid var(--border-subtle);
-  background: transparent;
-  color: var(--text-strong);
+  min-width: 36px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0.5rem 0.7rem;
   cursor: pointer;
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
-}
 
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  &:hover:not(:disabled) { background: var(--surface-alt); border-color: var(--border); }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  &--active,
+  &--active:hover:not(:disabled) {
+    background: rgb(var(--accent-rgb));
+    border-color: rgb(var(--accent-rgb));
+    color: var(--ink-on-accent);
+    cursor: default;
+  }
 }
 
 @media (max-width: 768px) {
   .page__body { padding: 1rem; }
 
-  .table {
-    min-width: 0;
-  }
-
-  .table thead {
-    display: none;
-  }
+  .table { min-width: 0; }
+  .table thead { display: none; }
 
   .table tbody tr {
     display: block;
     padding: 0.75rem 0.8rem;
-    border-bottom: 1px solid var(--border-subtle);
   }
+
+  .table tbody tr + tr { border-top: 1px solid var(--border-subtle); }
 
   .table tbody td {
     display: block;
@@ -1341,35 +1039,18 @@ function nextPage() {
     border: none;
   }
 
-  .product {
-    min-width: 0;
-  }
+  .table tbody tr + tr td { border-top: none; }
 
-  .product__submeta {
-    display: inline-flex;
-    flex-wrap: wrap;
-  }
+  .product { min-width: 0; }
+  .product__submeta { display: inline-flex; flex-wrap: wrap; }
 
-  .added-on-cell,
-  .updated-cell {
-    display: none;
-  }
+  /* Needs the td in the selector: `.table tbody td` above would otherwise win. */
+  .table tbody td.col-added,
+  .table tbody td.col-updated { display: none; }
 
-  .onhand-cell {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
+  .col-actions { width: auto; padding-top: 0.75rem; }
+  .row-actions { justify-content: flex-start; }
 
-  .table__actions.cell-actions {
-    text-align: left;
-    padding-top: 0.75rem;
-  }
-
-  .pagination {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+  .pagination { flex-direction: column; align-items: flex-start; }
 }
 </style>

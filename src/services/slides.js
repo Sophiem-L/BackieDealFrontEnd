@@ -7,8 +7,10 @@
  * cover — which is what the storefront reads — and frames 2..n ride along in
  * `meta`, together with the playback settings and the no-image gradient.
  *
- * `meta` also absorbs `durationMs`, `transition` and `gradient`, none of which
- * have columns of their own.
+ * `meta` also absorbs `durationMs`, `transition`, `transitions` and `gradient`,
+ * none of which have columns of their own. `transition` is the default;
+ * `transitions` is one entry per image, in the same order as the frame list
+ * (cover first), saying how that image comes in.
  */
 import { apiFetch } from '@/services/api'
 
@@ -21,6 +23,69 @@ export const SLIDE_POSITION = 'homepage'
 
 const DEFAULT_DURATION_MS = 3000
 const DEFAULT_TRANSITION = 'fade'
+
+// How an image comes in. `value` is what lands in `meta.transition` and
+// `meta.transitions`, so renaming one orphans slides already saved with it.
+// Grouped for the picker; `from` in a label is the edge the movement starts at.
+export const SLIDE_TRANSITION_GROUPS = [
+  {
+    label: 'Fade & zoom',
+    options: [
+      { value: 'fade', label: 'Fade' },
+      { value: 'cut', label: 'Cut' },
+      { value: 'zoom', label: 'Zoom out' },
+      { value: 'grow', label: 'Zoom in' },
+      { value: 'blur', label: 'Blur' },
+    ],
+  },
+  {
+    label: 'Slide',
+    options: [
+      { value: 'slide', label: 'Slide in from right' },
+      { value: 'slide-left', label: 'Slide in from left' },
+      { value: 'slide-up', label: 'Slide in from bottom' },
+      { value: 'slide-down', label: 'Slide in from top' },
+    ],
+  },
+  {
+    label: 'Wipe',
+    options: [
+      { value: 'wipe-left', label: 'Wipe from left' },
+      { value: 'wipe-right', label: 'Wipe from right' },
+      { value: 'circle', label: 'Circle reveal' },
+    ],
+  },
+  {
+    label: 'Blinds',
+    options: [
+      { value: 'blinds-left', label: 'Blinds from left' },
+      { value: 'blinds-right', label: 'Blinds from right' },
+      { value: 'blinds-top', label: 'Blinds from top' },
+      { value: 'blinds-bottom', label: 'Blinds from bottom' },
+    ],
+  },
+  {
+    label: '3D',
+    options: [{ value: 'flip', label: 'Flip' }],
+  },
+]
+
+export const SLIDE_TRANSITIONS = SLIDE_TRANSITION_GROUPS.flatMap((group) => group.options)
+
+/** The picker's wording for a transition value, for places that only display it. */
+export function transitionLabel(value) {
+  return SLIDE_TRANSITIONS.find((t) => t.value === value)?.label ?? value
+}
+
+/**
+ * Anything unrecognised (an old or hand-edited value) plays as the default.
+ * `blinds` was saved by an earlier build, before it had a direction; it always
+ * started from the left.
+ */
+function transitionOf(value) {
+  if (value === 'blinds') return 'blinds-left'
+  return SLIDE_TRANSITIONS.some((t) => t.value === value) ? value : DEFAULT_TRANSITION
+}
 
 /** `2026-07-01T09:30:00+00:00` -> `2026-07-01`, the value a date input wants. */
 function dateValue(value) {
@@ -48,6 +113,15 @@ function statusOf(banner) {
 }
 
 /**
+ * How each image comes in, one entry per image. A slide saved before images had
+ * their own transition has none, so every image takes the slide's default.
+ */
+function transitionsOf(meta, images) {
+  const own = Array.isArray(meta.transitions) ? meta.transitions : []
+  return images.map((_, i) => transitionOf(own[i] ?? meta.transition))
+}
+
+/**
  * Frame list, cover first. `meta.frames` is only meaningful behind a cover:
  * without one, promoting frame 2 on the next save would silently reorder the
  * carousel, so an image-less banner reads as having no frames at all.
@@ -62,6 +136,7 @@ function framesOf(banner) {
 /** Shape a banner into the slide object the views and the form both bind to. */
 export function slideFromApi(banner) {
   const meta = banner.meta ?? {}
+  const images = framesOf(banner)
 
   return {
     id: banner.id,
@@ -70,9 +145,10 @@ export function slideFromApi(banner) {
     cta: text(banner.button_text),
     ctaUrl: text(banner.button_url),
     status: statusOf(banner),
-    images: framesOf(banner),
+    images,
     durationMs: Number(meta.durationMs ?? DEFAULT_DURATION_MS),
-    transition: meta.transition === 'cut' ? 'cut' : DEFAULT_TRANSITION,
+    transition: transitionOf(meta.transition),
+    transitions: transitionsOf(meta, images),
     gradient: meta.gradient || DEFAULT_GRADIENT,
     startDate: dateValue(banner.starts_at),
     endDate: dateValue(banner.ends_at),
@@ -100,7 +176,9 @@ export function slideToPayload(form) {
     meta: {
       frames: images.slice(1),
       durationMs: form.durationMs,
-      transition: form.transition,
+      transition: transitionOf(form.transition),
+      // Parallel to the full image list, cover included.
+      transitions: images.map((_, i) => transitionOf(form.transitions?.[i] ?? form.transition)),
       gradient: form.gradient,
     },
   }
