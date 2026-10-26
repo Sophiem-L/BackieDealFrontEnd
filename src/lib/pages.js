@@ -107,7 +107,7 @@ export function sortPages(pages, sortKey = 'updated') {
 
 // The editor saves `body` as HTML, and the list falls back to it when a page has
 // no excerpt. Reduce it to the text a reader would see.
-function htmlToText(value) {
+export function htmlToText(value) {
   return String(value ?? '')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')

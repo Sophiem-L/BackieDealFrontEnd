@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { htmlToText } from '@/lib/pages'
 import { FORM_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
 import { fetchCustomers } from '@/services/customers'
@@ -96,7 +97,8 @@ function normalizeProduct(product) {
   return {
     id: product.id,
     name: product.name,
-    description: product.short_description || product.description || '',
+    // The product form saves `description` as HTML; this line is plain text.
+    description: htmlToText(product.short_description || product.description),
     sku: product.sku || '',
     price: Number(product.sale_price ?? product.price ?? 0),
     stock: product.stock_quantity == null ? null : Number(product.stock_quantity),
