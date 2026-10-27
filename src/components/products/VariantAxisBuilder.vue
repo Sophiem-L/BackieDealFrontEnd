@@ -168,7 +168,7 @@ function onDrop(to) {
               :value="axis.name"
               type="text"
               class="axis__name"
-              placeholder="Size"
+              placeholder="Example: Size"
               :aria-label="`Option ${i + 1} name`"
               @input="renameAxis(i, $event.target.value)"
             />
@@ -193,7 +193,7 @@ function onDrop(to) {
               v-model="drafts[i]"
               type="text"
               class="axis__draft"
-              :placeholder="axis.values.length ? 'Add another value' : 'Medium'"
+              :placeholder="axis.values.length ? 'Add another value' : 'Example: Medium'"
               :aria-label="`Add a value to ${axis.name || `option ${i + 1}`}`"
               @keydown.enter.prevent="commitDraft(i)"
               @keydown="onDraftKeydown($event, i)"

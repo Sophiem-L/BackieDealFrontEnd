@@ -4,6 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToastStack from '@/components/ToastStack.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { FORM_SELECT } from '@/lib/selectPresets'
 import { fetchStockCatalog, createBulkStockMovement } from '@/services/stock'
 import { fetchSerials, lookupSerial } from '@/services/serials'
 import { useAuthStore } from '@/stores/auth'
@@ -12,19 +20,20 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
+// `tone` picks the dot colour from the theme tokens (see .type-dot in the
+// styles); the same value-to-tone mapping drives the badges on the detail page.
 const adjustmentTypes = [
-  { value: 'Inventory Recount', label: 'Inventory Recount', description: 'Regular count and verification', icon: '📋', color: 'blue' },
-  { value: 'Damaged Goods', label: 'Damaged Goods', description: 'Items too damaged to sell', icon: '💔', color: 'red' },
-  { value: 'Customer Return', label: 'Customer Return', description: 'Items returned by customers', icon: '↩️', color: 'orange' },
-  { value: 'Supplier Delivery', label: 'Supplier Delivery', description: 'Stock received from suppliers', icon: '📦', color: 'green' },
-  { value: 'Theft / Loss', label: 'Theft / Loss', description: 'Missing or stolen items', icon: '⚠️', color: 'red' },
-  { value: 'Correction', label: 'Correction', description: 'System error correction', icon: '✏️', color: 'purple' },
+  { value: 'Inventory Recount', label: 'Inventory Recount', description: 'Regular count and verification', tone: 'info' },
+  { value: 'Damaged Goods', label: 'Damaged Goods', description: 'Items too damaged to sell', tone: 'danger' },
+  { value: 'Customer Return', label: 'Customer Return', description: 'Items returned by customers', tone: 'warning' },
+  { value: 'Supplier Delivery', label: 'Supplier Delivery', description: 'Stock received from suppliers', tone: 'success' },
+  { value: 'Theft / Loss', label: 'Theft / Loss', description: 'Missing or stolen items', tone: 'danger' },
+  { value: 'Correction', label: 'Correction', description: 'System error correction', tone: 'violet' },
 ]
 
 const product = ref(null)
 const submitting = ref(false)
 const submitError = ref('')
-const showAdjustmentDropdown = ref(false)
 const toasts = ref([])
 const drawer = reactive({
   open: false,
@@ -93,6 +102,11 @@ function getFilledSerialCount(item) {
     : 0
 }
 
+// What the variant's stock would be once this adjustment is saved.
+function getAfterQty(item) {
+  return (Number(item.currentStock) || 0) + (Number(item.quantityChange) || 0)
+}
+
 function getSerialTriggerTitle(item) {
   const qty = getRowQty(item)
   if (!Number.isFinite(qty) || qty === 0) {
@@ -118,7 +132,6 @@ function getRowSerials(item) {
 const summaryText = computed(() => {
   const rows = activeRows()
   const variantCount = rows.length
-  const totalUnits = rows.reduce((sum, item) => sum + Math.abs(getRowQty(item)), 0)
   const signedTotal = rows.reduce((sum, item) => sum + getRowQty(item), 0)
   const serialRequired = rows.reduce((sum, item) => sum + getRequiredSerials(item), 0)
 
@@ -170,7 +183,13 @@ function selectAdjustmentType(type) {
   }
 
   form.adjustmentType = type.value
-  showAdjustmentDropdown.value = false
+}
+
+// The Select is controlled by form.adjustmentType, so declining the confirm in
+// selectAdjustmentType leaves the old value showing.
+function onAdjustmentTypeChange(value) {
+  const type = adjustmentTypes.find((candidate) => candidate.value === value)
+  if (type) selectAdjustmentType(type)
 }
 
 function thumbInitials(name) {
@@ -305,7 +324,7 @@ async function checkSerialExists(serialNumber) {
   try {
     const result = await lookupSerial(serialNumber, auth.accessToken)
     return Boolean(result)
-  } catch (err) {
+  } catch {
     return false
   }
 }
@@ -450,28 +469,6 @@ function removeSerial(item, serial) {
   while (item.serialNumbers.length < getRequiredSerials(item)) item.serialNumbers.push('')
 }
 
-function selectFirstNSerials() {
-  const item = getCurrentItem()
-  if (!item) return
-  const limit = getRequiredSerials(item)
-  const available = drawer.availableSerials.filter((serial) => !drawer.selectedSerials.includes(serial))
-  drawer.selectedSerials = available.slice(0, limit)
-  item.serialNumbers = [...drawer.selectedSerials, ...Array.from({ length: Math.max(0, limit - drawer.selectedSerials.length) }, () => '')]
-}
-
-function toggleSelectedSerial(serial) {
-  const item = getCurrentItem()
-  if (!item) return
-
-  const target = [...new Set(drawer.selectedSerials)]
-  const next = target.includes(serial)
-    ? target.filter((candidate) => candidate !== serial)
-    : [...target, serial]
-
-  drawer.selectedSerials = next
-  item.serialNumbers = [...next, ...Array.from({ length: Math.max(0, getRequiredSerials(item) - next.length) }, () => '')]
-}
-
 function saveDrawerSelection() {
   const item = getCurrentItem()
   if (!item) return
@@ -560,15 +557,10 @@ async function complete() {
   }
 }
 
-function closeAdjustmentDropdown() {
-  showAdjustmentDropdown.value = false
-}
-
 let leaveGuard = null
 
 onMounted(() => {
   loadCatalog()
-  document.addEventListener('click', closeAdjustmentDropdown)
   document.addEventListener('keydown', handleModalKeydown)
   window.addEventListener('beforeunload', (event) => {
     if (hasUnsavedChanges()) {
@@ -586,7 +578,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', closeAdjustmentDropdown)
   document.removeEventListener('keydown', handleModalKeydown)
   document.body.style.overflow = ''
   if (leaveGuard) leaveGuard()
@@ -620,112 +611,120 @@ watch(
     <AppHeader title="Stock Adjustment" />
 
     <div class="page__body">
+      <!-- Sub header -->
       <div class="subhead">
-        <RouterLink to="/stock" class="subhead__back" aria-label="Back to Stock Management">
+        <RouterLink :to="{ name: 'stock' }" class="subhead__back">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
+          <span>
+            <span class="subhead__crumb">Back to Stock</span>
+            <span class="subhead__title">New Stock Adjustment</span>
+          </span>
         </RouterLink>
-        <div>
-          <h2 class="subhead__title">New Stock Adjustment</h2>
-          <p class="subhead__desc">Manually adjust inventory levels for damages, returns, or corrections.</p>
-        </div>
       </div>
 
-      <div v-if="submitError" class="alert alert--error">
-        {{ submitError }}
-      </div>
+      <p v-if="submitError" class="alert alert--error" role="alert">{{ submitError }}</p>
 
+      <!-- Details -->
       <section class="card">
-        <div class="card__head">
-          <div>
-            <h3 class="card__title">Adjustment Details</h3>
+        <h3 class="card__title">Adjustment Details</h3>
+        <p class="card__lead">Manually adjust inventory levels for damages, returns, or corrections.</p>
+
+        <div class="row">
+          <div v-if="!isProductLocked" class="field">
+            <label for="productSelect">Product</label>
+            <Select
+              :model-value="product ? String(product.id) : ''"
+              :disabled="pickerLoading"
+              @update:model-value="selectProductById"
+            >
+              <SelectTrigger id="productSelect" :class="FORM_SELECT.trigger">
+                <SelectValue placeholder="Select a product to adjust…" />
+              </SelectTrigger>
+              <SelectContent :class="FORM_SELECT.content">
+                <SelectItem
+                  v-for="entry in catalog"
+                  :key="entry.id"
+                  :value="String(entry.id)"
+                  :class="FORM_SELECT.item"
+                >
+                  {{ entry.name }} (SKU: {{ entry.sku }}) — {{ entry.currentStock }} in stock
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div v-if="!isProductLocked" class="card__select">
-            <label for="productSelect">Select Product</label>
-            <div class="select-wrap select-wrap--enhanced">
-              <select id="productSelect" :value="product?.id || ''" :disabled="isProductLocked" @change="e => selectProductById(e.target.value)">
-                <option value="" disabled>Select a product to adjust...</option>
-                <option v-for="item in catalog" :key="item.id" :value="item.id">
-                  {{ item.name }} (SKU: {{ item.sku }}) — {{ item.currentStock }} in stock
-                </option>
-              </select>
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            </div>
+
+          <div class="field">
+            <label for="adjustmentType">Adjustment Type</label>
+            <Select :model-value="form.adjustmentType" @update:model-value="onAdjustmentTypeChange">
+              <SelectTrigger id="adjustmentType" :class="FORM_SELECT.trigger">
+                <!-- Overrides the default label: an option's text includes its
+                     description, which belongs in the list but not the trigger. -->
+                <SelectValue>
+                  <span class="type-value">
+                    <span class="type-dot" :class="`type-dot--${selectedAdjustmentType.tone}`" aria-hidden="true"></span>
+                    {{ selectedAdjustmentType.label }}
+                  </span>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent :class="FORM_SELECT.content">
+                <SelectItem
+                  v-for="type in adjustmentTypes"
+                  :key="type.value"
+                  :value="type.value"
+                  :class="FORM_SELECT.item"
+                >
+                  <span class="type-option">
+                    <span class="type-dot" :class="`type-dot--${type.tone}`" aria-hidden="true"></span>
+                    <span class="type-option__copy">
+                      <span class="type-option__label">{{ type.label }}</span>
+                      <span class="type-option__desc">{{ type.description }}</span>
+                    </span>
+                  </span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
         <div v-if="product" class="product-header">
-          <div class="product-info">
-            <img
-              v-if="product.thumbnail"
-              :src="product.thumbnail"
-              :alt="product.name"
-              class="product-info__thumb"
-            />
-            <span v-else class="product-info__thumb product-info__thumb--initials" aria-hidden="true">{{ thumbInitials(product.name) }}</span>
-            <div class="product-info__meta">
-              <p class="product-info__name">{{ product.name }}</p>
-              <p class="product-info__sub">SKU: {{ product.sku }} &nbsp;|&nbsp; Location: {{ product.location }}</p>
-            </div>
+          <img
+            v-if="product.thumbnail"
+            :src="product.thumbnail"
+            :alt="product.name"
+            class="product-header__thumb"
+          />
+          <span v-else class="product-header__thumb" aria-hidden="true">{{ thumbInitials(product.name) }}</span>
+          <div class="product-header__meta">
+            <p class="product-header__name">{{ product.name }}</p>
+            <p class="product-header__sub">SKU: {{ product.sku }} · Location: {{ product.location }}</p>
           </div>
-          <div class="adjustment-controls">
-            <div class="control-field">
-              <label for="adjustmentType">Adjustment Type</label>
-              <div class="adjustment-dropdown-wrapper" @click.stop @mousedown.stop>
-                <button
-                  id="adjustmentType"
-                  type="button"
-                  class="adjustment-dropdown-btn"
-                  :class="`adjustment-dropdown-btn--${selectedAdjustmentType.color}`"
-                  @click.stop="showAdjustmentDropdown = !showAdjustmentDropdown"
-                >
-                  <span class="adjustment-dropdown-btn__icon">{{ selectedAdjustmentType.icon }}</span>
-                  <span class="adjustment-dropdown-btn__label">{{ selectedAdjustmentType.label }}</span>
-                  <svg class="adjustment-dropdown-btn__chevron" :style="{ transform: showAdjustmentDropdown ? 'rotate(180deg)' : 'rotate(0)' }" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </button>
-
-                <div v-if="showAdjustmentDropdown" class="adjustment-dropdown-menu" @click.stop>
-                  <button
-                    v-for="type in adjustmentTypes"
-                    :key="type.value"
-                    type="button"
-                    class="adjustment-dropdown-item"
-                    :class="{ 'adjustment-dropdown-item--active': form.adjustmentType === type.value }"
-                    @click.stop="selectAdjustmentType(type)"
-                  >
-                    <span class="adjustment-dropdown-item__icon">{{ type.icon }}</span>
-                    <div class="adjustment-dropdown-item__content">
-                      <div class="adjustment-dropdown-item__label">{{ type.label }}</div>
-                      <div class="adjustment-dropdown-item__description">{{ type.description }}</div>
-                    </div>
-                    <svg v-if="form.adjustmentType === type.value" class="adjustment-dropdown-item__check" viewBox="0 0 24 24" fill="none">
-                      <path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
+          <div class="product-header__stock">
+            <span>Current stock</span>
+            <strong>{{ product.currentStock.toLocaleString() }}</strong>
           </div>
         </div>
+      </section>
 
-        <div v-if="product?.adjustments?.length" class="table-container">
-          <div class="table-header">
-            <span class="table-header__summary">{{ summaryText }}</span>
-          </div>
+      <!-- Quantities -->
+      <section v-if="product?.adjustments?.length" class="card card--flush">
+        <header class="card__head">
+          <h3 class="card__title">Quantities</h3>
+          <span class="card__summary">{{ summaryText }}</span>
+        </header>
 
-          <table class="stock-table">
+        <div class="table-wrap">
+          <table class="table">
             <thead>
               <tr>
-                <th class="th-no">No</th>
-                <th class="th-sku">SKU</th>
-                <th class="th-variant">Variant Info</th>
-                <th class="th-current">Current Qty</th>
-                <th class="th-stock-in">Stock In Qty</th>
-                <th class="th-serialized">Serial</th>
-                <th class="th-after">After Update</th>
+                <th class="col-no">No</th>
+                <th class="col-sku">SKU</th>
+                <th class="col-variant">Variant Info</th>
+                <th class="col-current">Current Qty</th>
+                <th class="col-qty">Stock In Qty</th>
+                <th class="col-serial">Serial</th>
+                <th class="col-after">After Update</th>
               </tr>
             </thead>
             <tbody>
@@ -734,9 +733,9 @@ watch(
                 :key="item.id"
                 :data-row-invalid="getFilledSerialCount(item) !== getRequiredSerials(item) && Number(item.quantityChange) !== 0"
               >
-                <td class="td-no">{{ index + 1 }}</td>
-                <td class="td-sku">{{ item.sku || 'N/A' }}</td>
-                <td class="td-variant">
+                <td class="col-no">{{ index + 1 }}</td>
+                <td class="col-sku">{{ item.sku || 'N/A' }}</td>
+                <td class="col-variant">
                   <div class="variant-cell">
                     <img
                       v-if="product.thumbnail"
@@ -744,26 +743,26 @@ watch(
                       :alt="item.name"
                       class="variant-cell__thumb"
                     />
-                    <span v-else class="variant-cell__thumb variant-cell__thumb--initials">{{ thumbInitials(item.name) }}</span>
+                    <span v-else class="variant-cell__thumb" aria-hidden="true">{{ thumbInitials(item.name) }}</span>
                     <span class="variant-cell__name">{{ item.name }}</span>
                   </div>
                 </td>
-                <td class="td-current">{{ item.currentStock }}</td>
-                <td class="td-stock-in">
-                  <div class="quantity-input-cell">
-                    <input
-                      :id="`quantity-${item.id}`"
-                      :value="item.quantityChange"
-                      type="number"
-                      :min="isIncreaseAdjustment(form.adjustmentType) ? 1 : -9999"
-                      step="1"
-                      inputmode="numeric"
-                      required
-                      @input="updateVariantQuantity(item, $event.target.valueAsNumber)"
-                    />
-                  </div>
+                <td class="col-current">{{ item.currentStock }}</td>
+                <td class="col-qty">
+                  <input
+                    :id="`quantity-${item.id}`"
+                    class="qty-input"
+                    :value="item.quantityChange"
+                    type="number"
+                    :min="isIncreaseAdjustment(form.adjustmentType) ? 1 : -9999"
+                    step="1"
+                    inputmode="numeric"
+                    required
+                    :aria-label="`Quantity change for ${item.name}`"
+                    @input="updateVariantQuantity(item, $event.target.valueAsNumber)"
+                  />
                 </td>
-                <td class="td-serialized">
+                <td class="col-serial">
                   <button
                     type="button"
                     class="serial-trigger"
@@ -779,16 +778,27 @@ watch(
                   >
                     <span class="serial-trigger__label">Add serial</span>
                     <span class="serial-trigger__count" aria-live="polite">{{ getFilledSerialCount(item) }} / {{ getRequiredSerials(item) }}</span>
-                    <span v-if="getRowQty(item) > 0 && getFilledSerialCount(item) === getRequiredSerials(item)" class="serial-trigger__check">✓</span>
+                    <svg
+                      v-if="getRowQty(item) > 0 && getFilledSerialCount(item) === getRequiredSerials(item)"
+                      class="serial-trigger__check"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path d="m5 12.5 4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
                   </button>
                 </td>
-                <td class="td-after">{{ (Number(item.currentStock) || 0) + (Number(item.quantityChange) || 0) }}</td>
+                <td class="col-after" :class="{ 'col-after--negative': getAfterQty(item) < 0 }">{{ getAfterQty(item) }}</td>
               </tr>
             </tbody>
           </table>
         </div>
+      </section>
 
-        <div class="field field--reason">
+      <!-- Reason -->
+      <section class="card">
+        <div class="field">
           <label for="reason">Reason for Adjustment</label>
           <textarea
             id="reason"
@@ -796,24 +806,24 @@ watch(
             rows="3"
             placeholder="Monthly inventory recount. Found 2 additional units in warehouse back-shelf."
           ></textarea>
+          <p class="field__hint">Saved as the reference on each stock movement. Defaults to the adjustment type when left blank.</p>
         </div>
-
       </section>
 
+      <!-- Form actions -->
       <div class="actions">
         <BaseButton variant="ghost" :disabled="submitting" @click="cancel">Cancel</BaseButton>
-        <div class="submit-wrap">
-          <BaseButton
-            variant="primary"
-            :disabled="!product || !quantityIsValid || submitting"
-            @click="complete"
-            :title="incompleteRows.length ? incompleteTooltip : ''"
-          >
-            {{ submitting ? 'Saving...' : 'Create' }}
-          </BaseButton>
-        </div>
+        <BaseButton
+          variant="primary"
+          :disabled="!product || !quantityIsValid || submitting"
+          :title="incompleteRows.length ? incompleteTooltip : ''"
+          @click="complete"
+        >
+          {{ submitting ? 'Saving…' : 'Create Adjustment' }}
+        </BaseButton>
       </div>
 
+      <!-- Serial entry -->
       <aside
         v-if="drawer.open"
         class="serial-modal"
@@ -831,23 +841,23 @@ watch(
                 :alt="getCurrentItem()?.name || 'Variant image'"
                 class="serial-modal__thumb"
               />
-              <span v-else class="serial-modal__thumb serial-modal__thumb--initials">{{ thumbInitials(getCurrentItem()?.name || product?.name || 'V') }}</span>
+              <span v-else class="serial-modal__thumb" aria-hidden="true">{{ thumbInitials(getCurrentItem()?.name || product?.name || 'V') }}</span>
               <div class="serial-modal__variant-copy">
                 <strong>{{ getCurrentItem()?.name || 'Variant' }}</strong>
                 <span>{{ getCurrentItem()?.sku || product?.sku || 'SKU' }}</span>
               </div>
             </div>
-            <button type="button" class="serial-modal__close" aria-label="Close" title="Close" @click="closeSerialDrawer(true)">×</button>
+            <button type="button" class="serial-modal__close" aria-label="Close" title="Close" @click="closeSerialDrawer(true)">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke-linecap="round" /></svg>
+            </button>
           </header>
 
           <div class="serial-modal__body">
-            <div class="serial-modal__title-row">
-              <div>
-                <p class="serial-modal__eyebrow">Variant serials</p>
-                <h3 id="serial-modal-title">
-                  {{ getRequiredSerials(getCurrentItem()) === 1 ? 'Add 1 serial number' : `Add ${getRequiredSerials(getCurrentItem())} serial numbers` }}
-                </h3>
-              </div>
+            <div>
+              <p class="serial-modal__eyebrow">Variant serials</p>
+              <h3 id="serial-modal-title" class="serial-modal__title">
+                {{ getRequiredSerials(getCurrentItem()) === 1 ? 'Add 1 serial number' : `Add ${getRequiredSerials(getCurrentItem())} serial numbers` }}
+              </h3>
             </div>
 
             <div class="serial-modal__stats" aria-label="Serial stats">
@@ -894,52 +904,65 @@ watch(
                   @paste="event => { event.preventDefault(); addSerialsFromInput(); }"
                   placeholder="Scan or type a serial, then press Enter"
                 />
-                <button type="button" class="serial-modal__add-btn" :disabled="!drawer.input.trim() || getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())" @click="addSingleSerial(drawer.input)">Add</button>
+                <BaseButton
+                  variant="primary"
+                  :disabled="!drawer.input.trim() || getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())"
+                  @click="addSingleSerial(drawer.input)"
+                >
+                  Add
+                </BaseButton>
               </div>
               <p class="serial-modal__helper">Tip: paste many serials separated by new lines, commas or spaces</p>
               <p v-if="getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())" class="serial-modal__limit">All serials entered</p>
             </div>
 
-            <div v-if="drawer.pendingExtras" class="serial-modal__banner">
+            <p v-if="drawer.pendingExtras" class="serial-modal__banner">
               {{ drawer.pendingExtras }} extra ignored.
-            </div>
+            </p>
             <div v-if="Object.keys(drawer.errors).length" class="serial-modal__error-list" aria-live="polite">
               <div v-for="(message, serial) in drawer.errors" :key="serial" class="serial-modal__error-item">
-                <span>⚠</span>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 3 2 20h20L12 3Z" stroke-linejoin="round" />
+                  <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
+                </svg>
                 <span>{{ serial }}: {{ message }}</span>
               </div>
             </div>
 
             <div class="serial-modal__chips-wrap">
               <div v-if="!getRowSerials(getCurrentItem()).length" class="serial-modal__empty-state">
-                <span aria-hidden="true">⌁</span>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
                 <p>No serials yet. Scan or paste to begin.</p>
               </div>
               <div v-else class="serial-modal__chips">
                 <button
-                  v-for="serial in getRowSerials(getCurrentItem())"
-                  :key="`${serial}-${Math.random()}`"
+                  v-for="(serial, serialIndex) in getRowSerials(getCurrentItem())"
+                  :key="serial"
                   type="button"
                   class="serial-modal__chip"
                   :class="{ 'serial-modal__chip--new': drawer.lastAddedSerial && serial === drawer.lastAddedSerial }"
-                  @click="removeSerial(getCurrentItem(), serial)"
                   :title="`Remove ${serial}`"
+                  @click="removeSerial(getCurrentItem(), serial)"
                 >
-                  <span class="serial-modal__chip-index">#{{ getRowSerials(getCurrentItem()).indexOf(serial) + 1 }}</span>
+                  <span class="serial-modal__chip-index">#{{ serialIndex + 1 }}</span>
                   <span class="serial-modal__chip-value">{{ serial }}</span>
-                  <span aria-hidden="true" class="serial-modal__chip-remove">×</span>
+                  <svg class="serial-modal__chip-remove" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="m6 6 12 12M18 6 6 18" stroke-linecap="round" />
+                  </svg>
                 </button>
               </div>
             </div>
 
             <div class="serial-modal__existing">
-              <button type="button" class="serial-modal__existing-toggle" @click="drawer.showExistingSerials = !drawer.showExistingSerials">
+              <button type="button" class="serial-modal__existing-toggle" :aria-expanded="drawer.showExistingSerials" @click="drawer.showExistingSerials = !drawer.showExistingSerials">
                 <span>Existing serials ({{ drawer.availableSerials.length }})</span>
                 <span>{{ drawer.showExistingSerials ? 'Hide' : 'Show' }}</span>
               </button>
               <div v-if="drawer.showExistingSerials" class="serial-modal__existing-panel">
                 <div class="serial-modal__existing-search">
-                  <input v-model="drawer.search" type="search" placeholder="Search serials" />
+                  <input v-model="drawer.search" type="search" placeholder="Search serials" aria-label="Search existing serials" />
                 </div>
                 <div class="serial-modal__existing-list">
                   <div v-for="serial in drawer.availableSerials.filter(item => item.toLowerCase().includes(drawer.search.toLowerCase()))" :key="serial" class="serial-modal__existing-item">
@@ -951,17 +974,16 @@ watch(
           </div>
 
           <footer class="serial-modal__footer">
-            <button type="button" class="serial-modal__ghost" @click="() => { const item = getCurrentItem(); if (item) { item.serialNumbers = []; drawer.selectedSerials = []; drawer.errors = {}; drawer.pendingExtras = 0 } }">Clear all</button>
+            <BaseButton variant="danger" @click="() => { const item = getCurrentItem(); if (item) { item.serialNumbers = []; drawer.selectedSerials = []; drawer.errors = {}; drawer.pendingExtras = 0 } }">Clear all</BaseButton>
             <div class="serial-modal__footer-actions">
-              <button type="button" class="serial-modal__secondary" @click="closeSerialDrawer(true)">Cancel</button>
-              <button
-                type="button"
-                class="serial-modal__primary"
+              <BaseButton variant="ghost" @click="closeSerialDrawer(true)">Cancel</BaseButton>
+              <BaseButton
+                variant="primary"
                 :disabled="getFilledSerialCount(getCurrentItem()) !== getRequiredSerials(getCurrentItem()) || !getCurrentItem()"
                 @click="saveDrawerSelection"
               >
                 Save serials
-              </button>
+              </BaseButton>
             </div>
           </footer>
         </div>
@@ -987,73 +1009,71 @@ watch(
   }
 }
 
+/* Sub header */
 .subhead {
   display: flex;
   align-items: center;
-  gap: 0.85rem;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
 
   &__back {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    justify-content: center;
-    width: 38px;
-    height: 38px;
-    border-radius: 50%;
-    background: var(--surface);
-    border: 1px solid var(--border-subtle);
-    color: var(--text-body);
-    flex-shrink: 0;
-
-    &:hover { background: var(--surface-alt); text-decoration: none; }
-
-    svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.8; }
+    gap: 0.7rem;
+    color: inherit;
+    &:hover { text-decoration: none; }
+    svg { width: 22px; height: 22px; stroke: var(--text-muted); stroke-width: 1.8; }
+    span { display: flex; flex-direction: column; line-height: 1.2; }
   }
 
-  &__title {
-    margin: 0;
-    font-size: 1.3rem;
+  &__crumb {
+    font-size: 0.68rem;
     font-weight: 700;
-    color: var(--text-strong);
-  }
-
-  &__desc {
-    margin: 0.15rem 0 0;
-    font-size: 0.85rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
     color: var(--text-subtle);
   }
+
+  &__title { font-size: 1.1rem; font-weight: 700; color: var(--text-strong); }
 }
 
 .alert {
-  padding: 0.85rem 1.1rem;
-  border-radius: 10px;
-  font-size: 0.88rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.86rem;
   font-weight: 500;
+  border-radius: 10px;
 
   &--error {
     background: var(--danger-bg);
     color: var(--danger);
-    border: 1px solid var(--danger);
+    border: 1px solid var(--danger-border);
   }
 }
 
+/* Cards */
 .card {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+  padding: 1.25rem;
+
+  /* The quantities card runs its table edge to edge, so the padding moves to the head. */
+  &--flush { padding: 0; overflow: hidden; }
 
   &__head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 2rem;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1.25rem;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   &__title {
-    margin: 0;
+    margin: 0 0 1rem;
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -1061,648 +1081,20 @@ watch(
     color: var(--text-muted);
   }
 
-  &__select {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    flex: 0 0 auto;
-    width: 320px;
+  &__head &__title { margin: 0; }
 
-    label {
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--text-body);
-    }
-  }
+  &__lead { margin: -0.5rem 0 1rem; font-size: 0.82rem; color: var(--text-subtle); }
+
+  &__summary { font-size: 0.82rem; font-weight: 600; color: var(--text-body); }
 }
 
-.product-header {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-  padding: 1rem;
-  background: var(--surface-hover);
-  border-radius: 12px;
-  border: 1px solid var(--border-subtle);
-
-  @media (max-width: 900px) {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-
-.product-info {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex: 1;
-
-  &__thumb {
-    width: 56px;
-    height: 56px;
-    border-radius: 10px;
-    object-fit: cover;
-    background: var(--border-subtle);
-    flex-shrink: 0;
-
-    &--initials {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-muted);
-      font-size: 0.9rem;
-      font-weight: 700;
-    }
-  }
-
-  &__meta {
-    min-width: 0;
-  }
-
-  &__name {
-    margin: 0;
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--text-strong);
-  }
-
-  &__sub {
-    margin: 0.2rem 0 0;
-    font-size: 0.75rem;
-    color: var(--text-subtle);
-  }
-}
-
-.adjustment-controls {
-  display: flex;
-  gap: 1rem;
-  flex-shrink: 0;
-
-  @media (max-width: 900px) {
-    width: 100%;
-  }
-}
-
-.adjustment-dropdown-wrapper {
-  position: relative;
-}
-
-.adjustment-dropdown-btn {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  padding: 0.75rem 1rem;
-  border: 2px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text-strong);
-  font-size: 0.9rem;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  position: relative;
-
-  &:hover {
-    border-color: rgb(var(--accent-rgb));
-    background: var(--surface-hover);
-  }
-
-  &:focus {
-    outline: none;
-    border-color: rgb(var(--accent-rgb));
-    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
-  }
-
-  &__icon {
-    font-size: 1.1rem;
-    flex-shrink: 0;
-  }
-
-  &__label {
-    flex: 1;
-    text-align: left;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  &__chevron {
-    width: 18px;
-    height: 18px;
-    stroke: var(--text-muted);
-    stroke-width: 2;
-    flex-shrink: 0;
-    transition: transform 0.2s ease, stroke 0.2s ease;
-  }
-
-  &--blue {
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.08);
-    color: #1e40af;
-
-    .adjustment-dropdown-btn__chevron { stroke: #3b82f6; }
-
-    &:hover {
-      border-color: #2563eb;
-      background: rgba(59, 130, 246, 0.15);
-    }
-  }
-
-  &--red {
-    border-color: #ef4444;
-    background: rgba(239, 68, 68, 0.08);
-    color: #991b1b;
-
-    .adjustment-dropdown-btn__chevron { stroke: #ef4444; }
-
-    &:hover {
-      border-color: #dc2626;
-      background: rgba(239, 68, 68, 0.15);
-    }
-  }
-
-  &--orange {
-    border-color: #f97316;
-    background: rgba(249, 115, 22, 0.08);
-    color: #9a3412;
-
-    .adjustment-dropdown-btn__chevron { stroke: #f97316; }
-
-    &:hover {
-      border-color: #ea580c;
-      background: rgba(249, 115, 22, 0.15);
-    }
-  }
-
-  &--green {
-    border-color: #22c55e;
-    background: rgba(34, 197, 94, 0.08);
-    color: #166534;
-
-    .adjustment-dropdown-btn__chevron { stroke: #22c55e; }
-
-    &:hover {
-      border-color: #16a34a;
-      background: rgba(34, 197, 94, 0.15);
-    }
-  }
-
-  &--purple {
-    border-color: #a855f7;
-    background: rgba(168, 85, 247, 0.08);
-    color: #6b21a8;
-
-    .adjustment-dropdown-btn__chevron { stroke: #a855f7; }
-
-    &:hover {
-      border-color: #9333ea;
-      background: rgba(168, 85, 247, 0.15);
-    }
-  }
-}
-
-.adjustment-dropdown-menu {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin-top: 0.5rem;
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 0 1px rgba(0, 0, 0, 0.1);
-  overflow: hidden;
-  z-index: 1000;
-  animation: slideDown 0.15s ease-out;
-}
-
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.adjustment-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  width: 100%;
-  padding: 1rem;
-  border: none;
-  background: transparent;
-  color: var(--text-body);
-  font-size: 0.9rem;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  border-bottom: 1px solid var(--border-subtle);
-  text-align: left;
-
-  &:last-child { border-bottom: none; }
-
-  &:hover {
-    background: var(--surface-hover);
-  }
-
-  &--active {
-    background: rgb(var(--accent-rgb) / 0.1);
-    color: rgb(var(--accent-rgb));
-  }
-
-  &__icon {
-    font-size: 1.3rem;
-    flex-shrink: 0;
-  }
-
-  &__content {
-    flex: 1;
-    min-width: 0;
-  }
-
-  &__label {
-    font-weight: 600;
-    color: var(--text-strong);
-    margin-bottom: 0.2rem;
-  }
-
-  &__description {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-
-  &__check {
-    width: 20px;
-    height: 20px;
-    color: rgb(var(--accent-rgb));
-    flex-shrink: 0;
-  }
-}
-
-.control-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  flex: 1;
-
-  label {
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-body);
-  }
-}
-
-.table-container {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  overflow-x: auto;
-}
-
-.table-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid var(--border-subtle);
-
-  &__summary {
-    font-size: 0.9rem;
-    color: var(--text-body);
-    font-weight: 500;
-
-    strong {
-      color: var(--text-strong);
-      font-weight: 700;
-      font-size: 1.1rem;
-      margin-left: 0.5rem;
-    }
-  }
-}
-
-.stock-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.88rem;
-
-  thead {
-    background: var(--surface-hover);
-    border-top: 1px solid var(--border-subtle);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  th {
-    padding: 0.9rem 0.75rem;
-    text-align: left;
-    color: var(--text-muted);
-    font-weight: 600;
-    font-size: 0.75rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    border-right: 1px solid var(--border-subtle);
-
-    &:last-child { border-right: none; }
-  }
-
-  td {
-    padding: 1rem 0.75rem;
-    color: var(--text-body);
-    border-bottom: 1px solid var(--border-subtle);
-    border-right: 1px solid var(--border-subtle);
-
-    &:last-child { border-right: none; }
-  }
-
-  tbody tr {
-    &:hover { background: var(--surface-hover); }
-    &:last-child td { border-bottom: none; }
-  }
-}
-
-.th-no, .td-no { width: 60px; }
-.th-sku, .td-sku { width: 100px; }
-.th-variant, .td-variant { min-width: 200px; }
-.th-current, .td-current { width: 100px; text-align: center; }
-.th-stock-in, .td-stock-in { width: 140px; }
-.th-serialized, .td-serialized { width: 100px; text-align: center; }
-.th-after, .td-after { width: 100px; text-align: center; }
-.th-action, .td-action { width: 60px; text-align: center; }
-
-.variant-cell {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-
-  &__thumb {
-    width: 40px;
-    height: 40px;
-    border-radius: 8px;
-    object-fit: cover;
-    background: var(--border-subtle);
-    flex-shrink: 0;
-
-    &--initials {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-muted);
-      font-size: 0.8rem;
-      font-weight: 700;
-    }
-  }
-
-  &__name {
-    font-weight: 500;
-    color: var(--text-strong);
-  }
-}
-
-.quantity-input-cell {
-  input {
-    width: 100%;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.65rem 0.8rem;
-    font-size: 0.9rem;
-    font-family: inherit;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-strong);
-    background: var(--surface);
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
-    appearance: textfield;
-
-    &::-webkit-inner-spin-button,
-    &::-webkit-outer-spin-button { appearance: none; margin: 0; }
-
-    &:focus {
-      outline: none;
-      border-color: rgb(var(--accent-rgb));
-      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
-    }
-  }
-}
-
-.serialized-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.65rem;
-  background: rgb(var(--accent-rgb) / 0.15);
-  border: 1px solid rgb(var(--accent-rgb) / 0.3);
-  border-radius: 6px;
-  color: rgb(var(--accent-rgb));
-  font-size: 0.8rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.serialized-icon {
-  width: 16px;
-  height: 16px;
-  stroke-width: 1.5;
-}
-
-.serial-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  min-height: 40px;
-  width: 100%;
-  padding: 0.5rem 0.7rem;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 214, 102, 0.35);
-  background: rgba(255, 214, 102, 0.08);
-  color: var(--text-strong);
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
-
-  &:hover:not(:disabled) {
-    border-color: rgba(255, 214, 102, 0.52);
-    background: rgba(255, 214, 102, 0.12);
-  }
-
-  &--incomplete {
-    border-color: rgba(248, 113, 113, 0.45);
-    background: rgba(248, 113, 113, 0.1);
-    color: #fca5a5;
-  }
-
-  &--complete {
-    border-color: rgba(34, 197, 94, 0.45);
-    background: rgba(34, 197, 94, 0.12);
-    color: #86efac;
-  }
-
-  &--disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    border-color: var(--border-subtle);
-    background: var(--surface-hover);
-    color: var(--text-muted);
-  }
-
-  &__label {
-    white-space: nowrap;
-  }
-
-  &__count {
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  &__check {
-    color: inherit;
-    font-weight: 700;
-  }
-}
-
-.serialized-none {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-}
-
-.checkbox {
-  width: 20px;
-  height: 20px;
-  cursor: pointer;
-  accent-color: rgb(var(--accent-rgb));
-}
-
-.serial-section {
-  padding: 1.5rem;
-  background: var(--surface-hover);
-  border-radius: 12px;
-  border: 1px solid var(--border-subtle);
-
-  &__head {
-    margin-bottom: 1.25rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  &__title {
-    margin: 0 0 0.3rem;
-    font-size: 0.9rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    color: var(--text-strong);
-  }
-
-  &__desc {
-    margin: 0;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-}
-
-.serial-group {
-  display: grid;
-  gap: 0.8rem;
-  padding: 1rem;
-  background: var(--surface);
-  border-radius: 10px;
-  border: 1px solid var(--border-subtle);
-  margin-bottom: 1rem;
-
-  &:last-child { margin-bottom: 0; }
-
-  &__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  &__label {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--text-strong);
-    flex: 1;
-  }
-
-  &__count {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    background: var(--surface-hover);
-    padding: 0.35rem 0.65rem;
-    border-radius: 6px;
-    white-space: nowrap;
-  }
-}
-
-.serial-inputs {
-  display: grid;
-  gap: 0.65rem;
-}
-
-.serial-input-wrapper {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.serial-input-label {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.serial-input {
-  width: 100%;
-  padding: 0.65rem 0.8rem;
-  padding-right: 2.2rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text-body);
-  font-size: 0.9rem;
-  font-family: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-
-  &::placeholder { color: var(--text-faint); }
-
-  &:focus {
-    outline: none;
-    border-color: rgb(var(--accent-rgb));
-    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
-  }
-}
-
-.serial-check {
-  position: absolute;
-  right: 0.8rem;
-  top: 50%;
-  transform: translateY(-50%);
-  margin-top: 0.35rem;
-  color: var(--success, #22c55e);
-  font-weight: 700;
-  font-size: 1rem;
-}
-
+/* Fields */
 .field {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
 
-  &--reason {
-    padding-top: 1rem;
-    border-top: 1px solid var(--border-subtle);
-  }
+  &__hint { margin: 0; font-size: 0.74rem; color: var(--text-subtle); }
 
   label {
     font-size: 0.72rem;
@@ -1712,7 +1104,6 @@ watch(
     color: var(--text-body);
   }
 
-  select,
   textarea {
     width: 100%;
     border: 1px solid var(--border);
@@ -1722,80 +1113,260 @@ watch(
     font-family: inherit;
     color: var(--text-strong);
     background: var(--surface);
+    resize: vertical;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
     &::placeholder { color: var(--text-faint); }
-
     &:focus {
       outline: none;
       border-color: rgb(var(--accent-rgb));
       box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
     }
   }
-
-  textarea { resize: vertical; }
 }
 
-.select-wrap {
-  position: relative;
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
 
-  select {
-    appearance: none;
-    padding-right: 2.2rem;
-    cursor: pointer;
-    width: 100%;
-    border: 1px solid var(--border);
+  @media (max-width: 620px) { grid-template-columns: 1fr; }
+}
+
+/* Adjustment type — a dot in the theme's semantic colours stands in for the
+   per-type icons, so it follows light and dark mode with the rest of the app. */
+.type-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--text-subtle);
+
+  &--info { background: var(--info); }
+  &--danger { background: var(--danger); }
+  &--warning { background: rgb(var(--accent-rgb)); }
+  &--success { background: var(--success); }
+  &--violet { background: var(--violet); }
+}
+
+.type-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.type-option {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.1rem 0;
+
+  &__copy { display: flex; flex-direction: column; gap: 0.1rem; }
+  &__label { font-weight: 600; }
+  &__desc { font-size: 0.76rem; font-weight: 400; color: var(--text-subtle); }
+}
+
+/* Selected product */
+.product-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+
+  &__thumb {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
     border-radius: 10px;
-    padding: 0.65rem 0.8rem;
-    font-size: 0.9rem;
-    font-family: inherit;
-    color: var(--text-strong);
-    background: var(--surface);
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
-
-    &:hover { border-color: var(--border-subtle); }
-
-    &:focus {
-      outline: none;
-      border-color: rgb(var(--accent-rgb));
-      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
-    }
-
-    &:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
+    object-fit: cover;
+    background: var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 700;
+    flex-shrink: 0;
   }
 
-  svg {
-    position: absolute;
-    top: 50%;
-    right: 0.8rem;
-    transform: translateY(-50%);
-    width: 16px;
-    height: 16px;
-    stroke: var(--text-subtle);
-    stroke-width: 1.8;
-    pointer-events: none;
-  }
+  &__meta { flex: 1; min-width: 0; }
+  &__name { margin: 0; font-size: 0.95rem; font-weight: 700; color: var(--text-strong); }
+  &__sub { margin: 0.2rem 0 0; font-size: 0.76rem; color: var(--text-subtle); }
 
-  &--enhanced select {
-    padding-right: 2.5rem;
-    border: 2px solid var(--border);
-    font-weight: 500;
+  &__stock {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.1rem;
 
-    &:hover {
-      border-color: rgb(var(--accent-rgb) / 0.5);
-      background: var(--surface-hover);
+    span {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-subtle);
     }
-
-    &:focus {
-      border-color: rgb(var(--accent-rgb));
-      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
-    }
+    strong { font-size: 1.2rem; font-weight: 800; color: var(--text-strong); }
   }
 }
 
+/* Quantities table */
+.table-wrap { overflow-x: auto; }
+
+.table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+
+  th, td { text-align: left; padding: 0.85rem 1rem; vertical-align: middle; }
+
+  thead th {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--text-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
+  }
+
+  tbody tr + tr td { border-top: 1px solid var(--border-subtle); }
+  tbody tr:hover { background: var(--surface-sunken); }
+
+  td { font-size: 0.86rem; color: var(--text-body); }
+
+  .col-no { width: 56px; color: var(--text-subtle); }
+  .col-sku { width: 110px; white-space: nowrap; }
+  .col-variant { min-width: 200px; }
+  .col-current,
+  .col-after { width: 110px; text-align: center; font-variant-numeric: tabular-nums; }
+  .col-qty { width: 140px; }
+  .col-serial { width: 150px; text-align: center; }
+
+  td.col-after { font-weight: 700; color: var(--text-strong); }
+  td.col-after--negative { color: var(--danger); }
+}
+
+.variant-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+
+  &__thumb {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  &__name { font-weight: 600; color: var(--text-strong); }
+}
+
+.qty-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+  background: var(--surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  appearance: textfield;
+
+  &::-webkit-inner-spin-button,
+  &::-webkit-outer-spin-button { appearance: none; margin: 0; }
+
+  &:focus {
+    outline: none;
+    border-color: rgb(var(--accent-rgb));
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+  }
+}
+
+/* Serial entry button. Amber while serials are optional-looking, red while the
+   count is short, green once it matches. */
+.serial-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
+  min-height: 36px;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid rgb(var(--accent-rgb) / 0.4);
+  background: rgb(var(--accent-rgb) / 0.12);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+
+  &:hover:not(:disabled) {
+    border-color: rgb(var(--accent-rgb) / 0.7);
+    background: rgb(var(--accent-rgb) / 0.2);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+  }
+
+  &--incomplete {
+    border-color: var(--danger-border);
+    background: var(--danger-bg);
+    color: var(--danger);
+
+    &:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-bg); }
+  }
+
+  &--complete {
+    border-color: var(--success-border);
+    background: var(--success-bg);
+    color: var(--success);
+
+    &:hover:not(:disabled) { border-color: var(--success); background: var(--success-bg); }
+  }
+
+  &--disabled,
+  &--disabled:hover:not(:disabled) {
+    border-color: var(--border-subtle);
+    background: var(--surface-track);
+    color: var(--text-muted);
+  }
+
+  &:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  &__label { white-space: nowrap; }
+  &__count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  &__check { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2.4; }
+}
+
+/* Bottom action bar */
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+/* Serial modal */
 .serial-modal {
   position: fixed;
   inset: 0;
@@ -1803,459 +1374,337 @@ watch(
   display: grid;
   place-items: center;
   padding: 1.25rem;
-  background: rgba(15, 17, 20, 0.68);
-  backdrop-filter: blur(4px);
+  background: var(--backdrop);
   animation: serialModalFade 0.2s ease;
-}
 
-.serial-modal__panel {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  width: min(100%, 640px);
-  max-height: 85vh;
-  background: var(--surface);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
-  animation: serialModalScale 0.2s ease;
-}
+  &__panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: min(100%, 640px);
+    max-height: 85vh;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+    animation: serialModalScale 0.2s ease;
+  }
 
-.serial-modal__header,
-.serial-modal__footer {
-  position: sticky;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.1rem 1.25rem;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.serial-modal__footer {
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: none;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  background: rgba(20, 22, 27, 0.96);
-}
-
-.serial-modal__variant {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  min-width: 0;
-}
-
-.serial-modal__thumb {
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-  object-fit: cover;
-  background: var(--surface-hover);
-  border: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-
-  &--initials {
+  &__header,
+  &__footer {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.25rem;
+    background: var(--surface);
+  }
+
+  &__header { border-bottom: 1px solid var(--border-subtle); }
+
+  &__footer {
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
+    flex-wrap: wrap;
+  }
+
+  &__footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-left: auto;
+  }
+
+  &__variant { display: flex; align-items: center; gap: 0.8rem; min-width: 0; }
+
+  &__thumb {
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: var(--text-strong);
-  }
-}
-
-.serial-modal__variant-copy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-
-  strong {
-    color: var(--text-strong);
-    font-size: 0.96rem;
-    font-weight: 700;
-  }
-
-  span {
-    font-size: 0.76rem;
-    color: var(--text-subtle);
-  }
-}
-
-.serial-modal__close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  background: var(--surface-hover);
-  color: var(--text-strong);
-  font-size: 1.5rem;
-  line-height: 1;
-  cursor: pointer;
-
-  &:hover {
-    border-color: rgb(var(--accent-rgb) / 0.5);
-    background: rgba(var(--accent-rgb) / 0.08);
-  }
-
-  &:focus-visible {
-    outline: 2px solid rgb(var(--accent-rgb));
-    outline-offset: 2px;
-  }
-}
-
-.serial-modal__body {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding: 1.25rem;
-  overflow-y: auto;
-}
-
-.serial-modal__eyebrow {
-  margin: 0 0 0.35rem;
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 700;
-}
-
-.serial-modal__title-row h3 {
-  margin: 0;
-  font-size: 1.35rem;
-  color: var(--text-strong);
-  line-height: 1.3;
-}
-
-.serial-modal__stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem;
-}
-
-.serial-modal__stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.75rem 0.8rem;
-  border-radius: 12px;
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-hover);
-
-  span {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: var(--border-subtle);
     color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  &__variant-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+
+    strong { font-size: 0.92rem; font-weight: 700; color: var(--text-strong); }
+    span { font-size: 0.76rem; color: var(--text-subtle); }
+  }
+
+  &__close {
+    display: inline-flex;
+    padding: 0.35rem;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-subtle);
+    cursor: pointer;
+
+    &:hover { background: var(--bg); color: var(--text-strong); border-color: transparent; }
+    &:focus-visible { outline: 2px solid rgb(var(--accent-rgb)); outline-offset: 2px; }
+
+    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; }
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.25rem;
+    overflow-y: auto;
+  }
+
+  &__eyebrow {
+    margin: 0 0 0.3rem;
     font-size: 0.7rem;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    font-weight: 700;
-  }
-
-  strong {
-    color: var(--text-strong);
-    font-size: 1.05rem;
-    font-weight: 700;
-  }
-}
-
-.serial-modal__progress {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.serial-modal__progress-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.serial-modal__progress-state--complete {
-  color: #86efac;
-}
-
-.serial-modal__progress-track {
-  position: relative;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border-subtle);
-  overflow: hidden;
-}
-
-.serial-modal__progress-bar {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.85), rgba(var(--accent-rgb), 1));
-  transition: width 0.2s ease;
-}
-
-.serial-modal__field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.serial-modal__field label {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.serial-modal__input-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.serial-modal__input-row input {
-  flex: 1;
-  min-width: 0;
-  height: 44px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  background: var(--surface-hover);
-  color: var(--text-strong);
-  padding: 0.8rem 0.9rem;
-  font: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-
-  &::placeholder {
     color: var(--text-muted);
   }
 
-  &:focus {
-    outline: none;
-    border-color: rgb(var(--accent-rgb));
-    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+  &__title { margin: 0; font-size: 1.15rem; font-weight: 700; line-height: 1.3; color: var(--text-strong); }
+
+  &__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
+
+  &__stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    background: var(--surface-sunken);
+
+    span {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-subtle);
+    }
+    strong { font-size: 1.05rem; font-weight: 700; color: var(--text-strong); }
   }
 
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-}
+  &__progress { display: flex; flex-direction: column; gap: 0.5rem; }
 
-.serial-modal__add-btn,
-.serial-modal__ghost,
-.serial-modal__secondary,
-.serial-modal__primary {
-  min-height: 42px;
-  border-radius: 10px;
-  padding: 0.7rem 1rem;
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.serial-modal__add-btn,
-.serial-modal__primary {
-  background: rgb(var(--accent-rgb));
-  border: 1px solid rgb(var(--accent-rgb));
-  color: var(--ink-on-accent);
-}
-
-.serial-modal__add-btn:hover:not(:disabled),
-.serial-modal__primary:hover:not(:disabled) {
-  filter: brightness(0.96);
-}
-
-.serial-modal__ghost,
-.serial-modal__secondary {
-  border: 1px solid var(--border-subtle);
-  background: transparent;
-  color: var(--text-strong);
-}
-
-.serial-modal__primary:disabled,
-.serial-modal__add-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.serial-modal__helper,
-.serial-modal__limit {
-  margin: 0;
-  font-size: 0.76rem;
-  color: var(--text-muted);
-}
-
-.serial-modal__banner {
-  padding: 0.7rem 0.8rem;
-  border: 1px solid rgba(248, 113, 113, 0.45);
-  border-radius: 10px;
-  background: rgba(239, 68, 68, 0.08);
-  color: #fca5a5;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.serial-modal__error-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.serial-modal__error-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.7rem 0.8rem;
-  border-radius: 10px;
-  border: 1px solid rgba(248, 113, 113, 0.4);
-  background: rgba(239, 68, 68, 0.08);
-  color: #fca5a5;
-  font-size: 0.78rem;
-}
-
-.serial-modal__chips-wrap {
-  min-height: 120px;
-  max-height: 240px;
-  overflow-y: auto;
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.01);
-  padding: 0.75rem;
-}
-
-.serial-modal__empty-state {
-  min-height: 120px;
-  display: grid;
-  place-items: center;
-  text-align: center;
-  gap: 0.5rem;
-  color: var(--text-muted);
-
-  span {
-    font-size: 1.7rem;
-    opacity: 0.7;
+  &__progress-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
   }
 
-  p {
-    margin: 0;
+  &__progress-state--complete { color: var(--success-ink); font-weight: 600; }
+
+  &__progress-track {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--surface-track);
+    overflow: hidden;
+  }
+
+  &__progress-bar {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: rgb(var(--accent-rgb));
+    transition: width 0.2s ease;
+  }
+
+  &__field { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  &__field label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-body);
+  }
+
+  &__input-row { display: flex; align-items: center; gap: 0.6rem; }
+
+  &__input-row input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text-strong);
+    padding: 0.65rem 0.8rem;
+    font: inherit;
     font-size: 0.9rem;
-  }
-}
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
-.serial-modal__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-}
-
-.serial-modal__chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.45rem 0.65rem 0.45rem 0.5rem;
-  min-height: 36px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.02);
-  color: var(--text-strong);
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 0.8rem;
-  cursor: pointer;
-
-  &:hover {
-    border-color: rgba(var(--accent-rgb), 0.45);
+    &::placeholder { color: var(--text-faint); }
+    &:focus {
+      outline: none;
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+    }
+    &:disabled { opacity: 0.6; cursor: not-allowed; }
   }
 
-  &--new {
-    border-color: rgba(var(--accent-rgb), 0.6);
-    box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.15);
-    background: rgba(var(--accent-rgb), 0.08);
+  &__helper,
+  &__limit { margin: 0; font-size: 0.76rem; color: var(--text-subtle); }
+
+  &__limit { color: var(--success-ink); font-weight: 600; }
+
+  &__banner {
+    margin: 0;
+    padding: 0.7rem 0.9rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--danger);
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    border-radius: 10px;
   }
-}
 
-.serial-modal__chip-index {
-  opacity: 0.72;
-}
+  &__error-list { display: flex; flex-direction: column; gap: 0.5rem; }
 
-.serial-modal__chip-value {
-  font-weight: 600;
-}
+  &__error-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 0.9rem;
+    font-size: 0.78rem;
+    color: var(--danger);
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    border-radius: 10px;
 
-.serial-modal__chip-remove {
-  font-size: 1rem;
-  opacity: 0.8;
-}
+    svg { width: 16px; height: 16px; flex-shrink: 0; stroke: currentColor; stroke-width: 1.8; }
+  }
 
-.serial-modal__existing {
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.01);
-}
+  &__chips-wrap {
+    min-height: 120px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 0.75rem;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+  }
 
-.serial-modal__existing-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.8rem 0.9rem;
-  background: transparent;
-  border: none;
-  color: var(--text-strong);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
+  &__empty-state {
+    min-height: 96px;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 0.5rem;
+    text-align: center;
+    color: var(--text-subtle);
 
-.serial-modal__existing-panel {
-  border-top: 1px solid var(--border-subtle);
-  padding: 0.8rem;
-}
+    svg { width: 28px; height: 28px; stroke: currentColor; stroke-width: 1.5; }
+    p { margin: 0; font-size: 0.86rem; }
+  }
 
-.serial-modal__existing-search input {
-  width: 100%;
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-hover);
-  color: var(--text-strong);
-  border-radius: 10px;
-  padding: 0.7rem 0.8rem;
-  font: inherit;
-}
+  &__chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
-.serial-modal__existing-list {
-  display: grid;
-  gap: 0.45rem;
-  max-height: 160px;
-  overflow-y: auto;
-  margin-top: 0.8rem;
-}
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 34px;
+    padding: 0.3rem 0.6rem 0.3rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-strong);
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.78rem;
+    cursor: pointer;
 
-.serial-modal__existing-item {
-  padding: 0.55rem 0.65rem;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid var(--border-subtle);
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 0.78rem;
-  color: var(--text-body);
-}
+    &:hover { border-color: var(--danger); background: var(--danger-bg); }
 
-.serial-modal__footer-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-left: auto;
+    &--new,
+    &--new:hover {
+      border-color: rgb(var(--accent-rgb) / 0.7);
+      background: rgb(var(--accent-rgb) / 0.12);
+    }
+  }
+
+  &__chip-index { color: var(--text-subtle); }
+  &__chip-value { font-weight: 600; }
+  &__chip-remove { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2; opacity: 0.6; }
+
+  &__existing {
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  &__existing-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 0.9rem;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: var(--text-strong);
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 600;
+    cursor: pointer;
+
+    &:hover { background: var(--surface-sunken); border-color: transparent; }
+
+    span:last-child { color: var(--accent-ink); font-size: 0.8rem; }
+  }
+
+  &__existing-panel { border-top: 1px solid var(--border-subtle); padding: 0.8rem; }
+
+  &__existing-search input {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-strong);
+    border-radius: 10px;
+    padding: 0.6rem 0.8rem;
+    font: inherit;
+    font-size: 0.86rem;
+
+    &:focus {
+      outline: none;
+      border-color: rgb(var(--accent-rgb));
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+    }
+  }
+
+  &__existing-list {
+    display: grid;
+    gap: 0.4rem;
+    max-height: 160px;
+    overflow-y: auto;
+    margin-top: 0.8rem;
+  }
+
+  &__existing-item {
+    padding: 0.5rem 0.65rem;
+    border-radius: 8px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-subtle);
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.78rem;
+    color: var(--text-body);
+  }
 }
 
 @keyframes serialModalFade {
@@ -2268,49 +1717,37 @@ watch(
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+@media (max-width: 900px) {
+  .product-header { flex-wrap: wrap; }
+}
+
 @media (max-width: 640px) {
+  .page__body { padding: 1rem; }
+
   .serial-modal {
     padding: 0;
-    align-items: flex-end;
-  }
+    align-items: end;
 
-  .serial-modal__panel {
-    width: 100%;
-    max-width: 100%;
-    max-height: 92vh;
-    border-radius: 18px 18px 0 0;
-  }
+    &__panel {
+      width: 100%;
+      max-width: 100%;
+      max-height: 92vh;
+      border-radius: 14px 14px 0 0;
+    }
 
-  .serial-modal__header,
-  .serial-modal__footer {
-    padding: 0.9rem 1rem;
-  }
+    &__header,
+    &__footer { padding: 0.9rem 1rem; }
 
-  .serial-modal__body {
-    padding: 1rem;
-  }
+    &__body { padding: 1rem; }
 
-  .serial-modal__input-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
+    &__input-row { flex-direction: column; align-items: stretch; }
 
-  .serial-modal__add-btn,
-  .serial-modal__primary,
-  .serial-modal__secondary,
-  .serial-modal__ghost {
-    width: 100%;
-  }
-
-  .serial-modal__footer {
-    justify-content: stretch;
-  }
-
-  .serial-modal__footer-actions {
-    width: 100%;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    margin-left: 0;
+    &__footer-actions {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      margin-left: 0;
+    }
   }
 }
 
@@ -2319,14 +1756,5 @@ watch(
   .serial-modal__panel {
     animation: none;
   }
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border-subtle);
 }
 </style>

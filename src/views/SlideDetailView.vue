@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import SlideSequence from '@/components/slides/SlideSequence.vue'
-import { deleteSlide as removeSlide, fetchSlide } from '@/services/slides'
+import { deleteSlide as removeSlide, fetchSlide, transitionLabel } from '@/services/slides'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -32,10 +32,12 @@ const schedule = computed(() => {
 // Describes how the slide renders, which follows from the image count alone.
 const mediaSummary = computed(() => {
   if (!slide.value) return ''
-  const { images, durationMs, transition } = slide.value
+  const { images, durationMs, transitions } = slide.value
   if (!images.length) return 'Gradient background'
   if (images.length === 1) return '1 image'
-  return `${images.length} images · ${durationMs / 1000}s each · ${transition}`
+  const same = transitions.every((t) => t === transitions[0])
+  const label = same ? transitionLabel(transitions[0]) : 'mixed transitions'
+  return `${images.length} images · ${durationMs / 1000}s each · ${label}`
 })
 
 function editSlide() {
@@ -119,6 +121,7 @@ onMounted(loadSlide)
               :images="slide.images"
               :duration-ms="slide.durationMs"
               :transition="slide.transition"
+              :transitions="slide.transitions"
               :alt="slide.title"
             />
             <div class="preview__overlay">

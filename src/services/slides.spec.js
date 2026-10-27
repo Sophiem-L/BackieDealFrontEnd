@@ -4,6 +4,7 @@ import {
   slideToPayload,
   saveSlideOrder,
   DEFAULT_GRADIENT,
+  SLIDE_TRANSITIONS,
 } from '@/services/slides'
 import { apiFetch } from '@/services/api'
 
@@ -68,6 +69,51 @@ describe('slideFromApi — images', () => {
     expect(slide.durationMs).toBe(5000)
     expect(slide.transition).toBe('cut')
     expect(slide.gradient).toBe('red')
+  })
+
+  it.each(SLIDE_TRANSITIONS.map((t) => t.value))('keeps the %s transition', (transition) => {
+    expect(slideFromApi(banner({ meta: { transition } })).transition).toBe(transition)
+  })
+
+  it('reads the direction-less blinds saved by an earlier build as blinds from the left', () => {
+    expect(slideFromApi(banner({ meta: { transition: 'blinds' } })).transition).toBe('blinds-left')
+  })
+
+  it('reads each image\'s own transition, cover first', () => {
+    const slide = slideFromApi(
+      banner({
+        image_desktop: 'cover.png',
+        meta: { frames: ['two.png', 'three.png'], transition: 'fade', transitions: ['fade', 'slide', 'blinds-right'] },
+      }),
+    )
+
+    expect(slide.transitions).toEqual(['fade', 'slide', 'blinds-right'])
+  })
+
+  it('gives every image the slide default when it was saved without per-image transitions', () => {
+    const slide = slideFromApi(
+      banner({
+        image_desktop: 'cover.png',
+        meta: { frames: ['two.png', 'three.png'], transition: 'zoom' },
+      }),
+    )
+
+    expect(slide.transitions).toEqual(['zoom', 'zoom', 'zoom'])
+  })
+
+  it('fills the gaps when the per-image list is shorter than the image list', () => {
+    const slide = slideFromApi(
+      banner({
+        image_desktop: 'cover.png',
+        meta: { frames: ['two.png', 'three.png'], transition: 'cut', transitions: ['slide'] },
+      }),
+    )
+
+    expect(slide.transitions).toEqual(['slide', 'cut', 'cut'])
+  })
+
+  it('plays an unrecognised transition as fade', () => {
+    expect(slideFromApi(banner({ meta: { transition: 'spin' } })).transition).toBe('fade')
   })
 })
 
@@ -160,6 +206,33 @@ describe('slideToPayload', () => {
     expect(back.images).toEqual(images)
     expect(back.durationMs).toBe(5000)
     expect(back.transition).toBe('cut')
+  })
+
+  it('saves each image\'s transition next to the default', () => {
+    const images = ['a.png', 'b.png', 'c.png']
+    const payload = slideToPayload(
+      form({ images, transition: 'fade', transitions: ['fade', 'slide', 'blinds-right'] }),
+    )
+
+    expect(payload.meta.transition).toBe('fade')
+    expect(payload.meta.transitions).toEqual(['fade', 'slide', 'blinds-right'])
+  })
+
+  it('saves one transition per image even when the form has fewer', () => {
+    const payload = slideToPayload(
+      form({ images: ['a.png', 'b.png', 'c.png'], transition: 'zoom', transitions: ['slide'] }),
+    )
+
+    expect(payload.meta.transitions).toEqual(['slide', 'zoom', 'zoom'])
+  })
+
+  it('survives a round trip with a different transition on every image', () => {
+    const images = ['a.png', 'b.png', 'c.png']
+    const transitions = ['fade', 'slide', 'blinds-right']
+    const payload = slideToPayload(form({ images, transitions }))
+    const back = slideFromApi({ ...banner(), ...payload, meta: payload.meta })
+
+    expect(back.transitions).toEqual(transitions)
   })
 
   it('sends null for the cover when there are no images', () => {

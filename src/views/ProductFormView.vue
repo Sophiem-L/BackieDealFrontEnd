@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import RichTextEditor from '@/components/RichTextEditor.vue'
 import ProductImageGallery from '@/components/products/ProductImageGallery.vue'
 import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
@@ -342,7 +343,13 @@ function cancel() {
             </div>
             <div class="field field--description">
               <label for="description">Description</label>
-              <textarea id="description" v-model="form.description" rows="4" placeholder="Describe the product..."></textarea>
+              <RichTextEditor
+                id="description"
+                v-model="form.description"
+                label="Product description"
+                placeholder="Describe the product..."
+                :readonly="isView"
+              />
             </div>
             <label class="serialized-toggle">
               <input v-model="form.isSerialized" type="checkbox" />

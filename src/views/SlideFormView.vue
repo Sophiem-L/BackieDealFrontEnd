@@ -31,6 +31,8 @@ const form = reactive({
   images: [],
   durationMs: 3000,
   transition: 'fade',
+  // How each image comes in, parallel to `images`.
+  transitions: [],
   gradient: DEFAULT_GRADIENT,
   startDate: '',
   endDate: '',
@@ -60,7 +62,11 @@ async function loadSlide() {
   error.value = ''
   try {
     const existing = await fetchSlide(route.params.id, auth.accessToken)
-    Object.assign(form, { ...existing, images: [...existing.images] })
+    Object.assign(form, {
+      ...existing,
+      images: [...existing.images],
+      transitions: [...existing.transitions],
+    })
   } catch (err) {
     error.value = err.message || 'Could not load this slide.'
   } finally {
@@ -146,6 +152,7 @@ onMounted(() => {
                 :images="form.images"
                 :duration-ms="form.durationMs"
                 :transition="form.transition"
+                :transitions="form.transitions"
                 :alt="form.title"
               />
               <div class="preview__overlay">
@@ -194,6 +201,7 @@ onMounted(() => {
               v-model:images="form.images"
               v-model:duration-ms="form.durationMs"
               v-model:transition="form.transition"
+              v-model:transitions="form.transitions"
             />
             <p class="card__hint">
               Add two or more images and the slide plays them as a looping sequence. Recommended:

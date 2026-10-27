@@ -184,45 +184,6 @@ async function removeMethod(method) {
     <section class="settings-card">
       <div class="settings-section__header">
         <div>
-          <p class="settings-section__eyebrow">Zones & rates</p>
-          <h2>Zones & rates</h2>
-        </div>
-      </div>
-
-      <div class="table-wrap zones-wrap">
-        <table class="zones-table">
-          <colgroup><col class="zone-name-col" /><col class="zone-regions-col" /><col class="zone-methods-col" /><col class="zone-rates-col" /><col class="zone-actions-col" /></colgroup>
-          <thead>
-            <tr><th scope="col">Zone name</th><th scope="col">Regions</th><th scope="col">Methods</th><th scope="col">Rates</th><th scope="col"><span class="sr-only">Actions</span></th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="(zone, index) in form.zones" :key="`${zone.name}-${index}`" class="zone-row">
-              <td data-label="Zone name"><input v-model="zone.name" aria-label="Zone name" placeholder="Name" /></td>
-              <td data-label="Regions"><input v-model="zone.regions" aria-label="Zone regions" placeholder="Regions" /></td>
-              <td data-label="Methods"><input v-model="zone.methods" aria-label="Zone delivery methods" placeholder="Methods" /></td>
-              <td data-label="Rates"><input v-model="zone.rates" aria-label="Zone rates" placeholder="Rates" /></td>
-              <td data-label="Actions" class="actions-cell"><BaseButton class="icon-action" variant="danger" size="sm" :title="`Remove ${zone.name} zone`" :aria-label="`Remove ${zone.name} zone`" @click="removeZone(index)"><template #icon><Trash2 /></template><span class="sr-only">Remove {{ zone.name }} zone</span></BaseButton></td>
-            </tr>
-            <tr v-if="showZoneForm" class="zone-row zone-row--new">
-              <td data-label="Zone name"><input v-model="newZone.name" aria-label="New zone name" placeholder="Name" /></td>
-              <td data-label="Regions"><input v-model="newZone.regions" aria-label="New zone regions" placeholder="Regions" /></td>
-              <td data-label="Methods"><input v-model="newZone.methods" aria-label="New zone methods" placeholder="Methods" /></td>
-              <td data-label="Rates"><input v-model="newZone.rates" aria-label="New zone rates" placeholder="Rates" /></td>
-              <td data-label="Actions" class="actions-cell"><BaseButton variant="primary" size="sm" :disabled="!newZone.name.trim() || !newZone.regions.trim()" @click="addZone">Add zone</BaseButton></td>
-            </tr>
-            <tr v-if="!form.zones.length && !showZoneForm"><td colspan="5" class="empty-cell">No delivery zones configured.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="section-actions">
-        <BaseButton variant="ghost" @click="showZoneForm = !showZoneForm">{{ showZoneForm ? 'Cancel' : 'Add zone' }}</BaseButton>
-      </div>
-    </section>
-
-    <section class="settings-card">
-      <div class="settings-section__header">
-        <div>
           <p class="settings-section__eyebrow">Delivery options</p>
           <h2>Delivery options</h2>
         </div>
@@ -265,25 +226,6 @@ async function removeMethod(method) {
         <p v-if="createError" class="settings-error form-error" role="alert">{{ createError }}</p>
         <div class="method-form__actions"><BaseButton type="submit" variant="primary">Create method</BaseButton></div>
       </form>
-    </section>
-
-    <section class="settings-card">
-      <div class="settings-section__header">
-        <div>
-          <p class="settings-section__eyebrow">Origin & packaging</p>
-          <h2>Origin & packaging</h2>
-        </div>
-      </div>
-
-      <div class="field-grid">
-        <label class="field field--wide"><span>Warehouse address</span><textarea v-model="form.warehouse" rows="3" placeholder="Street, city, country" /></label>
-        <label class="field"><span>Default package weight <small>kg</small></span><input v-model.number="form.packageWeight" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-        <label class="field"><span>Free shipping threshold <small>USD</small></span><input v-model.number="form.freeShippingThreshold" type="number" min="0" step="1" inputmode="decimal" /></label>
-      </div>
-
-      <div class="example-box">
-        Orders over ${{ form.freeShippingThreshold }} ship free.
-      </div>
     </section>
 
     <div v-if="toast" class="settings-toast" role="status">{{ toast }}</div>
