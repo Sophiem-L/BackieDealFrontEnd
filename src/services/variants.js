@@ -10,6 +10,9 @@
 const SKU_PATTERN = /^[A-Za-z0-9._-]+$/
 const SKU_MAX = 64
 const NAME_MAX = 191
+// Mirrors `serial_numbers.*` on POST /admin/product-serials.
+const SERIAL_MAX = 191
+const SERIAL_SPLIT = /[\r\n\t,;]+/
 
 /** "Space Grey!" -> "space-grey" */
 export function slugifyPart(value) {
@@ -112,10 +115,65 @@ export function blankRow() {
     attributes: {},
     isDefault: false,
     isActive: true,
+    // Serial numbers typed for this variant, one per physical unit. Received
+    // through their own endpoint once the product is saved, so never sent with
+    // the variant - see pendingSerialReceipts.
+    serials: [],
     // Set once the admin edits the SKU by hand, which stops it tracking the
     // generated base SKU. Never sent to the API.
     skuTouched: false,
   }
+}
+
+const serialKey = (serial) => String(serial ?? '').trim().toLowerCase()
+
+/**
+ * Pasted or typed text -> serial numbers. Upper-cased like the stock adjustment
+ * page does: the lookup endpoint compares serials exactly, so mixed case would
+ * leave a unit unfindable.
+ */
+export function parseSerialInput(text) {
+  return String(text ?? '')
+    .split(SERIAL_SPLIT)
+    .map((serial) => serial.trim().toUpperCase())
+    .filter(Boolean)
+}
+
+/**
+ * Append the serials in `text` to `existing`. Repeats are skipped and reported in
+ * `duplicates`, whether they repeat the list, the input itself, or `taken` (the
+ * serials already on the product's other variants).
+ */
+export function addSerials(existing = [], text = '', taken = []) {
+  const known = new Set([...existing, ...taken].map(serialKey))
+  const serials = [...existing]
+  const duplicates = []
+
+  for (const serial of parseSerialInput(text)) {
+    if (known.has(serialKey(serial))) {
+      duplicates.push(serial)
+      continue
+    }
+    known.add(serialKey(serial))
+    serials.push(serial)
+  }
+
+  return { serials, duplicates }
+}
+
+/**
+ * Pair every row that has serials waiting with the saved variant of the same
+ * SKU, whose id the receive endpoint needs. `variantId` is null when the saved
+ * product has no such SKU.
+ */
+export function pendingSerialReceipts(rows = [], savedVariants = []) {
+  const idBySku = new Map(savedVariants.map((variant) => [serialKey(variant.sku), variant.id]))
+
+  return rows.flatMap((row) => {
+    const serials = row.serials ?? []
+    if (!serials.length) return []
+    return [{ sku: row.sku, variantId: idBySku.get(serialKey(row.sku)) ?? null, serials }]
+  })
 }
 
 /**
@@ -179,6 +237,7 @@ export function buildVariants(axes, baseSku, existingRows = []) {
 export function validateVariants(rows) {
   const errors = {}
   const seen = new Map()
+  const serialOwner = new Map()
 
   rows.forEach((row, index) => {
     const name = String(row.name ?? '').trim()
@@ -211,6 +270,21 @@ export function validateVariants(rows) {
       return
     }
     seen.set(key, index)
+
+    // A serial belongs to exactly one unit. The API only finds a repeat after the
+    // product is saved, which would leave it half-saved, so catch it here.
+    for (const serial of row.serials ?? []) {
+      if (serial.length > SERIAL_MAX) {
+        errors[index] = `Serial numbers must be ${SERIAL_MAX} characters or fewer.`
+        return
+      }
+      const owner = serialOwner.get(serialKey(serial))
+      if (owner !== undefined) {
+        errors[index] = `Serial number ${serial} is already used by variant ${owner + 1}.`
+        return
+      }
+      serialOwner.set(serialKey(serial), index)
+    }
   })
 
   return { valid: Object.keys(errors).length === 0, errors }

@@ -7,10 +7,14 @@
  * No inventory section - stock is edited in the grouped table on the product
  * form. Edits are applied live to the row via `patch`; a brand-new variant is
  * held locally until Done, then emitted with `append`.
+ *
+ * Serial numbers are the exception to "no inventory": when the product tracks
+ * them, each variant lists the units typed here. They only wait on the row; the
+ * product form receives them once the product has been saved.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ACCEPT_ATTR, uploadImage } from '@/services/media'
-import { blankRow } from '@/services/variants'
+import { addSerials, blankRow, parseSerialInput } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps({
@@ -28,9 +32,13 @@ const props = defineProps({
   productName: { type: String, default: 'Product' },
   productImage: { type: String, default: '' },
   productActive: { type: Boolean, default: true },
+  // The product's "Track individual serial numbers" switch. The API refuses
+  // serials for a product that doesn't have it on, so the entry box stays hidden
+  // until it is; the card's own switch turns it on via `update:serialized`.
+  serialized: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['patch', 'append', 'delete', 'select', 'close', 'toggle-promotion'])
+const emit = defineEmits(['patch', 'append', 'delete', 'select', 'close', 'toggle-promotion', 'update:serialized'])
 
 const auth = useAuthStore()
 
@@ -71,6 +79,53 @@ function setField(field, value) {
 /* ------------------------------------------------------------------ pricing */
 
 const moreOpen = ref(false)
+
+/* ----------------------------------------------------------------- serials */
+
+const serialInput = ref('')
+const serialNote = ref('')
+
+const serials = computed(() => current.value.serials ?? [])
+
+// A serial is one physical unit, so it can't also sit on another variant.
+const takenElsewhere = computed(() =>
+  props.rows.flatMap((row, i) => (!props.isNew && i === props.index ? [] : (row.serials ?? []))),
+)
+
+function receiveSerials(text) {
+  const { serials: next, duplicates } = addSerials(serials.value, text, takenElsewhere.value)
+  setField('serials', next)
+  serialNote.value = duplicates.length ? `Skipped, already in use: ${duplicates.join(', ')}` : ''
+}
+
+function commitSerial() {
+  if (!serialInput.value.trim()) return
+  receiveSerials(serialInput.value)
+  serialInput.value = ''
+}
+
+// A single-line input drops the line breaks from a pasted list, gluing the
+// serials together, so a multi-serial paste is taken over and split here.
+function onSerialPaste(event) {
+  const text = event.clipboardData?.getData('text') ?? ''
+  if (parseSerialInput(text).length < 2) return
+  event.preventDefault()
+  receiveSerials(text)
+}
+
+function removeSerial(serial) {
+  setField('serials', serials.value.filter((candidate) => candidate !== serial))
+  serialNote.value = ''
+}
+
+// What was half-typed or reported for one variant means nothing on the next.
+watch(
+  () => [props.index, props.isNew],
+  () => {
+    serialInput.value = ''
+    serialNote.value = ''
+  },
+)
 
 /* ------------------------------------------------------------------- media */
 
@@ -230,24 +285,34 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
       <div class="vp__main">
         <section class="card">
           <div class="media">
-            <button type="button" class="media__tile" :class="{ 'media__tile--empty': !current.image }" @click="pickFile">
+            <button
+              type="button"
+              class="media__tile"
+              :class="{ 'media__tile--empty': !current.image }"
+              :aria-label="current.image ? 'Change variant image' : 'Add variant image'"
+              @click="pickFile"
+            >
               <span v-if="uploading" class="media__spinner" aria-hidden="true"></span>
               <img v-else-if="current.image" :src="current.image" alt="" />
               <svg v-else viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" stroke-linecap="round" />
               </svg>
             </button>
-            <div v-if="pool.length" class="media__pool">
-              <button
-                v-for="url in pool"
-                :key="url"
-                type="button"
-                class="media__poolitem"
-                :class="{ 'is-active': url === current.image }"
-                @click="setField('image', url)"
-              >
-                <img :src="url" alt="" />
-              </button>
+            <div class="media__text">
+              <p class="media__label">Variant image</p>
+              <p class="media__hint">JPG, PNG, GIF, WebP or SVG. Up to 5MB.</p>
+              <div v-if="pool.length" class="media__pool">
+                <button
+                  v-for="url in pool"
+                  :key="url"
+                  type="button"
+                  class="media__poolitem"
+                  :class="{ 'is-active': url === current.image }"
+                  @click="setField('image', url)"
+                >
+                  <img :src="url" alt="" />
+                </button>
+              </div>
             </div>
           </div>
           <p v-if="uploadError" class="media__error">{{ uploadError }}</p>
@@ -341,6 +406,56 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               />
             </label>
           </div>
+        </section>
+
+        <section class="card">
+          <h3 class="card__title">Serial numbers</h3>
+          <label class="serial-track">
+            <input
+              type="checkbox"
+              aria-label="Track serial numbers"
+              :checked="serialized"
+              @change="emit('update:serialized', $event.target.checked)"
+            />
+            <span>
+              <strong>Track serial numbers</strong>
+              <small>Applies to the whole product, so every variant is received and sold by serial.</small>
+            </span>
+          </label>
+          <template v-if="serialized">
+            <p class="card__hint">
+              One per physical unit. Type a serial number and press Enter, or paste a list. They are
+              received when you save the product; stock is still set in the variants table.
+            </p>
+            <div class="serial-add">
+              <input
+                v-model="serialInput"
+                type="text"
+                autocomplete="off"
+                placeholder="Enter serial number"
+                aria-label="Serial number"
+                @keydown.enter.prevent="commitSerial"
+                @paste="onSerialPaste"
+              />
+              <button type="button" class="serial-add__btn" :disabled="!serialInput.trim()" @click="commitSerial">
+                Add
+              </button>
+            </div>
+            <p v-if="serialNote" class="serial-note">{{ serialNote }}</p>
+            <ul v-if="serials.length" class="serial-list">
+              <li v-for="serial in serials" :key="serial" class="serial-chip">
+                <span>{{ serial }}</span>
+                <button type="button" :aria-label="`Remove serial number ${serial}`" @click="removeSerial(serial)">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
+                  </svg>
+                </button>
+              </li>
+            </ul>
+            <p class="serial-count">
+              {{ serials.length }} serial number{{ serials.length === 1 ? '' : 's' }} waiting to be received
+            </p>
+          </template>
         </section>
 
         <section v-if="promotions.length" class="card">
@@ -692,10 +807,31 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
     animation: vp-spin 0.7s linear infinite;
   }
 
+  &__text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+
+  &__label {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-body);
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: 0.74rem;
+    color: var(--text-subtle);
+  }
+
   &__pool {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
+    margin-top: 0.4rem;
   }
 
   &__error {
@@ -785,6 +921,97 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
+
+.serial-track {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  cursor: pointer;
+
+  input[type='checkbox'] { width: 18px; height: 18px; margin: 0.1rem 0 0; flex: none; accent-color: rgb(var(--accent-rgb)); cursor: pointer; }
+
+  span { display: flex; flex-direction: column; gap: 0.15rem; }
+  strong { font-size: 0.86rem; font-weight: 600; color: var(--text-strong); }
+  small { font-size: 0.74rem; color: var(--text-subtle); }
+}
+
+.serial-add {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+
+  input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 0.6rem 0.75rem;
+    font: inherit;
+    font-size: 0.88rem;
+    color: var(--text-strong);
+    background: var(--surface);
+
+    &::placeholder { color: var(--text-faint); }
+    &:focus { outline: none; border-color: rgb(var(--accent-rgb)); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18); }
+  }
+
+  &__btn {
+    padding: 0.5rem 1.1rem;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #fff;
+    background: rgb(var(--accent-rgb));
+    border: none;
+    border-radius: 9px;
+    cursor: pointer;
+
+    &:hover:not(:disabled) { filter: brightness(0.95); }
+    &:disabled { opacity: 0.45; cursor: default; }
+  }
+}
+
+.serial-note { margin: 0.5rem 0 0; font-size: 0.76rem; color: var(--danger); }
+
+.serial-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.serial-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.3rem 0.25rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-body);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+
+  button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+
+    &:hover { background: var(--border-subtle); }
+    svg { width: 11px; height: 11px; stroke: var(--text-subtle); stroke-width: 2.4; }
+  }
+}
+
+.serial-count { margin: 0.75rem 0 0; font-size: 0.74rem; color: var(--text-subtle); }
 
 .promo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 

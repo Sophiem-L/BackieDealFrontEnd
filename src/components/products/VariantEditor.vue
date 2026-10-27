@@ -45,9 +45,11 @@ const props = defineProps({
   productName: { type: String, default: 'Product' },
   productImage: { type: String, default: '' },
   productActive: { type: Boolean, default: true },
+  // The product's serial-tracking switch, passed on to the variant screen.
+  serialized: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['update:modelValue', 'update:valid', 'toggle-promotion'])
+const emit = defineEmits(['update:modelValue', 'update:valid', 'toggle-promotion', 'update:serialized'])
 
 const auth = useAuthStore()
 
@@ -648,12 +650,14 @@ const selectedPromotions = computed(() =>
         :product-name="productName"
         :product-image="productImage"
         :product-active="productActive"
+        :serialized="serialized"
         @patch="patchRow"
         @append="appendVariant"
         @select="selectVariant"
         @delete="deleteDetail"
         @close="panelOpen = false"
         @toggle-promotion="emit('toggle-promotion', $event)"
+        @update:serialized="emit('update:serialized', $event)"
       />
     </Teleport>
   </div>

@@ -7,9 +7,11 @@ import ProductImageGallery from '@/components/products/ProductImageGallery.vue'
 import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
 import { fetchPromotions } from '@/services/promotions'
+import { receiveSerials } from '@/services/serials'
 import {
   deriveProductPrice,
   fromApiVariant,
+  pendingSerialReceipts,
   sumVariantStock,
   toApiVariants,
 } from '@/services/variants'
@@ -23,6 +25,11 @@ const auth = useAuthStore()
 // The param holds the product `id` (UUID) — the API's route key.
 const isEdit = computed(() => Boolean(route.params.id))
 const productId = computed(() => route.params.id)
+// Set once a create has gone through. Serial numbers are received in a second
+// request, so if that one fails the product already exists and the next save has
+// to update it rather than create a duplicate.
+const createdProductId = ref('')
+const savedProductId = computed(() => productId.value || createdProductId.value)
 // Read-only view mode when opened with ?view=1 (the list's View icon).
 const isView = computed(() => Boolean(route.query.view))
 
@@ -171,9 +178,44 @@ const seedImages = computed(() => {
   return primary ? [primary, ...urls.filter((url) => url !== primary)] : urls
 })
 
+function messageFrom(err, fallback) {
+  const fieldError = Object.values(err.errors ?? {})[0]
+  return (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || fallback
+}
+
+// Serial numbers can't ride along with the variants: the API receives them
+// against a saved variant id. Each batch is dropped from its row once received,
+// so a retry after a failure never sends the same serials twice.
+async function receivePendingSerials(product) {
+  for (const receipt of pendingSerialReceipts(form.variants, product.variants ?? [])) {
+    if (receipt.variantId == null) {
+      throw new Error(`Variant ${receipt.sku} was not found on the saved product.`)
+    }
+    await receiveSerials(
+      {
+        product_id: product.id,
+        product_variant_id: receipt.variantId,
+        serial_numbers: receipt.serials,
+      },
+      auth.accessToken,
+    )
+    form.variants = form.variants.map((row) =>
+      row.sku === receipt.sku ? { ...row, serials: [] } : row,
+    )
+  }
+}
+
 async function save() {
-  saving.value = true
   error.value = ''
+
+  if (!form.isSerialized && form.variants.some((row) => row.serials?.length)) {
+    error.value =
+      'Serial numbers are entered, but "Track individual serial numbers" is off. Turn it on, or remove the serial numbers.'
+    return
+  }
+
+  saving.value = true
+  const updating = Boolean(savedProductId.value)
 
   // Pricing and stock live on the variants now; the product columns the API
   // still requires are derived from them.
@@ -210,26 +252,36 @@ async function save() {
 
   if (form.variants.length) {
     body.variants = toApiVariants(form.variants)
-    if (isEdit.value) body.replace_variants = false
+    if (updating) body.replace_variants = false
+  }
+
+  let product
+  try {
+    const response = updating
+      ? await apiFetch(`/admin/products/${savedProductId.value}`, {
+          method: 'PUT',
+          body,
+          token: auth.accessToken,
+        })
+      : await apiFetch('/admin/products', { method: 'POST', body, token: auth.accessToken })
+    product = response?.data ?? {}
+    if (!updating) createdProductId.value = product.id ?? ''
+  } catch (err) {
+    error.value = messageFrom(err, 'Unable to save this product.')
+    saving.value = false
+    return
   }
 
   try {
-    if (isEdit.value) {
-      await apiFetch(`/admin/products/${productId.value}`, {
-        method: 'PUT',
-        body,
-        token: auth.accessToken,
-      })
-    } else {
-      await apiFetch('/admin/products', { method: 'POST', body, token: auth.accessToken })
-    }
-    router.push('/products')
+    await receivePendingSerials(product)
   } catch (err) {
-    const fieldError = Object.values(err.errors ?? {})[0]
-    error.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to save this product.'
-  } finally {
+    error.value = `The product was saved, but its serial numbers were not all received: ${messageFrom(err, 'unknown error')}`
     saving.value = false
+    return
   }
+
+  saving.value = false
+  router.push('/products')
 }
 function cancel() {
   router.push('/products')
@@ -323,6 +375,7 @@ function cancel() {
               :product-name="form.name || 'New product'"
               :product-image="primaryImageUrl"
               :product-active="form.isActive"
+              v-model:serialized="form.isSerialized"
               @toggle-promotion="togglePromotion"
             />
           </section>
@@ -336,7 +389,7 @@ function cancel() {
         <BaseButton variant="ghost" :disabled="saving" @click="cancel">Cancel</BaseButton>
         <BaseButton variant="primary" :disabled="saving || !variantsValid" @click="save">
           <template v-if="saving">Saving…</template>
-          <template v-else>{{ isEdit ? 'Update Product' : 'Create Product' }}</template>
+          <template v-else>{{ savedProductId ? 'Update Product' : 'Create Product' }}</template>
         </BaseButton>
       </div>
     </div>
