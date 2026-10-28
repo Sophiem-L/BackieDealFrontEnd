@@ -101,11 +101,6 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
                   <path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5v-9Z" stroke-linejoin="round" />
                   <path d="M3 7.5 12 12m0 0 9-4.5M12 12v9M7.5 5.2v5" stroke-linecap="round" />
                 </svg>
-                <!-- Serial numbers (barcode) -->
-                <svg v-else-if="item.icon === 'serials'" viewBox="0 0 24 24" fill="none">
-                  <path d="M4 5v14M7 5v14M10 5v14M14 5v14M16 5v14M20 5v14" stroke-linecap="round" />
-                  <path d="M3 21h18" stroke-linecap="round" />
-                </svg>
                 <!-- Slides (image) -->
                 <svg v-else-if="item.icon === 'slides'" viewBox="0 0 24 24" fill="none">
                   <rect x="3" y="4" width="18" height="14" rx="2" />

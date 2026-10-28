@@ -18,6 +18,11 @@ describe('navigation', () => {
     const labels = sections.flatMap((section) => section.items.map((item) => item.label))
     expect(labels).not.toContain('Orders')
   })
+
+  it('does not expose the Serial Numbers page', () => {
+    const labels = NAV_SECTIONS.flatMap((section) => section.items.map((item) => item.label))
+    expect(labels).not.toContain('Serial Numbers')
+  })
 })
 
 describe('nav badges', () => {
