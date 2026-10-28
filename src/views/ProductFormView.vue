@@ -201,7 +201,9 @@ async function receivePendingSerials(product) {
       auth.accessToken,
     )
     form.variants = form.variants.map((row) =>
-      row.sku === receipt.sku ? { ...row, serials: [] } : row,
+      row.sku === receipt.sku
+        ? { ...row, serials: [], receivedSerials: (row.receivedSerials ?? 0) + receipt.serials.length }
+        : row,
     )
   }
 }

@@ -26,6 +26,7 @@ function mountPanel(props = {}) {
 }
 
 const serialInput = (wrapper) => wrapper.find('input[aria-label="Serial number"]')
+const addButton = (wrapper) => wrapper.find('.serial-add__btn')
 const trackSwitch = (wrapper) => wrapper.find('input[aria-label="Track serial numbers"]')
 const chips = (wrapper) => wrapper.findAll('.serial-chip').map((chip) => chip.text())
 
@@ -81,13 +82,51 @@ describe('VariantDetailPanel serial numbers', () => {
     expect(serialInput(wrapper).element.value).toBe('')
   })
 
-  it('adds a pasted list one serial per line instead of gluing it together', async () => {
+  it('keeps only the first serial of a pasted list and reports the rest as skipped', async () => {
     const wrapper = mountPanel()
     await serialInput(wrapper).trigger('paste', {
       clipboardData: { getData: () => 'a1\nb2\nc3' },
     })
 
-    expect(wrapper.emitted('patch')).toEqual([[0, { serials: ['A1', 'B2', 'C3'] }]])
+    expect(wrapper.emitted('patch')).toEqual([[0, { serials: ['A1'] }]])
+    expect(wrapper.text()).toContain('Each variant can have only 1 serial number. Skipped: B2, C3')
+  })
+
+  it('leaves the entry box and Add button enabled while the variant has no serial', async () => {
+    const wrapper = mountPanel()
+    await serialInput(wrapper).setValue('sn1')
+
+    expect(serialInput(wrapper).attributes('disabled')).toBeUndefined()
+    expect(addButton(wrapper).attributes('disabled')).toBeUndefined()
+  })
+
+  it('disables the entry box and Add button once the variant has a serial waiting', () => {
+    const wrapper = mountPanel({ rows: [row('S', ['SN1']), row('M')] })
+
+    expect(serialInput(wrapper).attributes('disabled')).toBeDefined()
+    expect(addButton(wrapper).attributes('disabled')).toBeDefined()
+  })
+
+  it('disables them for a saved variant that already holds a serial', () => {
+    const wrapper = mountPanel({ rows: [{ ...row('S'), receivedSerials: 1 }, row('M')] })
+
+    expect(serialInput(wrapper).attributes('disabled')).toBeDefined()
+    expect(addButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('This variant already has a serial number')
+  })
+
+  it('does not lock a variant because another one has a serial', () => {
+    const wrapper = mountPanel({ rows: [row('S'), row('M', ['SN1'])] })
+
+    expect(serialInput(wrapper).attributes('disabled')).toBeUndefined()
+  })
+
+  it('unlocks the entry again once the waiting serial is removed', async () => {
+    const wrapper = mountPanel({ rows: [row('S', ['SN1']), row('M')] })
+    await wrapper.find('button[aria-label="Remove serial number SN1"]').trigger('click')
+    await wrapper.setProps({ rows: [row('S'), row('M')] })
+
+    expect(serialInput(wrapper).attributes('disabled')).toBeUndefined()
   })
 
   it('refuses a serial already on another variant and says so', async () => {

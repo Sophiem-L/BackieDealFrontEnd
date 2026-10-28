@@ -14,7 +14,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ACCEPT_ATTR, uploadImage } from '@/services/media'
-import { addSerials, blankRow, parseSerialInput } from '@/services/variants'
+import { MAX_SERIALS_PER_VARIANT, addSerials, blankRow, parseSerialInput } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps({
@@ -92,10 +92,26 @@ const takenElsewhere = computed(() =>
   props.rows.flatMap((row, i) => (!props.isNew && i === props.index ? [] : (row.serials ?? []))),
 )
 
+// A variant takes one serial number. What is already saved on it counts, so the
+// entry stays locked after the product is saved, not only while one is waiting.
+const serialRoom = computed(() =>
+  Math.max(0, MAX_SERIALS_PER_VARIANT - (current.value.receivedSerials ?? 0) - serials.value.length),
+)
+const serialLocked = computed(() => serialRoom.value === 0)
+
 function receiveSerials(text) {
-  const { serials: next, duplicates } = addSerials(serials.value, text, takenElsewhere.value)
+  if (serialLocked.value) return
+  const { serials: added, duplicates } = addSerials(serials.value, text, takenElsewhere.value)
+  const next = added.slice(0, serials.value.length + serialRoom.value)
+  const surplus = added.slice(next.length)
   setField('serials', next)
-  serialNote.value = duplicates.length ? `Skipped, already in use: ${duplicates.join(', ')}` : ''
+
+  const notes = []
+  if (duplicates.length) notes.push(`Skipped, already in use: ${duplicates.join(', ')}`)
+  if (surplus.length) {
+    notes.push(`Each variant can have only ${MAX_SERIALS_PER_VARIANT} serial number. Skipped: ${surplus.join(', ')}`)
+  }
+  serialNote.value = notes.join('. ')
 }
 
 function commitSerial() {
@@ -424,23 +440,32 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
           </label>
           <template v-if="serialized">
             <p class="card__hint">
-              One per physical unit. Type a serial number and press Enter, or paste a list. They are
-              received when you save the product; stock is still set in the variants table.
+              Each variant has one serial number. Type it and press Enter. It is received when you
+              save the product; stock is still set in the variants table.
             </p>
             <div class="serial-add">
               <input
                 v-model="serialInput"
                 type="text"
                 autocomplete="off"
-                placeholder="Enter serial number"
+                :placeholder="serialLocked ? 'This variant already has a serial number' : 'Enter serial number'"
                 aria-label="Serial number"
+                :disabled="serialLocked"
                 @keydown.enter.prevent="commitSerial"
                 @paste="onSerialPaste"
               />
-              <button type="button" class="serial-add__btn" :disabled="!serialInput.trim()" @click="commitSerial">
+              <button
+                type="button"
+                class="serial-add__btn"
+                :disabled="serialLocked || !serialInput.trim()"
+                @click="commitSerial"
+              >
                 Add
               </button>
             </div>
+            <p v-if="current.receivedSerials" class="serial-count">
+              This variant already has a serial number, so no more can be added.
+            </p>
             <p v-if="serialNote" class="serial-note">{{ serialNote }}</p>
             <ul v-if="serials.length" class="serial-list">
               <li v-for="serial in serials" :key="serial" class="serial-chip">

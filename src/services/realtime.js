@@ -1,5 +1,6 @@
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
+import { BASE_URL } from '@/services/api'
 
 window.Pusher = Pusher
 
@@ -16,7 +17,7 @@ export function connectRealtime(token) {
     wssPort: Number(import.meta.env.VITE_REVERB_PORT || 443),
     forceTLS: (import.meta.env.VITE_REVERB_SCHEME || 'http') === 'https',
     enabledTransports: ['ws', 'wss'],
-    authEndpoint: '/api/v1/broadcasting/auth',
+    authEndpoint: `${BASE_URL}/broadcasting/auth`,
     auth: {
       headers: {
         Accept: 'application/json',

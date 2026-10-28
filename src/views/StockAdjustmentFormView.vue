@@ -14,6 +14,7 @@ import {
 import { FORM_SELECT } from '@/lib/selectPresets'
 import { fetchStockCatalog, createBulkStockMovement } from '@/services/stock'
 import { fetchSerials, lookupSerial } from '@/services/serials'
+import { MAX_SERIALS_PER_VARIANT } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -42,7 +43,10 @@ const drawer = reactive({
   input: '',
   search: '',
   selectedSerials: [],
-  availableSerials: [],
+  // What the variant already holds, as { serial, status }. `existingLoaded` flips
+  // once the list has come back, until then the catalog's count stands in.
+  existingSerials: [],
+  existingLoaded: false,
   errors: {},
   pendingExtras: 0,
   originalSerials: [],
@@ -78,6 +82,11 @@ function getRowQty(item) {
   return Number(item.quantityChange) || 0
 }
 
+// A product with variants adjusts stock per variant; one without adjusts itself.
+function isVariantRow() {
+  return Boolean(product.value?.variants?.length)
+}
+
 function getSerialTarget(item) {
   if (!item) return 0
 
@@ -86,6 +95,9 @@ function getSerialTarget(item) {
   const existingSerialCount = getRowSerials(item).length
 
   if (isIncreaseAdjustment(form.adjustmentType)) {
+    // A variant holds one serial number however much stock comes in, so it asks
+    // for one only while the variant has none.
+    if (isVariantRow()) return Math.max(0, MAX_SERIALS_PER_VARIANT - (Number(item.serialsCount) || 0))
     return Math.max(0, (currentQty + adjQty) - existingSerialCount)
   }
 
@@ -127,6 +139,24 @@ function getRowSerials(item) {
   return Array.isArray(item.serialNumbers)
     ? item.serialNumbers.map(normalizeSerial).filter((serial) => serial.length > 0)
     : []
+}
+
+// True when this increase has nothing to enter because the variant already holds
+// its serial number.
+function variantHasSerial(item) {
+  return isVariantRow()
+    && isIncreaseAdjustment(form.adjustmentType)
+    && (Number(item?.serialsCount) || 0) >= MAX_SERIALS_PER_VARIANT
+}
+
+function getExistingSerialCount(item) {
+  return drawer.existingLoaded ? drawer.existingSerials.length : (Number(item?.serialsCount) || 0)
+}
+
+function getSerialModalTitle(item) {
+  if (variantHasSerial(item)) return 'This variant already has a serial number'
+  const required = getRequiredSerials(item)
+  return required === 1 ? 'Add 1 serial number' : `Add ${required} serial numbers`
 }
 
 const summaryText = computed(() => {
@@ -342,24 +372,42 @@ async function openSerialDrawer(item) {
   drawer.pendingExtras = 0
   drawer.selectedSerials = getRowSerials(item)
   drawer.originalSerials = getRowSerials(item)
-  drawer.availableSerials = []
+  drawer.existingSerials = []
+  drawer.existingLoaded = false
   drawer.showExistingSerials = false
   drawer.lastAddedSerial = ''
-
-  if (drawer.mode === 'decrease') {
-    try {
-      const response = await fetchSerials({ product_variant_id: item.id, status: 'available', per_page: 200 }, auth.accessToken)
-      drawer.availableSerials = [...new Set((response.items ?? []).map((serial) => normalizeSerial(serial.serial_number || serial.serialNumber)).filter(Boolean))]
-    } catch (err) {
-      console.error('Failed to load serial inventory', err)
-      drawer.availableSerials = []
-    }
-  }
 
   requestAnimationFrame(() => {
     const input = document.getElementById('serial-modal-input')
     input?.focus()
   })
+
+  // Taking stock out can only remove an available unit; bringing it in lists
+  // everything the variant holds, so its one serial shows up here.
+  const variantId = item.id
+  const params = {
+    ...(isVariantRow() ? { product_variant_id: variantId } : { product_id: variantId }),
+    ...(drawer.mode === 'decrease' ? { status: 'available' } : {}),
+    per_page: 200,
+  }
+  try {
+    const response = await fetchSerials(params, auth.accessToken)
+    // Closed, or reopened on another variant, while the list was loading.
+    if (!drawer.open || drawer.variantId !== variantId) return
+
+    const seen = new Set()
+    drawer.existingSerials = (response?.items ?? []).flatMap((serial) => {
+      const status = serial.status || 'available'
+      const number = normalizeSerial(serial.serial_number || serial.serialNumber)
+      if (!number || status === 'cancelled' || seen.has(number)) return []
+      seen.add(number)
+      return [{ serial: number, status }]
+    })
+    drawer.existingLoaded = true
+    drawer.showExistingSerials = drawer.mode === 'increase' && drawer.existingSerials.length > 0
+  } catch (err) {
+    console.error('Failed to load serial inventory', err)
+  }
 }
 
 function closeSerialDrawer(confirmBeforeClose = false) {
@@ -378,7 +426,8 @@ function closeSerialDrawer(confirmBeforeClose = false) {
   drawer.input = ''
   drawer.search = ''
   drawer.selectedSerials = []
-  drawer.availableSerials = []
+  drawer.existingSerials = []
+  drawer.existingLoaded = false
   drawer.errors = {}
   drawer.pendingExtras = 0
   drawer.originalSerials = []
@@ -549,7 +598,10 @@ async function complete() {
     pushToast('Stock adjustment saved', 'Inventory updated successfully.', 'success')
     router.push({ name: 'stock-detail', params: { id: product.value.id }, query: { refresh: Date.now() } })
   } catch (err) {
-    const message = err?.errors?.items?.[0] || err?.message || 'Unable to save stock adjustment. Please try again.'
+    // Laravel keys row errors as `items.0.serial_numbers`, so take the first
+    // message under any key; `err.message` alone is just "The given data was invalid."
+    const fieldError = Object.values(err?.errors ?? {}).flat()[0]
+    const message = fieldError || err?.message || 'Unable to save stock adjustment. Please try again.'
     submitError.value = message
     pushToast('Stock adjustment failed', message, 'error')
   } finally {
@@ -776,7 +828,7 @@ watch(
                     :title="getSerialTriggerTitle(item)"
                     @click="openSerialDrawer(item)"
                   >
-                    <span class="serial-trigger__label">Add serial</span>
+                    <span class="serial-trigger__label">{{ variantHasSerial(item) ? 'View serial' : 'Add serial' }}</span>
                     <span class="serial-trigger__count" aria-live="polite">{{ getFilledSerialCount(item) }} / {{ getRequiredSerials(item) }}</span>
                     <svg
                       v-if="getRowQty(item) > 0 && getFilledSerialCount(item) === getRequiredSerials(item)"
@@ -856,14 +908,14 @@ watch(
             <div>
               <p class="serial-modal__eyebrow">Variant serials</p>
               <h3 id="serial-modal-title" class="serial-modal__title">
-                {{ getRequiredSerials(getCurrentItem()) === 1 ? 'Add 1 serial number' : `Add ${getRequiredSerials(getCurrentItem())} serial numbers` }}
+                {{ getSerialModalTitle(getCurrentItem()) }}
               </h3>
             </div>
 
             <div class="serial-modal__stats" aria-label="Serial stats">
               <div class="serial-modal__stat">
                 <span>Existing</span>
-                <strong>{{ getCurrentItem()?.currentStock ?? 0 }}</strong>
+                <strong>{{ getExistingSerialCount(getCurrentItem()) }}</strong>
               </div>
               <div class="serial-modal__stat">
                 <span>Needed</span>
@@ -912,8 +964,15 @@ watch(
                   Add
                 </BaseButton>
               </div>
-              <p class="serial-modal__helper">Tip: paste many serials separated by new lines, commas or spaces</p>
-              <p v-if="getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())" class="serial-modal__limit">All serials entered</p>
+              <p class="serial-modal__helper">
+                {{ isVariantRow() && drawer.mode === 'increase'
+                  ? 'Each variant has one serial number, however many units come in.'
+                  : 'Tip: paste many serials separated by new lines, commas or spaces' }}
+              </p>
+              <p v-if="variantHasSerial(getCurrentItem())" class="serial-modal__limit">
+                Already added, so no more can be entered. It is listed under Existing serials.
+              </p>
+              <p v-else-if="getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())" class="serial-modal__limit">All serials entered</p>
             </div>
 
             <p v-if="drawer.pendingExtras" class="serial-modal__banner">
@@ -934,7 +993,7 @@ watch(
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
-                <p>No serials yet. Scan or paste to begin.</p>
+                <p>{{ variantHasSerial(getCurrentItem()) ? 'Nothing to add for this variant.' : 'No serials yet. Scan or paste to begin.' }}</p>
               </div>
               <div v-else class="serial-modal__chips">
                 <button
@@ -957,7 +1016,7 @@ watch(
 
             <div class="serial-modal__existing">
               <button type="button" class="serial-modal__existing-toggle" :aria-expanded="drawer.showExistingSerials" @click="drawer.showExistingSerials = !drawer.showExistingSerials">
-                <span>Existing serials ({{ drawer.availableSerials.length }})</span>
+                <span>Existing serials ({{ getExistingSerialCount(getCurrentItem()) }})</span>
                 <span>{{ drawer.showExistingSerials ? 'Hide' : 'Show' }}</span>
               </button>
               <div v-if="drawer.showExistingSerials" class="serial-modal__existing-panel">
@@ -965,9 +1024,13 @@ watch(
                   <input v-model="drawer.search" type="search" placeholder="Search serials" aria-label="Search existing serials" />
                 </div>
                 <div class="serial-modal__existing-list">
-                  <div v-for="serial in drawer.availableSerials.filter(item => item.toLowerCase().includes(drawer.search.toLowerCase()))" :key="serial" class="serial-modal__existing-item">
-                    {{ serial }}
+                  <div v-for="entry in drawer.existingSerials.filter(candidate => candidate.serial.toLowerCase().includes(drawer.search.toLowerCase()))" :key="entry.serial" class="serial-modal__existing-item">
+                    <span>{{ entry.serial }}</span>
+                    <span v-if="entry.status !== 'available'" class="serial-modal__existing-status">{{ entry.status.replace('_', ' ') }}</span>
                   </div>
+                  <p v-if="!drawer.existingSerials.length" class="serial-modal__existing-empty">
+                    {{ drawer.existingLoaded ? 'No serial numbers yet.' : 'Loading…' }}
+                  </p>
                 </div>
               </div>
             </div>
@@ -1696,7 +1759,21 @@ watch(
     margin-top: 0.8rem;
   }
 
+  &__existing-status {
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    color: var(--text-subtle);
+  }
+
+  &__existing-empty { margin: 0; font-size: 0.78rem; color: var(--text-subtle); }
+
   &__existing-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
     padding: 0.5rem 0.65rem;
     border-radius: 8px;
     background: var(--surface-sunken);

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   addSerials,
   blankRow,
+  fromApiVariant,
   parseSerialInput,
   pendingSerialReceipts,
   toApiVariants,
@@ -72,12 +73,40 @@ describe('validateVariants serials', () => {
     delete loaded.serials
     expect(validateVariants([loaded, row('A-2', ['SN1'])]).valid).toBe(true)
   })
+
+  it('flags a variant with more than one serial waiting', () => {
+    const { valid, errors } = validateVariants([row('A-1', ['SN1', 'SN2'])])
+    expect(valid).toBe(false)
+    expect(errors[0]).toBe('Each variant can have only 1 serial number.')
+  })
+
+  it('flags a new serial on a variant that already holds a saved one', () => {
+    const saved = { ...row('A-1', ['SN2']), receivedSerials: 1 }
+    expect(validateVariants([saved]).errors[0]).toBe('Each variant can have only 1 serial number.')
+  })
+
+  it('leaves a variant with saved serials alone while nothing new is waiting', () => {
+    const saved = { ...row('A-1'), receivedSerials: 3 }
+    expect(validateVariants([saved]).valid).toBe(true)
+  })
+})
+
+describe('fromApiVariant', () => {
+  it('reads how many serials the saved variant already holds', () => {
+    expect(fromApiVariant({ sku: 'A-1', serials_count: 1 }).receivedSerials).toBe(1)
+  })
+
+  it('treats a missing count as none', () => {
+    expect(fromApiVariant({ sku: 'A-1' }).receivedSerials).toBe(0)
+    expect(fromApiVariant({ sku: 'A-1', serials_count: null }).receivedSerials).toBe(0)
+  })
 })
 
 describe('toApiVariants', () => {
   it('never sends serials with the variant; they are received separately', () => {
     const [variant] = toApiVariants([row('A-1', ['SN1'])])
     expect(variant).not.toHaveProperty('serials')
+    expect(variant).not.toHaveProperty('receivedSerials')
   })
 })
 

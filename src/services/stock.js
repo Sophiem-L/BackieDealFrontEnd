@@ -212,6 +212,8 @@ export async function fetchStockCatalog(per_page = 100, token) {
       sku: variant.sku,
       currentStock: Number(variant.stock_quantity ?? 0),
       isSerialized: Boolean(variant.is_serialized),
+      // Serials the variant already holds; it takes one in all.
+      serialsCount: Number(variant.serials_count ?? 0),
     })),
   }))
 }

@@ -13,6 +13,8 @@ const NAME_MAX = 191
 // Mirrors `serial_numbers.*` on POST /admin/product-serials.
 const SERIAL_MAX = 191
 const SERIAL_SPLIT = /[\r\n\t,;]+/
+// One variant is one physical unit, so it takes a single serial number.
+export const MAX_SERIALS_PER_VARIANT = 1
 
 /** "Space Grey!" -> "space-grey" */
 export function slugifyPart(value) {
@@ -119,6 +121,9 @@ export function blankRow() {
     // through their own endpoint once the product is saved, so never sent with
     // the variant - see pendingSerialReceipts.
     serials: [],
+    // How many serials the saved variant already holds (`serials_count`), so the
+    // limit holds across saves. Read-only; never sent to the API.
+    receivedSerials: 0,
     // Set once the admin edits the SKU by hand, which stops it tracking the
     // generated base SKU. Never sent to the API.
     skuTouched: false,
@@ -270,6 +275,14 @@ export function validateVariants(rows) {
       return
     }
     seen.set(key, index)
+
+    // Only what is waiting counts against the limit: a variant that already
+    // holds several saved serials must still be editable, just not given more.
+    const waiting = (row.serials ?? []).length
+    if (waiting && waiting + (row.receivedSerials ?? 0) > MAX_SERIALS_PER_VARIANT) {
+      errors[index] = `Each variant can have only ${MAX_SERIALS_PER_VARIANT} serial number.`
+      return
+    }
 
     // A serial belongs to exactly one unit. The API only finds a repeat after the
     // product is saved, which would leave it half-saved, so catch it here.
@@ -481,6 +494,7 @@ export function fromApiVariant(variant) {
     attributes,
     isDefault: Boolean(variant?.is_default),
     isActive: Boolean(variant?.is_active),
+    receivedSerials: Number(variant?.serials_count ?? 0),
   }
 }
 

@@ -1,7 +1,7 @@
 // Thin fetch wrapper around the Beckie Deal backend API.
 // In dev, requests hit the Vite proxy (`/api` -> http://localhost:8000), so no
 // CORS setup is needed. Override the base URL via VITE_API_BASE_URL for prod.
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+export const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
 let unauthenticatedHandler = null
 let unauthenticatedHandled = false
