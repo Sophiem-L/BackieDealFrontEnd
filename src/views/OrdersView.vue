@@ -973,6 +973,13 @@ async function exportOrders(format) {
                 />
               </td>
               <td>
+                <p class="order__id" :title="order.id">
+                  {{ order.reference }}
+                  <span v-if="order.id === justCreatedId" class="new-flag">New</span>
+                  <span v-else-if="isUnviewed(order)" class="new-flag new-flag--unviewed" title="You have not opened this order yet">New</span>
+                </p>
+              </td>
+              <td>
                 <div class="order-customer" :title="[order.customerName, order.customerEmail].filter(Boolean).join(' · ')">
                   <span class="order-customer__avatar" :class="{ 'order-customer__avatar--photo': order.customerAvatar }">
                     <img v-if="order.customerAvatar" :src="order.customerAvatar" :alt="`${order.customerName} profile`" />
@@ -983,13 +990,6 @@ async function exportOrders(format) {
                     <span class="order-customer__email">{{ order.customerEmail || 'No email on file' }}</span>
                   </span>
                 </div>
-              </td>
-              <td>
-                <p class="order__id" :title="order.id">
-                  {{ order.reference }}
-                  <span v-if="order.id === justCreatedId" class="new-flag">New</span>
-                  <span v-else-if="isUnviewed(order)" class="new-flag new-flag--unviewed" title="You have not opened this order yet">New</span>
-                </p>
               </td>
               <td>
                 <!-- Truncated to one line; the full list is in the tooltip. -->
