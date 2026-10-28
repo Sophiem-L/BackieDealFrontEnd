@@ -13,6 +13,7 @@ import {
 import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
 import { downloadCsv, downloadJson } from '@/services/tableExport'
+import { initialsFrom } from '@/lib/identity'
 import { useAuthStore } from '@/stores/auth'
 import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
 
@@ -172,6 +173,8 @@ function mapOrder(raw) {
   const parsed = raw?.created_at ? new Date(raw.created_at) : null
   const placedAtDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed : null
   const method = raw?.payment?.method
+  const customerName = raw?.customer?.name || ''
+  const customerEmail = raw?.customer?.email || ''
 
   return {
     // Route binding is by uuid, and the resource's `id` *is* the uuid.
@@ -179,7 +182,11 @@ function mapOrder(raw) {
     reference: raw?.order_number || (raw?.id ? `#${String(raw.id).slice(0, 8).toUpperCase()}` : '—'),
     placedAtDate,
     placedAt: placedAtDate ? dateTimeFormat.format(placedAtDate) : '—',
-    customer: raw?.customer?.name || raw?.customer?.email || '—',
+    customer: customerName || customerEmail || '—',
+    customerName: customerName || 'Unknown customer',
+    customerEmail,
+    customerAvatar: raw?.customer?.avatar || '',
+    customerInitials: initialsFrom(customerName || customerEmail),
     item:
       items.length === 0
         ? '—'
@@ -939,6 +946,7 @@ async function exportOrders(format) {
                 />
               </th>
               <th>Order ID</th>
+              <th>Customer</th>
               <th>Items &amp; Specs</th>
               <th>Payment</th>
               <th>Total Amount</th>
@@ -963,6 +971,18 @@ async function exportOrders(format) {
                   :aria-label="`Select order ${order.reference}`"
                   @change="toggleRow(order.id)"
                 />
+              </td>
+              <td>
+                <div class="order-customer" :title="[order.customerName, order.customerEmail].filter(Boolean).join(' · ')">
+                  <span class="order-customer__avatar" :class="{ 'order-customer__avatar--photo': order.customerAvatar }">
+                    <img v-if="order.customerAvatar" :src="order.customerAvatar" :alt="`${order.customerName} profile`" />
+                    <span v-else aria-hidden="true">{{ order.customerInitials || '—' }}</span>
+                  </span>
+                  <span class="order-customer__meta">
+                    <span class="order-customer__name">{{ order.customerName }}</span>
+                    <span class="order-customer__email">{{ order.customerEmail || 'No email on file' }}</span>
+                  </span>
+                </div>
               </td>
               <td>
                 <p class="order__id" :title="order.id">
@@ -1059,16 +1079,16 @@ async function exportOrders(format) {
               </td>
             </tr>
             <tr v-if="loading">
-              <td colspan="7" class="table__empty">Loading orders…</td>
+              <td colspan="8" class="table__empty">Loading orders…</td>
             </tr>
             <tr v-else-if="error">
-              <td colspan="7" class="table__empty table__empty--error">
+              <td colspan="8" class="table__empty table__empty--error">
                 {{ error }}
                 <button type="button" class="retry-btn" @click="loadOrders">Retry</button>
               </td>
             </tr>
             <tr v-else-if="orders.length === 0">
-              <td colspan="7" class="table__empty">{{ emptyMessage }}</td>
+              <td colspan="8" class="table__empty">{{ emptyMessage }}</td>
             </tr>
           </tbody>
         </table>
@@ -1424,6 +1444,42 @@ async function exportOrders(format) {
        reference would wrap mid-token. */
     white-space: nowrap;
   }
+}
+
+.order-customer {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 13rem;
+
+  &__avatar {
+    display: grid;
+    place-items: center;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: 50%;
+    background: var(--surface-sunken);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 800;
+
+    img { width: 100%; height: 100%; object-fit: cover; }
+  }
+
+  &__meta { display: grid; min-width: 0; gap: 0.15rem; }
+
+  &__name,
+  &__email {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__name { color: var(--text-body); font-size: 0.82rem; font-weight: 700; }
+  &__email { color: var(--text-subtle); font-size: 0.72rem; }
 }
 
 /* Items cell — the product breakdown is the only line now, so it carries the
