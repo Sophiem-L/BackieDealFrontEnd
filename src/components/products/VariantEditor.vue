@@ -10,6 +10,9 @@
  *   product is saved (see `remove_missing_variants`). The last variant stays: a
  *   product that has variants keeps at least one.
  * - `view`: a plain read-only list.
+ *
+ * Exactly one row is the default variant - the one the storefront opens on. The
+ * admin picks it with the radio on each row or on the detail screen.
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import VariantAxisBuilder from './VariantAxisBuilder.vue'
@@ -23,6 +26,7 @@ import {
   deriveAxisNames,
   groupVariants,
   normalizeDefault,
+  setDefaultRow,
   sharedFieldValue,
   skuPart,
   slugifyPart,
@@ -93,6 +97,12 @@ watch(
 function patchRow(index, patch) {
   setRows(props.modelValue.map((row, i) => (i === index ? { ...row, ...patch } : row)))
 }
+
+function setDefault(index) {
+  setRows(setDefaultRow(props.modelValue, index))
+}
+
+const defaultRow = computed(() => rows.value.find((row) => row.isDefault) ?? null)
 
 function removeRow(index) {
   setRows(normalizeDefault(props.modelValue.filter((_, i) => i !== index)))
@@ -367,10 +377,10 @@ function appendVariant(row) {
       name,
       sku,
       slug: row.slug || slugifyPart(sku),
-      isDefault: props.modelValue.length === 0,
+      isDefault: props.modelValue.length === 0 || Boolean(row.isDefault),
     },
   ]
-  setRows(normalizeDefault(next))
+  setRows(row.isDefault ? setDefaultRow(next, next.length - 1) : normalizeDefault(next))
   panelOpen.value = false
 }
 
@@ -457,6 +467,11 @@ const selectedPromotions = computed(() =>
     <p v-else-if="!isCreate && rows.length" class="editor__note">
       Everything about a variant can be changed here, including its SKU. Added and removed variants
       take effect when you save the product.
+    </p>
+
+    <p v-if="defaultRow" class="editor__default">
+      Default variant: <strong>{{ defaultRow.name || defaultRow.sku }}</strong>
+      <span>- shown first in the store. Pick another with "Set as default".</span>
     </p>
 
     <div v-if="rows.length" class="vtable">
@@ -612,6 +627,7 @@ const selectedPromotions = computed(() =>
               @upload="onUpload"
               @open="openDetail"
               @toggle-select="toggleSelect"
+              @set-default="setDefault"
             />
           </template>
         </div>
@@ -635,6 +651,7 @@ const selectedPromotions = computed(() =>
           @upload="onUpload"
           @open="openDetail"
           @toggle-select="toggleSelect"
+          @set-default="setDefault"
         />
       </template>
 
@@ -659,6 +676,7 @@ const selectedPromotions = computed(() =>
         @patch="patchRow"
         @append="appendVariant"
         @select="selectVariant"
+        @set-default="setDefault"
         @delete="deleteDetail"
         @close="panelOpen = false"
         @toggle-promotion="emit('toggle-promotion', $event)"
@@ -683,6 +701,15 @@ const selectedPromotions = computed(() =>
     text-transform: uppercase;
     color: var(--text-body);
   }
+}
+
+.editor__default {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  color: var(--text-body);
+
+  strong { color: var(--text-strong); }
+  span { color: var(--text-subtle); }
 }
 
 .editor__add {

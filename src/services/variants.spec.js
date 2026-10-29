@@ -2,10 +2,16 @@ import { describe, it, expect } from 'vitest'
 import {
   addSerials,
   blankRow,
+  fromApiPricing,
   fromApiVariant,
+  isStandaloneProduct,
+  normalizeDefault,
   parseSerialInput,
   pendingSerialReceipts,
+  setDefaultRow,
+  toApiPricing,
   toApiVariants,
+  validateSimplePricing,
   validateVariants,
 } from '@/services/variants'
 
@@ -127,5 +133,74 @@ describe('pendingSerialReceipts', () => {
     expect(pendingSerialReceipts([row('GONE', ['SN1'])], saved)).toEqual([
       { sku: 'GONE', variantId: null, serials: ['SN1'] },
     ])
+  })
+})
+
+describe('default variant selection', () => {
+  it('moves the default flag to the chosen row only', () => {
+    const rows = normalizeDefault([row('A'), row('B'), row('C')])
+    const next = setDefaultRow(rows, 2)
+    expect(next.map((r) => r.isDefault)).toEqual([false, false, true])
+    expect(rows.map((r) => r.isDefault)).toEqual([true, false, false])
+  })
+
+  it('falls back to the first row when none is flagged, as the API does', () => {
+    expect(normalizeDefault([row('A'), row('B')]).map((r) => r.isDefault)).toEqual([true, false])
+  })
+
+  it('sends exactly one is_default row', () => {
+    const sent = toApiVariants(setDefaultRow([row('A'), row('B')], 1))
+    expect(sent.map((v) => v.is_default)).toEqual([false, true])
+  })
+})
+
+describe('isStandaloneProduct', () => {
+  it('treats no variants, or one variant without option values, as a single item', () => {
+    expect(isStandaloneProduct([])).toBe(true)
+    expect(isStandaloneProduct([{ sku: 'X-DEFAULT', attributes: {} }])).toBe(true)
+    expect(isStandaloneProduct([{ sku: 'X-DEFAULT', attributes: [] }])).toBe(true)
+  })
+
+  it('keeps the variant editor for option variants or several variants', () => {
+    expect(isStandaloneProduct([{ attributes: { Color: 'Red' } }])).toBe(false)
+    expect(isStandaloneProduct([{ attributes: {} }, { attributes: {} }])).toBe(false)
+  })
+})
+
+describe('pricing for a product without variants', () => {
+  it('maps price and compare-at the way variants do', () => {
+    expect(toApiPricing({ price: '90', compareAt: '120', costPrice: '60' })).toEqual({
+      price: 120,
+      sale_price: 90,
+      cost_price: 60,
+    })
+    expect(toApiPricing({ price: '1,200', compareAt: '', costPrice: '' })).toEqual({
+      price: 1200,
+      sale_price: null,
+      cost_price: null,
+    })
+  })
+
+  it('reads a product or variant back into the same fields', () => {
+    expect(fromApiPricing({ price: 120, sale_price: 90, cost_price: 60 })).toEqual({
+      price: 90,
+      compareAt: 120,
+      costPrice: 60,
+    })
+    expect(fromApiPricing({ price: 50, sale_price: null, cost_price: null })).toEqual({
+      price: 50,
+      compareAt: '',
+      costPrice: '',
+    })
+  })
+
+  it('requires a price and a sane compare-at, cost and stock', () => {
+    const valid = { ...blankRow(), price: '10', stock: 3 }
+    expect(validateSimplePricing(valid)).toBe('')
+    expect(validateSimplePricing({ ...valid, price: '' })).toBe('Enter a price.')
+    expect(validateSimplePricing({ ...valid, compareAt: '5' })).toMatch(/Compare-at/)
+    expect(validateSimplePricing({ ...valid, costPrice: 'abc' })).toMatch(/Cost/)
+    expect(validateSimplePricing({ ...valid, stock: '-1' })).toMatch(/Stock/)
+    expect(validateSimplePricing({ ...valid, stock: '1.5' })).toMatch(/Stock/)
   })
 })

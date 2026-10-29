@@ -3,6 +3,7 @@
  * One variant inside the grouped table - the child row under a group header, or
  * a top-level row when there is a single option. Columns line up with the
  * table head: Variant | Price | Available. "Edit" opens the full detail screen.
+ * The radio under the name picks the product's default variant.
  */
 import VariantImagePicker from './VariantImagePicker.vue'
 
@@ -20,7 +21,7 @@ defineProps({
   removable: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['patch', 'remove', 'upload', 'open', 'toggle-select'])
+const emit = defineEmits(['patch', 'remove', 'upload', 'open', 'toggle-select', 'set-default'])
 
 const patch = (index, changes) => emit('patch', index, changes)
 </script>
@@ -45,11 +46,27 @@ const patch = (index, changes) => emit('patch', index, changes)
       @upload="emit('upload', index, $event)"
     />
 
-    <button type="button" class="vrow__title" @click="emit('open', index)">
-      <span class="vrow__name">{{ label || row.name }}</span>
-      <span class="vrow__sku">{{ row.sku }}</span>
-      <span v-if="error" class="vrow__error">{{ error }}</span>
-    </button>
+    <div class="vrow__info">
+      <button type="button" class="vrow__title" @click="emit('open', index)">
+        <span class="vrow__name">
+          {{ label || row.name }}
+          <span v-if="row.isDefault" class="vrow__badge">Default</span>
+          <span v-if="!row.isActive" class="vrow__badge vrow__badge--off">Inactive</span>
+        </span>
+        <span class="vrow__sku">{{ row.sku }}</span>
+        <span v-if="error" class="vrow__error">{{ error }}</span>
+      </button>
+      <label class="vrow__default" :class="{ 'is-on': row.isDefault }">
+        <input
+          type="radio"
+          name="default-variant"
+          :checked="row.isDefault"
+          :aria-label="`Make ${row.name} the default variant`"
+          @change="emit('set-default', index)"
+        />
+        <span>{{ row.isDefault ? 'Default variant' : 'Set as default' }}</span>
+      </label>
+    </div>
 
     <label class="vrow__price">
       <span class="vrow__money">
@@ -113,6 +130,50 @@ const patch = (index, changes) => emit('patch', index, changes)
     margin: 0;
     accent-color: rgb(var(--accent-rgb));
     cursor: pointer;
+  }
+
+  &__info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  &__default {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    width: fit-content;
+    font-size: 0.7rem;
+    color: var(--text-subtle);
+    cursor: pointer;
+
+    input {
+      width: 13px;
+      height: 13px;
+      margin: 0;
+      accent-color: rgb(var(--accent-rgb));
+      cursor: pointer;
+    }
+
+    &.is-on { color: rgb(var(--accent-rgb)); font-weight: 600; }
+    &:hover span { color: var(--text-strong); }
+  }
+
+  &__badge {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.05rem 0.4rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    vertical-align: middle;
+    color: rgb(var(--accent-rgb));
+    background: rgb(var(--accent-rgb) / 0.12);
+    border-radius: 999px;
+
+    &--off { color: var(--text-subtle); background: var(--surface-sunken); }
   }
 
   &__title {

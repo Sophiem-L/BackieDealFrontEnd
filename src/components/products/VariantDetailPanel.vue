@@ -38,7 +38,7 @@ const props = defineProps({
   serialized: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['patch', 'append', 'delete', 'select', 'close', 'toggle-promotion', 'update:serialized'])
+const emit = defineEmits(['patch', 'append', 'delete', 'select', 'close', 'toggle-promotion', 'update:serialized', 'set-default'])
 
 const auth = useAuthStore()
 
@@ -74,6 +74,13 @@ function setAttr(name, value) {
 
 function setField(field, value) {
   apply({ [field]: value })
+}
+
+// There is always exactly one default, so it can be handed to this variant but
+// not taken away - picking another variant moves it.
+function makeDefault(checked) {
+  if (props.isNew) newRow.isDefault = checked
+  else if (checked) emit('set-default', props.index)
 }
 
 /* ------------------------------------------------------------------ pricing */
@@ -292,6 +299,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                 </svg>
               </span>
               <span class="vp__listname">{{ entry.row.name || 'Untitled' }}</span>
+              <span v-if="entry.row.isDefault" class="vp__listdefault">Default</span>
             </button>
           </li>
         </ul>
@@ -422,6 +430,24 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               />
             </label>
           </div>
+          <label class="default-toggle">
+            <input
+              type="checkbox"
+              :checked="current.isDefault"
+              :disabled="!isNew && current.isDefault"
+              @change="makeDefault($event.target.checked)"
+            />
+            <span>
+              <strong>Default variant</strong>
+              <small>
+                {{
+                  !isNew && current.isDefault
+                    ? 'This is the default. To change it, mark another variant as the default.'
+                    : 'The variant the store opens on before a customer chooses one.'
+                }}
+              </small>
+            </span>
+          </label>
         </section>
 
         <section class="card">
@@ -693,6 +719,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   }
 
   &__listname { font-size: 0.83rem; color: var(--text-strong); }
+  &__listdefault {
+    margin-left: auto;
+    padding: 0.05rem 0.4rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: rgb(var(--accent-rgb));
+    background: rgb(var(--accent-rgb) / 0.12);
+    border-radius: 999px;
+  }
 
   &__main {
     padding: 1.5rem;
@@ -954,6 +990,21 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   cursor: pointer;
 
   input[type='checkbox'] { width: 18px; height: 18px; margin: 0.1rem 0 0; flex: none; accent-color: rgb(var(--accent-rgb)); cursor: pointer; }
+
+  span { display: flex; flex-direction: column; gap: 0.15rem; }
+  strong { font-size: 0.86rem; font-weight: 600; color: var(--text-strong); }
+  small { font-size: 0.74rem; color: var(--text-subtle); }
+}
+
+.default-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-top: 1rem;
+  cursor: pointer;
+
+  input[type='checkbox'] { width: 18px; height: 18px; margin: 0.1rem 0 0; flex: none; accent-color: rgb(var(--accent-rgb)); cursor: pointer; }
+  input:disabled { cursor: default; }
 
   span { display: flex; flex-direction: column; gap: 0.15rem; }
   strong { font-size: 0.86rem; font-weight: 600; color: var(--text-strong); }
