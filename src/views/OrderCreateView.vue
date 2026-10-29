@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
@@ -24,7 +24,7 @@ const auth = useAuthStore()
 const items = ref([])
 
 // Order-level amounts, matching the columns the API persists.
-const fees = ref({ tax: null, shipping: null })
+const fees = ref({ shipping: null })
 
 const customerId = ref('')
 // Only the method is set at creation. payment_status defaults to `pending`
@@ -229,10 +229,15 @@ const customerChoice = computed({
 const subtotal = computed(() =>
   items.value.reduce((sum, i) => sum + (Number(i.qty) || 0) * (Number(i.unitPrice) || 0), 0),
 )
-// No discount is entered here, so this can never go negative.
+// Product promotions or the VIP discount are calculated by the API preview;
+// each line gets at most one, so the discount cannot exceed the subtotal.
 const total = computed(
-  () => subtotal.value + (Number(fees.value.tax) || 0) + (Number(fees.value.shipping) || 0),
+  () =>
+    (livePreview.value?.total ?? subtotal.value - promotionDiscount.value) +
+    (Number(fees.value.shipping) || 0),
 )
+const taxTotal = computed(() => livePreview.value?.tax ?? 0)
+const taxLabel = computed(() => livePreview.value?.taxSettings?.label || 'Tax')
 
 function money(value) {
   return `$${(Number(value) || 0).toFixed(2)}`
@@ -271,6 +276,99 @@ const isComplete = computed(
 )
 const canSubmit = computed(() => isComplete.value && !saving.value)
 
+/* ---------------------------------------------------------------------------
+ * Promotions — POST /admin/orders/preview
+ *
+ * Promotions attached to a product take money off its line when the order is
+ * saved. The API owns that arithmetic (percentage vs fixed, caps, limits,
+ * dates), so the form asks it rather than re-deriving it, which keeps the total
+ * shown here equal to the one that gets saved.
+ *
+ * An answer is stored with the lines it priced. If the lines have changed since,
+ * it is ignored rather than shown against the wrong quantities.
+ * ------------------------------------------------------------------------- */
+const preview = ref(null)
+const previewFailed = ref(false)
+let previewTimer
+let previewRun = 0
+
+const previewKey = computed(() =>
+  JSON.stringify([
+    customerId.value,
+    completeItems.value.map((i) => [i.productId, Number(i.qty), Number(i.unitPrice) || 0]),
+  ]),
+)
+
+const livePreview = computed(() => (preview.value?.key === previewKey.value ? preview.value : null))
+const promotionDiscount = computed(() => livePreview.value?.discount ?? 0)
+
+// What the promotion took off this row, or null when none did.
+function promotionFor(item) {
+  return livePreview.value?.lines[String(item.productId)] ?? null
+}
+
+async function loadPreview() {
+  const key = previewKey.value
+  const run = ++previewRun
+
+  const body = {
+    items: completeItems.value.map((i) => ({
+      product_id: i.productId,
+      qty: Number(i.qty),
+      unit_price: Number(i.unitPrice) || 0,
+    })),
+  }
+  if (customerId.value) body.customer_id = customerId.value
+
+  try {
+    const response = await apiFetch('/admin/orders/preview', {
+      method: 'POST',
+      body,
+      token: auth.accessToken,
+    })
+    if (run !== previewRun) return
+
+    const data = response?.data ?? {}
+    const lines = {}
+    for (const line of data.items ?? []) {
+      if (Number(line.discount) > 0) {
+        lines[String(line.product_id)] = {
+          discount: Number(line.discount),
+          name: line.promotion?.name || '',
+          source: line.discount_source || line.promotion?.source || 'promotion',
+        }
+      }
+    }
+    preview.value = {
+      key,
+      lines,
+      discount: Number(data.promotion_discount) || 0,
+      tax: Number(data.tax_total) || 0,
+      taxSettings: data.tax_settings ?? null,
+      total: Number(data.total) || 0,
+    }
+    previewFailed.value = false
+  } catch {
+    if (run !== previewRun) return
+    // Not fatal: the API applies promotions when the order is saved either way.
+    preview.value = null
+    previewFailed.value = true
+  }
+}
+
+watch(previewKey, () => {
+  clearTimeout(previewTimer)
+  if (!completeItems.value.length) {
+    previewRun++
+    preview.value = null
+    previewFailed.value = false
+    return
+  }
+  previewTimer = setTimeout(loadPreview, 250)
+})
+
+onBeforeUnmount(() => clearTimeout(previewTimer))
+
 function errorFor(path) {
   const messages = fieldErrors.value[path]
   return Array.isArray(messages) ? messages[0] : messages
@@ -292,7 +390,6 @@ async function createOrder() {
       unit_price: Number(i.unitPrice) || 0,
     })),
   }
-  if (Number(fees.value.tax)) payload.tax_total = Number(fees.value.tax)
   if (Number(fees.value.shipping)) payload.shipping_total = Number(fees.value.shipping)
   if (payment.value.method) payload.payment_method = payment.value.method
   if (note.value.trim()) payload.notes = note.value.trim()
@@ -403,7 +500,12 @@ async function createOrder() {
                     {{ money(item.unitPrice) }}
                   </td>
                   <td class="items__num items__strong">
-                    {{ money((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)) }}
+                    <span class="items__subtotal">
+                      {{ money((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)) }}
+                      <span v-if="promotionFor(item)" class="items__promo" :title="promotionFor(item).name">
+                        {{ promotionFor(item).source === 'vip' ? 'VIP' : 'Promo' }} −{{ money(promotionFor(item).discount) }}
+                      </span>
+                    </span>
                   </td>
                   <td class="items__remove">
                     <button type="button" class="icon-btn icon-btn--danger" title="Remove item" aria-label="Remove item" @click="removeItem(i)">
@@ -414,14 +516,17 @@ async function createOrder() {
               </tbody>
             </table>
 
-            <!-- These map to the tax_total / shipping_total columns the API
-                 persists. Discount is not set here; the API still supports it
-                 and the detail page shows it for orders that have one. -->
+            <!-- Tax and shipping map to the tax_total / shipping_total columns
+                 the API persists. Product promotions and VIP discounts are
+                 calculated by the API and reported in the preview above. -->
             <dl class="summary">
               <div class="summary__row"><dt>Subtotal</dt><dd>{{ money(subtotal) }}</dd></div>
+              <div v-if="promotionDiscount > 0" class="summary__row summary__row--promo">
+                <dt>Product discounts</dt><dd>−{{ money(promotionDiscount) }}</dd>
+              </div>
               <div class="summary__row">
-                <dt>Tax</dt>
-                <dd><input v-model.number="fees.tax" class="field field--right field--inline" type="number" min="0" step="0.01" placeholder="0.00" /></dd>
+                <dt>{{ taxLabel }}</dt>
+                <dd>{{ money(taxTotal) }}</dd>
               </div>
               <div class="summary__row">
                 <dt>Shipping</dt>
@@ -429,6 +534,9 @@ async function createOrder() {
               </div>
               <div class="summary__row summary__row--total"><dt>Total</dt><dd>{{ money(total) }}</dd></div>
             </dl>
+            <p v-if="previewFailed" class="summary__note">
+              Couldn't check promotions just now. Any that apply are still taken off when the order is saved.
+            </p>
           </section>
 
         </div>
@@ -843,6 +951,25 @@ textarea.field { resize: vertical; }
   &__muted { color: var(--text-subtle); }
   &__strong { font-weight: 700; color: var(--text-strong); }
   &__remove { width: 44px; text-align: right; }
+
+  &__subtotal {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-end;
+  }
+
+  // Same pill the order detail page uses for a discounted line.
+  &__promo {
+    display: block;
+    width: fit-content;
+    margin: 0.25rem 0 0;
+    padding: 0.05rem 0.4rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    border-radius: 999px;
+    background: var(--success-bg);
+    color: var(--success);
+  }
 }
 
 .items-empty { display: grid; justify-items: center; gap: .35rem; padding: 2rem 1rem; color: var(--text-subtle); text-align: center; border: 1px dashed var(--border); border-radius: 10px; }
@@ -887,6 +1014,8 @@ textarea.field { resize: vertical; }
     dt { margin: 0; color: var(--text-subtle); }
     dd { margin: 0; font-weight: 600; color: var(--text-strong); }
 
+    &--promo dd { color: var(--success); }
+
     &--total {
       margin-top: 0.3rem;
       border-top: 1px solid var(--border-subtle);
@@ -895,6 +1024,8 @@ textarea.field { resize: vertical; }
       dd { font-weight: 800; font-size: 1.1rem; color: var(--accent-ink); }
     }
   }
+
+  &__note { margin: 0.4rem 0.4rem 0; font-size: 0.72rem; color: var(--text-subtle); }
 }
 
 /* Buttons */

@@ -23,6 +23,7 @@ import { downloadCsv } from '@/services/tableExport'
 import {
   bulkUpdateStatus,
   exportSerials,
+  fetchSerial,
   fetchSerialHistory,
   fetchSerials,
   fetchSerialSummary,
@@ -50,6 +51,14 @@ const lookupResult = ref(null)
 const lookupError = ref('')
 const history = ref([])
 const selectedSerial = ref(null)
+const serialVariants = ref([])
+const selectedVariantId = ref('')
+const savingVariant = ref(false)
+// Correcting the number of the serial open in the drawer.
+const editingNumber = ref(false)
+const numberDraft = ref('')
+const numberError = ref('')
+const savingNumber = ref(false)
 const detailLoading = ref(false)
 const selectedStatus = ref('')
 const selectedIds = ref([])
@@ -291,9 +300,22 @@ async function undoReceive() {
 async function showDetails(row) {
   selectedSerial.value = row
   selectedStatus.value = row.status
+  selectedVariantId.value = row.variant?.id ? String(row.variant.id) : ''
+  serialVariants.value = []
+  cancelNumberEdit()
   detailLoading.value = true
-  try { history.value = await fetchSerialHistory(row.id, auth.accessToken) }
-  catch (err) { error.value = err.message || 'Unable to load serial history.' }
+  try {
+    const [serial, serialHistory] = await Promise.all([
+      fetchSerial(row.id, auth.accessToken),
+      fetchSerialHistory(row.id, auth.accessToken),
+    ])
+    selectedSerial.value = serial
+    selectedStatus.value = serial.status
+    selectedVariantId.value = serial.variant?.id ? String(serial.variant.id) : ''
+    serialVariants.value = serial.product?.variants ?? []
+    history.value = serialHistory
+  }
+  catch (err) { error.value = err.message || 'Unable to load serial details.' }
   finally { detailLoading.value = false }
 }
 
@@ -305,6 +327,60 @@ async function saveStatus() {
     await Promise.all([load(), loadSummary()])
     setNotice('Serial status updated.')
   } catch (err) { error.value = err.message || 'Unable to update serial status.' }
+}
+
+// A cancelled serial is a void record, so its number is not editable.
+const canEditNumber = computed(() => selectedSerial.value?.status !== 'cancelled')
+const canEditVariant = computed(() => selectedSerial.value?.status !== 'cancelled' && serialVariants.value.length > 0)
+
+async function saveVariant() {
+  if (!selectedSerial.value || savingVariant.value) return
+  const currentVariantId = selectedSerial.value.variant?.id ? String(selectedSerial.value.variant.id) : ''
+  if (selectedVariantId.value === currentVariantId) return
+
+  savingVariant.value = true
+  error.value = ''
+  try {
+    selectedSerial.value = await updateSerial(selectedSerial.value.id, {
+      product_variant_id: selectedVariantId.value ? Number(selectedVariantId.value) : null,
+    }, auth.accessToken)
+    await load()
+    setNotice('Serial variant updated.')
+  } catch (err) {
+    error.value = Object.values(err?.errors ?? {}).flat()[0] || err.message || 'Unable to update the serial variant.'
+  } finally { savingVariant.value = false }
+}
+
+function startNumberEdit() {
+  numberDraft.value = selectedSerial.value.serial_number
+  numberError.value = ''
+  editingNumber.value = true
+}
+
+function cancelNumberEdit() {
+  editingNumber.value = false
+  numberError.value = ''
+}
+
+// Fixes a mistyped number. The unit keeps its status, order and warranty and
+// the change lands in its history, so the old number is not lost.
+async function saveNumber() {
+  if (!selectedSerial.value || savingNumber.value) return
+  const next = numberDraft.value.trim()
+  if (!next) { numberError.value = 'Enter a serial number.'; return }
+  if (next === selectedSerial.value.serial_number) { cancelNumberEdit(); return }
+
+  savingNumber.value = true
+  numberError.value = ''
+  try {
+    selectedSerial.value = await updateSerial(selectedSerial.value.id, { serial_number: next }, auth.accessToken)
+    editingNumber.value = false
+    history.value = await fetchSerialHistory(selectedSerial.value.id, auth.accessToken)
+    await Promise.all([load(), loadSummary()])
+    setNotice('Serial number updated.')
+  } catch (err) {
+    numberError.value = Object.values(err?.errors ?? {}).flat()[0] || err.message || 'Unable to update the serial number.'
+  } finally { savingNumber.value = false }
 }
 
 async function markDamaged(row) {
@@ -342,6 +418,7 @@ function handleShortcut(event) {
 }
 function closeDrawer() {
   selectedSerial.value = null
+  cancelNumberEdit()
   if (lookupState.value === 'result') lookupState.value = 'idle'
 }
 
@@ -648,7 +725,23 @@ onBeforeUnmount(() => {
     <div v-if="selectedSerial" class="drawer-backdrop" @click.self="closeDrawer">
       <aside class="detail-drawer" role="dialog" aria-modal="true" aria-labelledby="detail-title">
         <div class="drawer-heading"><div><span class="section-kicker">Serial detail</span><h2 id="detail-title">{{ selectedSerial.serial_number }}</h2></div><button type="button" class="icon-button" aria-label="Close serial details" @click="closeDrawer"><X /></button></div>
+        <div class="number-edit">
+          <template v-if="editingNumber">
+            <label class="field"><span>Serial number</span><input v-model="numberDraft" type="text" maxlength="191" autocomplete="off" aria-label="Serial number" :aria-invalid="numberError ? 'true' : null" @keydown.enter.prevent="saveNumber" @keydown.esc.prevent="cancelNumberEdit" /></label>
+            <p v-if="numberError" class="number-edit__error" role="alert">{{ numberError }}</p>
+            <div class="number-edit__actions"><BaseButton :disabled="savingNumber || !numberDraft.trim()" @click="saveNumber">{{ savingNumber ? 'Saving…' : 'Save number' }}</BaseButton><BaseButton variant="ghost" :disabled="savingNumber" @click="cancelNumberEdit">Cancel</BaseButton></div>
+          </template>
+          <template v-else>
+            <BaseButton v-if="canEditNumber" variant="ghost" @click="startNumberEdit">Edit serial number</BaseButton>
+            <small v-else class="number-edit__hint">A cancelled serial number can't be edited.</small>
+          </template>
+        </div>
         <div class="drawer-product"><span class="product-thumb product-thumb--large">{{ (selectedSerial.product?.name || 'P').slice(0, 1).toUpperCase() }}</span><div><strong>{{ selectedSerial.product?.name || 'Unknown product' }}</strong><small>{{ selectedSerial.product?.sku || 'No SKU' }}<span v-if="selectedSerial.variant?.name"> · {{ selectedSerial.variant.name }}</span></small></div></div>
+        <div v-if="serialVariants.length" class="variant-edit">
+          <label class="field"><span>Product variant</span><select v-model="selectedVariantId" :disabled="!canEditVariant || savingVariant"><option value="">No variant</option><option v-for="variant in serialVariants" :key="variant.id" :value="String(variant.id)">{{ variant.sku ? `${variant.name} · ${variant.sku}` : variant.name }}</option></select></label>
+          <BaseButton :disabled="!canEditVariant || savingVariant || selectedVariantId === String(selectedSerial.variant?.id || '')" @click="saveVariant">{{ savingVariant ? 'Saving…' : 'Save variant' }}</BaseButton>
+          <small v-if="!canEditVariant" class="number-edit__hint">A cancelled serial's variant can't be edited.</small>
+        </div>
         <span class="status-badge" :class="`status-badge--${selectedSerial.status}`"><span />{{ formatStatus(selectedSerial.status) }}</span>
         <dl class="detail-grid">
           <div><dt>Warehouse</dt><dd>{{ selectedSerial.warehouse || 'Unassigned' }}</dd></div>
@@ -660,7 +753,7 @@ onBeforeUnmount(() => {
         </dl>
         <label class="field"><span>Change status</span><select v-model="selectedStatus"><option v-for="value in statusOptions" :key="value" :value="value">{{ formatStatus(value) }}</option></select></label>
         <BaseButton :disabled="selectedStatus === selectedSerial.status" @click="saveStatus">Save status</BaseButton>
-        <div class="history-section"><h3>History</h3><p v-if="detailLoading" class="history-loading">Loading activity…</p><ol v-else-if="history.length" class="history-list"><li v-for="event in history" :key="event.id"><span class="history-dot" /><div><strong>{{ formatStatus(event.event) }}</strong><small>{{ event.previous_status ? `${formatStatus(event.previous_status)} → ` : '' }}{{ formatStatus(event.new_status) }}</small><time>{{ formatDate(event.created_at) }}</time></div></li></ol><p v-else class="history-loading">No history recorded yet.</p></div>
+        <div class="history-section"><h3>History</h3><p v-if="detailLoading" class="history-loading">Loading activity…</p><ol v-else-if="history.length" class="history-list"><li v-for="event in history" :key="event.id"><span class="history-dot" /><div><strong>{{ formatStatus(event.event) }}</strong><small v-if="event.event === 'serial_number_changed'">{{ event.note }}</small><small v-else>{{ event.previous_status ? `${formatStatus(event.previous_status)} → ` : '' }}{{ formatStatus(event.new_status) }}</small><time>{{ formatDate(event.created_at) }}</time></div></li></ol><p v-else class="history-loading">No history recorded yet.</p></div>
       </aside>
     </div>
   </div>
@@ -681,6 +774,8 @@ onBeforeUnmount(() => {
 .drawer-backdrop{position:fixed;inset:0;z-index:40;display:flex;justify-content:flex-end;background:var(--backdrop)}.detail-drawer{display:grid;align-content:start;gap:20px;width:min(440px,100%);height:100%;padding:24px;overflow-y:auto;background:var(--serial-surface);border-left:1px solid var(--border);box-shadow:var(--shadow-md)}.drawer-heading{align-items:flex-start}.drawer-heading h2{font-size:18px;overflow-wrap:anywhere}.icon-button{flex:none}.icon-button svg{width:17px;height:17px}.drawer-product{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--border);border-radius:9px;background:var(--serial-raised)}.product-thumb--large{width:42px;height:42px;font-size:15px}.drawer-product div{display:grid;gap:4px}.drawer-product strong{font-size:13px}.drawer-product small{color:var(--text-muted);font-size:12px}.detail-grid{grid-template-columns:1fr 1fr;padding:16px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}.detail-grid div{display:grid;gap:5px}.detail-grid dd{max-width:none;text-align:left;font-size:12px}.history-section h3{margin:0 0 14px;font-size:14px;font-weight:600}.history-list{display:grid;gap:0;margin:0;padding:0;list-style:none}.history-list li{position:relative;display:flex;gap:12px;min-height:54px}.history-list li:not(:last-child)::before{position:absolute;top:13px;bottom:-2px;left:5px;width:1px;background:var(--border);content:''}.history-dot{z-index:1;flex:none;width:11px;height:11px;margin-top:3px;border:2px solid var(--serial-accent);border-radius:50%;background:var(--serial-surface)}.history-list li div{display:grid;gap:4px}.history-list strong{font-size:12px}.history-list small,.history-list time,.history-loading{color:var(--text-muted);font-size:11px}.history-loading{margin:0}.not-found{display:grid;justify-items:center;gap:14px;padding:30px 10px;text-align:center}.not-found code{color:var(--text-strong);font:600 14px ui-monospace,SFMono-Regular,Consolas,monospace}
 button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--serial-accent);outline-offset:2px}.stat-card:focus-visible{outline-offset:3px}
 @keyframes skeleton{to{background-position:-200% 0}}
+.number-edit{display:grid;gap:8px}.number-edit__actions{display:flex;gap:8px}.number-edit__error{margin:0;color:var(--danger);font-size:12px}.number-edit__hint{color:var(--text-muted);font-size:12px}.number-edit input[aria-invalid=true]{border-color:var(--danger)}
+.variant-edit{display:grid;gap:8px}
 .stat-card.is-selected{border-color:var(--border-strong);background:var(--surface-alt);box-shadow:inset 0 0 0 1px var(--border-strong)}
 @media(max-width:1150px){.stats-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.field-grid{grid-template-columns:1fr 1fr}.field--product{grid-column:span 2}.filter-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.search-filter{grid-column:span 2}}
 @media(max-width:760px){.serial-content{padding-top:20px}.receive-layout{grid-template-columns:1fr}.batch-preview{display:none}.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.search-filter{grid-column:span 2}.filter-grid :deep(.btn){grid-column:span 2}.serial-table{min-width:950px}.table-footer{flex-wrap:wrap}.table-footer>span{width:100%}.skeleton-head,.skeleton-row{min-width:850px}}

@@ -5,8 +5,10 @@
  * - `create`: the option builder (VariantAxisBuilder) generates one row per
  *   combination; the grouped table below edits them and a row opens the
  *   full-screen detail screen.
- * - `edit`: rows load from the API and stay editable, but SKUs are locked and
- *   rows cannot be removed - the API syncs variants by SKU and offers no delete.
+ * - `edit`: rows load from the API with their ids and are fully editable, SKU
+ *   included. Rows can be added and removed; the API applies the change when the
+ *   product is saved (see `remove_missing_variants`). The last variant stays: a
+ *   product that has variants keeps at least one.
  * - `view`: a plain read-only list.
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
@@ -57,6 +59,10 @@ const isCreate = computed(() => props.mode === 'create')
 const isView = computed(() => props.mode === 'view')
 
 const rows = computed(() => props.modelValue)
+
+// Removing is free while building a product. On a saved one it stops at the
+// last variant, so a product that has variants never ends up with none.
+const canRemoveRow = computed(() => isCreate.value || rows.value.length > 1)
 
 const validation = computed(() => validateVariants(props.modelValue))
 watch(
@@ -446,11 +452,11 @@ const selectedPromotions = computed(() =>
     </button>
 
     <p v-if="!isCreate && !rows.length" class="editor__note">
-      This product has no variants. They can only be added when creating a product.
+      This product has no variants yet. Use Add variant to create one.
     </p>
     <p v-else-if="!isCreate && rows.length" class="editor__note">
-      Prices, stock and images can be changed here. SKUs are locked and variants cannot be removed -
-      the API syncs variants by SKU.
+      Everything about a variant can be changed here, including its SKU. Added and removed variants
+      take effect when you save the product.
     </p>
 
     <div v-if="rows.length" class="vtable">
@@ -599,7 +605,7 @@ const selectedPromotions = computed(() =>
               :uploading="uploadingIndex === item.index"
               :base-price="basePrice"
               :selected="selected.has(item.index)"
-              :removable="isCreate"
+              :removable="canRemoveRow"
               :error="validation.errors[item.index] ?? ''"
               @patch="patchRow"
               @remove="removeRow"
@@ -622,7 +628,7 @@ const selectedPromotions = computed(() =>
           :uploading="uploadingIndex === item.index"
           :base-price="basePrice"
           :selected="selected.has(item.index)"
-          :removable="isCreate"
+          :removable="canRemoveRow"
           :error="validation.errors[item.index] ?? ''"
           @patch="patchRow"
           @remove="removeRow"
@@ -643,8 +649,7 @@ const selectedPromotions = computed(() =>
         :is-new="panelIsNew"
         :axis-names="axisNames"
         :pool="imagePool"
-        :can-delete="isCreate"
-        :lock-sku="!isCreate"
+        :can-delete="canRemoveRow"
         :promotions="promotions"
         :promotion-ids="promotionIds"
         :product-name="productName"

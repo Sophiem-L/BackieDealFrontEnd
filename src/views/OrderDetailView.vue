@@ -124,6 +124,7 @@ function applyOrder(data) {
     unitPrice: Number(item?.unit_price ?? 0),
     salePrice: item?.sale_price == null ? null : Number(item.sale_price),
     discount: Number(item?.discount ?? 0),
+    discountSource: item?.promotion?.source ?? 'promotion',
     lineTotal: Number(item?.line_total ?? 0),
   }))
 
@@ -388,7 +389,7 @@ async function editOrder() {
                         <p class="product__name">{{ item.name }}</p>
                         <p class="product__sku">{{ item.sku }}</p>
                         <p v-if="item.discount > 0" class="product__promo">
-                          Promo −{{ money(item.discount) }}
+                          {{ item.discountSource === 'vip' ? 'VIP' : 'Promo' }} −{{ money(item.discount) }}
                         </p>
                       </div>
                     </div>

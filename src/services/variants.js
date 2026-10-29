@@ -361,6 +361,7 @@ export function toApiVariants(rows) {
     const barcode = String(row.barcode ?? '').trim()
 
     return {
+      ...(row.id != null ? { id: row.id } : {}),
       name: String(row.name ?? '').trim(),
       slug: row.slug || slugifyPart(row.sku) || slugifyPart(row.name),
       sku: String(row.sku ?? '').trim(),
@@ -479,6 +480,9 @@ export function fromApiVariant(variant) {
   const compareAt = hasSale ? (variant?.price ?? '') : ''
 
   return {
+    // Which saved variant this row edits. It lets the API tell a changed SKU
+    // from a new variant; rows added in the form have none.
+    id: variant?.id ?? null,
     name: variant?.name ?? '',
     sku: variant?.sku ?? '',
     slug: variant?.slug ?? '',

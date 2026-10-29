@@ -517,7 +517,7 @@ function variantCatalog({ serialsCount = 0, stock = 5 } = {}) {
 }
 
 describe('StockAdjustmentFormView variant serials', () => {
-  it('asks for one serial, not one per unit in stock, on a variant that has none', async () => {
+  it('asks for one serial per unit coming in, not one per unit in stock', async () => {
     fetchSerials.mockResolvedValue({ items: [] })
     const wrapper = await mountForm({ catalog: variantCatalog({ stock: 5 }) })
 
@@ -536,24 +536,27 @@ describe('StockAdjustmentFormView variant serials', () => {
     wrapper.unmount()
   })
 
-  it('still asks for one serial when several units come in', async () => {
+  it('asks for one serial per unit when several units come in', async () => {
     fetchSerials.mockResolvedValue({ items: [] })
     const wrapper = await mountForm({ catalog: variantCatalog() })
 
     await wrapper.find('input[type="number"]').setValue(4)
     await flushPromises()
 
-    expect(wrapper.find('.serial-trigger__count').text()).toBe('0 / 1')
+    expect(wrapper.find('.serial-trigger__count').text()).toBe('0 / 4')
 
     wrapper.unmount()
   })
 
-  it('lists the serial a variant already has and takes no more', async () => {
+  it('lists the serials a variant already has and still asks for one per unit added', async () => {
     fetchSerials.mockResolvedValue({ items: [{ serial_number: 'sn-held', status: 'available' }] })
-    const wrapper = await mountForm({ catalog: variantCatalog({ serialsCount: 1 }) })
+    const wrapper = await mountForm({ catalog: variantCatalog({ serialsCount: 1, stock: 0 }) })
 
-    expect(wrapper.find('.serial-trigger__count').text()).toBe('0 / 0')
-    expect(wrapper.find('.serial-trigger__label').text()).toBe('View serial')
+    await wrapper.find('input[type="number"]').setValue(3)
+    await flushPromises()
+
+    expect(wrapper.find('.serial-trigger__count').text()).toBe('0 / 3')
+    expect(wrapper.find('.serial-trigger__label').text()).toBe('Add serial')
 
     await wrapper.find('.serial-trigger').trigger('click')
     await flushPromises()
@@ -562,14 +565,14 @@ describe('StockAdjustmentFormView variant serials', () => {
       expect.objectContaining({ product_variant_id: 11 }),
       'token',
     )
-    expect(wrapper.find('#serial-modal-title').text()).toBe('This variant already has a serial number')
-    expect(wrapper.find('#serial-modal-input').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('#serial-modal-title').text()).toBe('Add 3 serial numbers')
+    expect(wrapper.find('#serial-modal-input').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('.serial-modal__existing-toggle').text()).toContain('Existing serials (1)')
 
-    // The list opens by itself so the serial is in view.
+    // The list opens by itself so the serial it already has is in view.
     expect(wrapper.find('.serial-modal__existing-item').text()).toBe('SN-HELD')
     const stats = wrapper.findAll('.serial-modal__stat strong').map((stat) => stat.text())
-    expect(stats).toEqual(['1', '0', '0'])
+    expect(stats).toEqual(['1', '3', '0'])
 
     wrapper.unmount()
   })
@@ -594,7 +597,7 @@ describe('StockAdjustmentFormView variant serials', () => {
     wrapper.unmount()
   })
 
-  it('sends the one new serial with a stock-in on a variant that has none', async () => {
+  it('sends the new serial with a stock-in on a variant that has none', async () => {
     createBulkStockMovement.mockResolvedValue({})
     fetchSerials.mockResolvedValue({ items: [] })
     lookupSerial.mockResolvedValue(null)
@@ -623,6 +626,34 @@ describe('StockAdjustmentFormView variant serials', () => {
     wrapper.unmount()
   })
 
+  it('sends one serial per unit with a stock-in on a variant that already has one', async () => {
+    createBulkStockMovement.mockResolvedValue({})
+    fetchSerials.mockResolvedValue({ items: [{ serial_number: 'SN-HELD', status: 'available' }] })
+    lookupSerial.mockResolvedValue(null)
+    const wrapper = await mountForm({ catalog: variantCatalog({ serialsCount: 1, stock: 0 }) })
+
+    await wrapper.find('input[type="number"]').setValue(2)
+    await flushPromises()
+    await wrapper.find('.serial-trigger').trigger('click')
+    await flushPromises()
+    for (const serial of ['sn-a', 'sn-b']) {
+      await wrapper.find('#serial-modal-input').setValue(serial)
+      await wrapper.find('#serial-modal-input').trigger('keydown.enter')
+      await flushPromises()
+    }
+    await wrapper.findAll('.serial-modal__footer button').find((b) => b.text() === 'Save serials').trigger('click')
+
+    await wrapper.findAll('.actions button').find((b) => b.text() === 'Create Adjustment').trigger('click')
+    await flushPromises()
+
+    const [payload] = createBulkStockMovement.mock.calls[0]
+    expect(payload.items[0]).toEqual(
+      expect.objectContaining({ movement_type: 'stock_in', quantity: 2, serial_numbers: ['SN-A', 'SN-B'] }),
+    )
+
+    wrapper.unmount()
+  })
+
   it('shows the field message the API rejects the save with, not the generic one', async () => {
     const rejection = Object.assign(new Error('The given data was invalid.'), {
       status: 422,
@@ -632,7 +663,15 @@ describe('StockAdjustmentFormView variant serials', () => {
     })
     createBulkStockMovement.mockRejectedValue(rejection)
     fetchSerials.mockResolvedValue({ items: [{ serial_number: 'SN-HELD', status: 'available' }] })
+    lookupSerial.mockResolvedValue(null)
     const wrapper = await mountForm({ catalog: variantCatalog({ serialsCount: 1 }) })
+
+    await wrapper.find('.serial-trigger').trigger('click')
+    await flushPromises()
+    await wrapper.find('#serial-modal-input').setValue('sn-new')
+    await wrapper.find('#serial-modal-input').trigger('keydown.enter')
+    await flushPromises()
+    await wrapper.findAll('.serial-modal__footer button').find((b) => b.text() === 'Save serials').trigger('click')
 
     await wrapper.findAll('.actions button').find((b) => b.text() === 'Create Adjustment').trigger('click')
     await flushPromises()
@@ -644,16 +683,21 @@ describe('StockAdjustmentFormView variant serials', () => {
     wrapper.unmount()
   })
 
-  it('lets a stock-in through without a serial when the variant already has one', async () => {
+  it('will not save a stock-in with fewer serials than units, even when the variant already has one', async () => {
     createBulkStockMovement.mockResolvedValue({})
     fetchSerials.mockResolvedValue({ items: [{ serial_number: 'SN-HELD', status: 'available' }] })
     const wrapper = await mountForm({ catalog: variantCatalog({ serialsCount: 1 }) })
 
-    await wrapper.findAll('.actions button').find((b) => b.text() === 'Create Adjustment').trigger('click')
+    // One unit is coming in, so one serial is still owed: saving stays blocked
+    // and the button says which row is short.
+    const create = wrapper.findAll('.actions button').find((b) => b.text() === 'Create Adjustment')
+    expect(create.attributes('disabled')).toBeDefined()
+    expect(create.attributes('title')).toContain('0 of 1 serials')
+
+    await create.trigger('click')
     await flushPromises()
 
-    const [payload] = createBulkStockMovement.mock.calls[0]
-    expect(payload.items[0].serial_numbers).toEqual([])
+    expect(createBulkStockMovement).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })

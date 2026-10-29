@@ -139,6 +139,26 @@ describe('OrderDetailView coupon', () => {
 
     expect(wrapper.find('.summary__coupon').exists()).toBe(false)
   })
+
+  it('labels a VIP line discount as VIP', async () => {
+    const data = order({ status: 'pending' })
+    data.items = [{
+      id: 1,
+      product: { name: 'Keyboard', sku: 'KEY-1' },
+      qty: 1,
+      unit_price: '34.00',
+      discount: '1.70',
+      line_total: '32.30',
+      promotion: { source: 'vip', name: 'VIP Discount', value: '5.00' },
+    }]
+    apiFetch.mockResolvedValue({ data })
+
+    const wrapper = mount(OrderDetailView, { global: { stubs } })
+    await flushPromises()
+
+    expect(wrapper.find('.product__promo').text()).toContain('VIP')
+    expect(wrapper.find('.product__promo').text()).toContain('$1.70')
+  })
 })
 
 describe('OrderDetailView delivery status', () => {

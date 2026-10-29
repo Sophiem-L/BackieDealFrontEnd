@@ -14,7 +14,6 @@ import {
 import { FORM_SELECT } from '@/lib/selectPresets'
 import { fetchStockCatalog, createBulkStockMovement } from '@/services/stock'
 import { fetchSerials, lookupSerial } from '@/services/serials'
-import { MAX_SERIALS_PER_VARIANT } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -95,9 +94,9 @@ function getSerialTarget(item) {
   const existingSerialCount = getRowSerials(item).length
 
   if (isIncreaseAdjustment(form.adjustmentType)) {
-    // A variant holds one serial number however much stock comes in, so it asks
-    // for one only while the variant has none.
-    if (isVariantRow()) return Math.max(0, MAX_SERIALS_PER_VARIANT - (Number(item.serialsCount) || 0))
+    // A variant takes one serial number for every unit that comes in, on top of
+    // any it already holds (those are listed under Existing serials).
+    if (isVariantRow()) return Math.max(0, adjQty)
     return Math.max(0, (currentQty + adjQty) - existingSerialCount)
   }
 
@@ -141,20 +140,11 @@ function getRowSerials(item) {
     : []
 }
 
-// True when this increase has nothing to enter because the variant already holds
-// its serial number.
-function variantHasSerial(item) {
-  return isVariantRow()
-    && isIncreaseAdjustment(form.adjustmentType)
-    && (Number(item?.serialsCount) || 0) >= MAX_SERIALS_PER_VARIANT
-}
-
 function getExistingSerialCount(item) {
   return drawer.existingLoaded ? drawer.existingSerials.length : (Number(item?.serialsCount) || 0)
 }
 
 function getSerialModalTitle(item) {
-  if (variantHasSerial(item)) return 'This variant already has a serial number'
   const required = getRequiredSerials(item)
   return required === 1 ? 'Add 1 serial number' : `Add ${required} serial numbers`
 }
@@ -828,7 +818,7 @@ watch(
                     :title="getSerialTriggerTitle(item)"
                     @click="openSerialDrawer(item)"
                   >
-                    <span class="serial-trigger__label">{{ variantHasSerial(item) ? 'View serial' : 'Add serial' }}</span>
+                    <span class="serial-trigger__label">Add serial</span>
                     <span class="serial-trigger__count" aria-live="polite">{{ getFilledSerialCount(item) }} / {{ getRequiredSerials(item) }}</span>
                     <svg
                       v-if="getRowQty(item) > 0 && getFilledSerialCount(item) === getRequiredSerials(item)"
@@ -964,15 +954,8 @@ watch(
                   Add
                 </BaseButton>
               </div>
-              <p class="serial-modal__helper">
-                {{ isVariantRow() && drawer.mode === 'increase'
-                  ? 'Each variant has one serial number, however many units come in.'
-                  : 'Tip: paste many serials separated by new lines, commas or spaces' }}
-              </p>
-              <p v-if="variantHasSerial(getCurrentItem())" class="serial-modal__limit">
-                Already added, so no more can be entered. It is listed under Existing serials.
-              </p>
-              <p v-else-if="getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())" class="serial-modal__limit">All serials entered</p>
+              <p class="serial-modal__helper">Tip: paste many serials separated by new lines, commas or spaces</p>
+              <p v-if="getFilledSerialCount(getCurrentItem()) >= getRequiredSerials(getCurrentItem())" class="serial-modal__limit">All serials entered</p>
             </div>
 
             <p v-if="drawer.pendingExtras" class="serial-modal__banner">
@@ -993,7 +976,7 @@ watch(
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
-                <p>{{ variantHasSerial(getCurrentItem()) ? 'Nothing to add for this variant.' : 'No serials yet. Scan or paste to begin.' }}</p>
+                <p>No serials yet. Scan or paste to begin.</p>
               </div>
               <div v-else class="serial-modal__chips">
                 <button

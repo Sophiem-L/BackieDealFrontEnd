@@ -255,7 +255,13 @@ async function save() {
 
   if (form.variants.length) {
     body.variants = toApiVariants(form.variants)
-    if (updating) body.replace_variants = false
+    if (updating) {
+      // Sync in place so each variant keeps its id (serials, stock history and
+      // orders point at it). Rows carry the id of the variant they edit, and a
+      // variant the form no longer has is removed.
+      body.replace_variants = false
+      body.remove_missing_variants = true
+    }
   }
 
   let product
@@ -269,6 +275,12 @@ async function save() {
       : await apiFetch('/admin/products', { method: 'POST', body, token: auth.accessToken })
     product = response?.data ?? {}
     if (!updating) createdProductId.value = product.id ?? ''
+    // New variants now exist: remember their ids so that saving again (after a
+    // serial-number failure, say) edits them rather than adding them twice.
+    form.variants = form.variants.map((row) => ({
+      ...row,
+      id: row.id ?? product.variants?.find((saved) => saved.sku === row.sku)?.id ?? null,
+    }))
   } catch (err) {
     error.value = messageFrom(err, 'Unable to save this product.')
     saving.value = false
