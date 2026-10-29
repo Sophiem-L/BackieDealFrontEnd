@@ -7,7 +7,7 @@ import RichTextEditor from '@/components/RichTextEditor.vue'
 import ProductImageGallery from '@/components/products/ProductImageGallery.vue'
 import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
-import { fetchPromotions } from '@/services/promotions'
+import { TARGET_PRODUCTS, fetchPromotions } from '@/services/promotions'
 import { receiveSerials } from '@/services/serials'
 import {
   deriveProductPrice,
@@ -45,6 +45,11 @@ const categories = ref([])
 // `coupon_product` pivot, sent as `promotion_ids[]` on save.
 const promotions = ref([])
 const promotionsError = ref('')
+// Only product-targeted promotions can take a product; the API rejects the
+// rest. One already attached stays listed so it can still be removed.
+const attachablePromotions = computed(() =>
+  promotions.value.filter((p) => p.target_type === TARGET_PRODUCTS || form.promotionIds.includes(p.id)),
+)
 
 const form = reactive({
   name: '',
@@ -391,7 +396,7 @@ function cancel() {
               :base-sku="form.sku"
               :seed-images="seedImages"
               :mode="variantMode"
-              :promotions="promotions"
+              :promotions="attachablePromotions"
               :promotion-ids="form.promotionIds"
               :product-name="form.name || 'New product'"
               :product-image="primaryImageUrl"
