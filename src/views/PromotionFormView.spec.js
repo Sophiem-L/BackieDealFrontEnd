@@ -382,7 +382,52 @@ describe('PromotionFormView — targeting', () => {
     await flushPromises()
 
     expect(targetRadio(wrapper, 'products').element.checked).toBe(true)
-    expect(wrapper.find('.ptargets__chips').text()).toContain('Legacy SSD')
+    expect(wrapper.find('.vtargets__groups').text()).toContain('Legacy SSD')
+    expect(wrapper.find('.vtargets__groups').text()).toContain('Whole product')
+  })
+
+  it('restores a product narrowed to specific variants and saves the same ids back', async () => {
+    route.params = { id: '15' }
+    fetchPromotion.mockResolvedValue({
+      id: 15,
+      name: 'RAM deal',
+      code: 'RAM',
+      type: 'percentage',
+      value: '10.00',
+      is_active: true,
+      target_type: 'products',
+      products: [{ id: 'p-1', name: 'RTX 5080', price: 1000 }],
+      // v-11 repeats its whole product; v-21 narrows p-2 to one variant.
+      variants: [
+        { id: 11, product_id: 'p-1', name: '16GB', sku: 'RTX-16' },
+        { id: 21, product_id: 'p-2', name: '32GB', sku: 'RAM-32' },
+      ],
+      categories: [],
+      customer_groups: [],
+    })
+    const { fetchPromotionTargetProduct } = await import('@/services/promotions')
+    fetchPromotionTargetProduct.mockImplementation(async (id) => ({
+      id,
+      name: id === 'p-2' ? 'Vengeance DDR5' : 'RTX 5080',
+      variants: id === 'p-2'
+        ? [{ id: 21, product_id: 'p-2', name: '32GB', sku: 'RAM-32', is_active: true }, { id: 22, product_id: 'p-2', name: '64GB', sku: 'RAM-64', is_active: true }]
+        : [],
+    }))
+    savePromotion.mockResolvedValue({})
+    const wrapper = mount(PromotionFormView, { global: { stubs } })
+    await flushPromises()
+
+    const groups = wrapper.findAll('.vtargets__group')
+    expect(groups[0].text()).toContain('Whole product')
+    expect(groups[1].text()).toContain('Vengeance DDR5')
+    expect(groups[1].text()).toContain('1 of 2 variants')
+
+    await wrapper.findAll('button').find((button) => button.text().includes('Update Promotion')).trigger('click')
+    await flushPromises()
+
+    const payload = promotionPayload(savePromotion.mock.calls[0][1])
+    expect(payload.product_ids).toEqual(['p-1'])
+    expect(payload.variant_ids).toEqual([11, 21])
   })
 
   it('warns when a legacy promotion has more than one kind of target', async () => {

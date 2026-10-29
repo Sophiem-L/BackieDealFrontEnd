@@ -191,6 +191,29 @@ export function promotionFromApi(promotion) {
   }
 }
 
+// The API discounts a product in `product_ids` on every variant, and a variant
+// in `variant_ids` on its own. So a saved product is either a whole product, or
+// — when only some of its variants were saved — narrowed to those variants.
+// Variants saved alongside their whole product change nothing; they are kept
+// as they are so saving the form does not quietly drop them.
+export function savedProductTargets(promotion) {
+  const productIds = uniqueIds(promotion.products ?? [], String)
+  const whole = new Set(productIds)
+  const variants = promotion.variants ?? []
+
+  return {
+    productIds,
+    specificProductIds: [...new Set(
+      variants.map((variant) => String(variant.product_id)).filter((id) => id !== 'undefined' && !whole.has(id)),
+    )],
+    variantIds: uniqueIds(variants, Number),
+  }
+}
+
+function uniqueIds(items, cast) {
+  return [...new Set(items.map((item) => cast(item?.id ?? item)))]
+}
+
 export function promotionToForm(promotion) {
   const isFlash = isFlashSale(promotion)
   const hours = windowHours(promotion.starts_at, promotion.expires_at)
@@ -216,8 +239,7 @@ export function promotionToForm(promotion) {
     perCustomerLimit: promotion.user_limit === null ? '' : String(promotion.user_limit),
     currentUsage: Number(promotion.used_count ?? 0),
     targetType: inferTargetType(promotion),
-    productIds: (promotion.products ?? []).map((product) => String(product.id)),
-    variantIds: (promotion.variants ?? []).map((variant) => Number(variant.id)),
+    ...savedProductTargets(promotion),
     categoryIds: (promotion.categories ?? []).map((category) => Number(category.id)),
     customerGroupIds: (promotion.customer_groups ?? []).map((group) => Number(group.id)),
     includeSubcategories: Boolean(promotion.include_subcategories),
@@ -256,10 +278,12 @@ function targetPayload(form) {
   if (targetType === TARGET_CUSTOMER_GROUPS) {
     return { target_type: targetType, customer_group_ids: (form.customerGroupIds ?? []).map(Number) }
   }
+  // Whole products go in product_ids; products narrowed to specific variants
+  // are left out of it and reach the API only through their variant_ids.
   return {
     target_type: TARGET_PRODUCTS,
-    product_ids: (form.productIds ?? []).map(String),
-    variant_ids: (form.variantIds ?? []).map(Number),
+    product_ids: uniqueIds(form.productIds ?? [], String),
+    variant_ids: uniqueIds(form.variantIds ?? [], Number),
   }
 }
 
@@ -322,12 +346,32 @@ function pageResult(response) {
   }
 }
 
+// The list sends the active-variant count in `variants` when asked for it; the
+// product detail sends the variants themselves there.
+function productSummary(product) {
+  const { variants, ...rest } = product
+  return { ...rest, variants_count: typeof variants === 'number' ? variants : rest.variants_count ?? null }
+}
+
 // Only active products: the API rejects inactive ones as promotion targets.
-export async function fetchPromotionProducts(token, search = '', page = 1, categoryId = null) {
-  const query = new URLSearchParams({ page: String(page), per_page: '10', is_active: '1' })
+// `q` matches name, SKU and barcode.
+export async function fetchPromotionProducts(token, search = '', page = 1, categoryId = null, perPage = 10) {
+  const query = new URLSearchParams({ page: String(page), per_page: String(perPage), is_active: '1', with_variants_count: '1' })
   if (search.trim()) query.set('q', search.trim())
   if (categoryId) query.set('category_id', String(categoryId))
-  return pageResult(await apiFetch(`/admin/products?${query}`, { token }))
+  const result = pageResult(await apiFetch(`/admin/products?${query}`, { token }))
+  return { ...result, items: result.items.map(productSummary) }
+}
+
+// Every product matching a search, for "select all matching". Pages of 200,
+// the API's maximum, so a typical catalogue is one request.
+export async function fetchAllPromotionProducts(token, search = '', categoryId = null) {
+  const first = await fetchPromotionProducts(token, search, 1, categoryId, 200)
+  const items = [...first.items]
+  for (let page = 2; page <= first.lastPage; page += 1) {
+    items.push(...(await fetchPromotionProducts(token, search, page, categoryId, 200)).items)
+  }
+  return items
 }
 
 export async function fetchPromotionCategories(token, search = '', page = 1) {

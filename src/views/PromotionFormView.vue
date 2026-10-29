@@ -5,6 +5,8 @@ import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
 import PromotionProductTargets from '@/components/promotions/PromotionProductTargets.vue'
+import PromotionVariantTargets from '@/components/promotions/PromotionVariantTargets.vue'
+import { usePromotionTargets } from '@/composables/usePromotionTargets'
 import {
   Select,
   SelectContent,
@@ -68,26 +70,28 @@ const form = reactive({
   currentUsage: 0,
   maxDiscountAmount: '',
   targetType: TARGET_PRODUCTS,
+  // Whole products; every variant is discounted.
   productIds: [],
+  // Products narrowed to specific variants. Form-only: they reach the API
+  // through their variants in variantIds.
+  specificProductIds: [],
   variantIds: [],
   categoryIds: [],
   customerGroupIds: [],
   includeSubcategories: false,
 })
 
-// Products already known to the form (the saved selection on edit); the
-// product table fetches its own pages.
-const knownProducts = ref([])
+const targets = usePromotionTargets(form, {
+  loadProduct: (id) => fetchPromotionTargetProduct(id, auth.accessToken),
+})
 const categoryOptions = ref([])
 const groupOptions = ref([])
-const variantOptions = ref([])
 const categorySearch = ref('')
 const groupSearch = ref('')
 const categoryPage = ref(1)
 const categoryLastPage = ref(1)
 const targetOptionsLoading = ref(false)
 const targetOptionsError = ref('')
-const loadedProductIds = new Set()
 // Set on edit when the saved promotion predates exclusive targeting.
 const legacyTargetNotice = ref('')
 
@@ -125,10 +129,7 @@ function selectTargetType(type) {
   if (form.targetType === type) return
 
   form.targetType = type
-  if (type !== TARGET_PRODUCTS) {
-    form.productIds = []
-    form.variantIds = []
-  }
+  if (type !== TARGET_PRODUCTS) targets.clearProducts()
   if (type !== TARGET_CATEGORIES) {
     form.categoryIds = []
     form.includeSubcategories = false
@@ -149,7 +150,7 @@ function removeFrom(list, id) {
 // Mirrors the API's rule so the admin hears about a missing target before a
 // round trip; the API still enforces it.
 function targetSelectionError() {
-  if (form.targetType === TARGET_PRODUCTS && !form.productIds.length) return { product_ids: ['Select at least one product.'] }
+  if (form.targetType === TARGET_PRODUCTS) return targets.validate()
   if (form.targetType === TARGET_CATEGORIES && !form.categoryIds.length) return { category_ids: ['Select at least one category.'] }
   if (form.targetType === TARGET_CUSTOMER_GROUPS && !form.customerGroupIds.length) {
     return { customer_group_ids: ['Select at least one customer group.'] }
@@ -225,32 +226,6 @@ async function loadCategories(reset = false) {
   }
 }
 
-async function loadSelectedProductDetails() {
-  const missing = form.productIds.filter((id) => !loadedProductIds.has(String(id)))
-  await Promise.all(missing.map(async (id) => {
-    loadedProductIds.add(String(id))
-    try {
-      const product = await fetchPromotionTargetProduct(id, auth.accessToken)
-      variantOptions.value = mergeOptions(variantOptions.value, product.variants ?? [])
-    } catch (err) {
-      targetOptionsError.value = err.message || 'Could not load product variants.'
-    }
-  }))
-}
-
-function onProductSelectionChanged() {
-  const selectedProductIds = new Set(form.productIds.map(String))
-  form.variantIds = form.variantIds.filter((variantId) => {
-    const variant = variantOptions.value.find((option) => Number(option.id) === Number(variantId))
-    return variant && selectedProductIds.has(String(variant.product_id))
-  })
-  loadSelectedProductDetails()
-}
-
-// Keeps the optional variant list in step with the product selection, however
-// it changed: a row click, a chip removal or "Clear all".
-watch(() => form.productIds.join(','), onProductSelectionChanged)
-
 async function loadTargetOptions() {
   targetOptionsLoading.value = true
   targetOptionsError.value = ''
@@ -277,7 +252,6 @@ async function loadPromotion() {
   try {
     const promotion = await fetchPromotion(route.params.id, auth.accessToken)
     Object.assign(form, promotionToForm(promotion))
-    knownProducts.value = promotion.products ?? []
     if (savedTargetTypeCount(promotion) > 1) {
       legacyTargetNotice.value =
         'This promotion was saved with more than one kind of target. Saving keeps only the targets of the type selected below.'
@@ -287,8 +261,7 @@ async function loadPromotion() {
     }
     categoryOptions.value = mergeOptions(categoryOptions.value, promotion.categories ?? [])
     groupOptions.value = mergeOptions(groupOptions.value, promotion.customer_groups ?? [])
-    variantOptions.value = mergeOptions(variantOptions.value, promotion.variants ?? [])
-    await loadSelectedProductDetails()
+    await targets.hydrate(promotion)
   } catch (err) {
     submitError.value = err.message || 'Could not load the promotion.'
   } finally {
@@ -503,23 +476,14 @@ async function save() {
 
             <!-- Products -->
             <div v-if="form.targetType === TARGET_PRODUCTS" class="targeting__section">
+              <h4 class="targeting__heading">Product Selection</h4>
               <PromotionProductTargets
-                v-model="form.productIds"
-                :known="knownProducts"
+                :targets="targets"
                 :categories="activeCategoryOptions"
                 :discount="discountPreview"
                 :token="auth.accessToken"
                 :error="errorFor('product_ids')"
               />
-
-              <div v-if="variantOptions.length" class="targeting__section">
-                <span class="targeting__label">Optional variants for selected products</span>
-                <label v-for="variant in variantOptions" :key="variant.id" class="targeting__option">
-                  <input v-model="form.variantIds" type="checkbox" :value="Number(variant.id)" />
-                  <span>{{ variant.name }} <small>{{ variant.sku }}</small></span>
-                </label>
-                <span v-if="errorFor('variant_ids')" class="field-error">{{ errorFor('variant_ids') }}</span>
-              </div>
             </div>
 
             <!-- Categories -->
@@ -601,6 +565,11 @@ async function save() {
               <span v-if="errorFor('customer_group_ids')" class="field-error">{{ errorFor('customer_group_ids') }}</span>
             </div>
           </section>
+
+          <section v-if="form.targetType === TARGET_PRODUCTS && targets.summary.value.products" class="card">
+            <h3 class="card__title">Variant Targeting <span class="card__optional">Optional</span></h3>
+            <PromotionVariantTargets :targets="targets" :error="errorFor('variant_ids')" />
+          </section>
         </div>
 
         <!-- Side column -->
@@ -680,8 +649,12 @@ async function save() {
         </div>
       </div>
 
-      <!-- Form actions -->
+      <!-- Form actions: pinned so they stay in reach on a long form -->
       <div class="actions">
+        <span v-if="form.targetType === TARGET_PRODUCTS && targets.summary.value.products" class="actions__summary">
+          {{ targets.summary.value.wholeProducts }} whole ·
+          {{ targets.summary.value.specificProducts }} narrowed ({{ targets.summary.value.specificVariants }} variants)
+        </span>
         <BaseButton variant="ghost" to="/promotions">Cancel</BaseButton>
         <BaseButton variant="primary" :disabled="saving || loading" @click="save">
           {{ saving ? 'Saving…' : (isEdit ? 'Update Promotion' : 'Create Promotion') }}
@@ -697,6 +670,13 @@ async function save() {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+
+  // This screen's accent in dark mode. Light mode keeps the app's gold, which
+  // stays visible on white.
+  :root[data-theme='dark'] & {
+    --accent-rgb: 255 235 0;
+    --accent-ink: #ffeb00;
+  }
 
   &__body {
     padding: 1.5rem;
@@ -748,9 +728,20 @@ async function save() {
 
 /* Bottom action bar */
 .actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.6rem;
+  margin: 0 -1.5rem -1.5rem;
+  padding: 0.75rem 1.5rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+
+  &__summary { margin-right: auto; font-size: 0.78rem; color: var(--text-subtle); }
 }
 
 .col {
@@ -773,6 +764,15 @@ async function save() {
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-muted);
+  }
+
+  &__optional {
+    margin-left: 0.4rem;
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text-subtle);
   }
 
   &__hint {
@@ -832,6 +832,7 @@ async function save() {
   &__notice { margin: 0 0 1rem; padding: 0.6rem 0.8rem; border-radius: 10px; background: var(--bg); color: var(--text-body); font-size: 0.8rem; }
   &__section { display: grid; gap: 0.45rem; margin-top: 1.1rem; }
   &__label { color: var(--text-body); font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+  &__heading { margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--text-strong); }
 
   &__section > input[type='search'] {
     width: 100%;
