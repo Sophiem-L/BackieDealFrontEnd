@@ -25,6 +25,65 @@ export const PROMOTION_KINDS = [
 
 export const DISCOUNT_TYPES = ['Percentage Discount', 'Fixed Amount']
 
+// A promotion targets exactly one of these. The API rejects ids for any other
+// target type, so the payload only carries the chosen one's.
+export const TARGET_PRODUCTS = 'products'
+export const TARGET_CATEGORIES = 'categories'
+export const TARGET_CUSTOMER_GROUPS = 'customer_groups'
+
+export const TARGET_TYPES = [
+  { value: TARGET_PRODUCTS, label: 'Products', hint: 'Discount specific products.' },
+  { value: TARGET_CATEGORIES, label: 'Categories', hint: 'Discount every product in the chosen categories.' },
+  { value: TARGET_CUSTOMER_GROUPS, label: 'Customer Groups', hint: 'Discount all products for members of the chosen groups.' },
+]
+
+// Promotions saved before `target_type` existed carry none; the targets they
+// do have say which one they meant, products first as the API backfill does.
+function inferTargetType(promotion) {
+  if (promotion.target_type) return promotion.target_type
+  if (promotion.products?.length || promotion.variants?.length) return TARGET_PRODUCTS
+  if (promotion.categories?.length) return TARGET_CATEGORIES
+  if (promotion.customer_groups?.length) return TARGET_CUSTOMER_GROUPS
+  return TARGET_PRODUCTS
+}
+
+// How many target types a saved promotion actually uses. More than one is a
+// legacy record; saving it through the form keeps only the chosen type.
+export function savedTargetTypeCount(promotion) {
+  return [
+    promotion.products?.length || promotion.variants?.length,
+    promotion.categories?.length,
+    promotion.customer_groups?.length,
+  ].filter(Boolean).length
+}
+
+// The unit price a promotion discounts: the sale price when there is one, as
+// the API prices order lines.
+export function productBasePrice(product) {
+  const price = product?.sale_price ?? product?.price
+  return price == null || price === '' ? null : Number(price)
+}
+
+const toCents = (amount) => Math.round(amount * 100) / 100
+
+// Preview of what one unit of a product costs under the promotion, mirroring
+// ProductPromotionService::amountFor(). The API recomputes at checkout; this is
+// display only and never sent. Null when the price or discount is unusable.
+export function previewDiscount(basePrice, { type, value, maxDiscount } = {}) {
+  const price = Number(basePrice)
+  const amount = Number(value)
+  if (basePrice == null || !Number.isFinite(price) || price < 0 || value === '' || !Number.isFinite(amount) || amount < 0) {
+    return null
+  }
+
+  let discount = type === 'fixed' ? amount : (price * amount) / 100
+  const cap = maxDiscount === '' || maxDiscount == null ? null : Number(maxDiscount)
+  if (cap !== null && Number.isFinite(cap)) discount = Math.min(discount, cap)
+  discount = toCents(Math.max(0, Math.min(discount, price)))
+
+  return { discount, finalPrice: toCents(price - discount) }
+}
+
 // Flash sales predating the `kind` column are recognised by their window: at
 // most this many hours. Only consulted when the API sent no kind at all.
 export const FLASH_SALE_MAX_HOURS = 24
@@ -146,6 +205,7 @@ export function promotionToForm(promotion) {
     bannerImage: promotion.banner_image ?? '',
     discountValue: String(promotion.value ?? ''),
     minimumSpend: String(promotion.min_order_amount ?? '0.00'),
+    maxDiscountAmount: promotion.max_discount_amount == null ? '' : String(promotion.max_discount_amount),
     startDate: dateValue(promotion.starts_at),
     endDate: dateValue(promotion.expires_at),
     // Kept to two decimals so a 2.5h window does not round up to 3h and quietly
@@ -155,6 +215,12 @@ export function promotionToForm(promotion) {
     totalLimit: promotion.usage_limit === null ? '' : String(promotion.usage_limit),
     perCustomerLimit: promotion.user_limit === null ? '' : String(promotion.user_limit),
     currentUsage: Number(promotion.used_count ?? 0),
+    targetType: inferTargetType(promotion),
+    productIds: (promotion.products ?? []).map((product) => String(product.id)),
+    variantIds: (promotion.variants ?? []).map((variant) => Number(variant.id)),
+    categoryIds: (promotion.categories ?? []).map((category) => Number(category.id)),
+    customerGroupIds: (promotion.customer_groups ?? []).map((group) => Number(group.id)),
+    includeSubcategories: Boolean(promotion.include_subcategories),
   }
 }
 
@@ -176,6 +242,27 @@ function flashWindow(form) {
   }
 }
 
+// Only the chosen target type's ids go out; the API detaches the others.
+function targetPayload(form) {
+  const targetType = form.targetType ?? TARGET_PRODUCTS
+
+  if (targetType === TARGET_CATEGORIES) {
+    return {
+      target_type: targetType,
+      category_ids: (form.categoryIds ?? []).map(Number),
+      include_subcategories: Boolean(form.includeSubcategories),
+    }
+  }
+  if (targetType === TARGET_CUSTOMER_GROUPS) {
+    return { target_type: targetType, customer_group_ids: (form.customerGroupIds ?? []).map(Number) }
+  }
+  return {
+    target_type: TARGET_PRODUCTS,
+    product_ids: (form.productIds ?? []).map(String),
+    variant_ids: (form.variantIds ?? []).map(Number),
+  }
+}
+
 export function promotionPayload(form) {
   const isFlash = form.kind === FLASH_SALE_KIND
   const window = isFlash ? flashWindow(form) : null
@@ -187,6 +274,8 @@ export function promotionPayload(form) {
     kind: kindValue(form.kind),
     value: Number(form.discountValue),
     min_order_amount: Number(form.minimumSpend || 0),
+    max_discount_amount: form.maxDiscountAmount === '' ? null : Number(form.maxDiscountAmount),
+    ...targetPayload(form),
     starts_at: isFlash ? window.startsAt : form.startDate,
     expires_at: isFlash ? window.expiresAt : form.endDate || null,
     usage_limit: form.totalLimit === '' ? null : Number(form.totalLimit),
@@ -218,6 +307,42 @@ export async function savePromotion(id, form, token) {
     token,
   })
   return promotionFromApi(response?.data ?? {})
+}
+
+function pageResult(response) {
+  const payload = response?.data ?? response ?? {}
+  const items = Array.isArray(payload) ? payload : payload.items ?? payload.data ?? []
+  const meta = payload.pagination ?? payload.meta ?? payload.data?.meta ?? {}
+
+  return {
+    items: Array.isArray(items) ? items : [],
+    currentPage: Number(meta.current_page ?? 1),
+    lastPage: Number(meta.last_page ?? 1),
+    total: meta.total == null ? null : Number(meta.total),
+  }
+}
+
+// Only active products: the API rejects inactive ones as promotion targets.
+export async function fetchPromotionProducts(token, search = '', page = 1, categoryId = null) {
+  const query = new URLSearchParams({ page: String(page), per_page: '10', is_active: '1' })
+  if (search.trim()) query.set('q', search.trim())
+  if (categoryId) query.set('category_id', String(categoryId))
+  return pageResult(await apiFetch(`/admin/products?${query}`, { token }))
+}
+
+export async function fetchPromotionCategories(token, search = '', page = 1) {
+  const query = new URLSearchParams({ page: String(page) })
+  if (search.trim()) query.set('search', search.trim())
+  return pageResult(await apiFetch(`/admin/categories?${query}`, { token }))
+}
+
+export async function fetchPromotionCustomerGroups(token) {
+  return pageResult(await apiFetch('/admin/promotions/targeting/customer-groups', { token }))
+}
+
+export async function fetchPromotionTargetProduct(id, token) {
+  const response = await apiFetch(`/admin/products/${id}`, { token })
+  return response?.data ?? response
 }
 
 export async function deletePromotion(id, token) {

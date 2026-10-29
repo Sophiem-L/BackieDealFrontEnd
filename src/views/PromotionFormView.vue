@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ToggleSwitch from '@/components/ToggleSwitch.vue'
+import PromotionProductTargets from '@/components/promotions/PromotionProductTargets.vue'
 import {
   Select,
   SelectContent,
@@ -19,9 +20,17 @@ import {
   FLASH_SALE_KIND,
   PROMOTION_KINDS,
   STANDARD_KIND,
+  TARGET_CATEGORIES,
+  TARGET_CUSTOMER_GROUPS,
+  TARGET_PRODUCTS,
+  TARGET_TYPES,
   fetchPromotion,
+  fetchPromotionCategories,
+  fetchPromotionCustomerGroups,
+  fetchPromotionTargetProduct,
   promotionToForm,
   savePromotion,
+  savedTargetTypeCount,
   toDateTimeLocal,
 } from '@/services/promotions'
 import { useAuthStore } from '@/stores/auth'
@@ -57,7 +66,96 @@ const form = reactive({
   totalLimit: '',
   perCustomerLimit: '',
   currentUsage: 0,
+  maxDiscountAmount: '',
+  targetType: TARGET_PRODUCTS,
+  productIds: [],
+  variantIds: [],
+  categoryIds: [],
+  customerGroupIds: [],
+  includeSubcategories: false,
 })
+
+// Products already known to the form (the saved selection on edit); the
+// product table fetches its own pages.
+const knownProducts = ref([])
+const categoryOptions = ref([])
+const groupOptions = ref([])
+const variantOptions = ref([])
+const categorySearch = ref('')
+const groupSearch = ref('')
+const categoryPage = ref(1)
+const categoryLastPage = ref(1)
+const targetOptionsLoading = ref(false)
+const targetOptionsError = ref('')
+const loadedProductIds = new Set()
+// Set on edit when the saved promotion predates exclusive targeting.
+const legacyTargetNotice = ref('')
+
+const targetTypes = TARGET_TYPES
+
+const discountPreview = computed(() => ({
+  type: isPercentage.value ? 'percentage' : 'fixed',
+  value: form.discountValue,
+  maxDiscount: form.maxDiscountAmount,
+}))
+
+const optionById = (options, id) => options.find((option) => Number(option.id) === Number(id))
+const selectedCategories = computed(() =>
+  form.categoryIds.map((id) => optionById(categoryOptions.value, id) ?? { id, name: `Category ${id}` }),
+)
+const selectedGroups = computed(() =>
+  form.customerGroupIds.map((id) => optionById(groupOptions.value, id) ?? { id, name: `Group ${id}` }),
+)
+const filteredGroups = computed(() => {
+  const term = groupSearch.value.trim().toLowerCase()
+  if (!term) return groupOptions.value
+  return groupOptions.value.filter((group) =>
+    `${group.name} ${group.description ?? ''}`.toLowerCase().includes(term),
+  )
+})
+// Inactive categories are listed for context but cannot be targeted.
+const activeCategoryOptions = computed(() => categoryOptions.value.filter((category) => category.is_active !== false))
+
+const TARGET_ERROR_FIELDS = ['target_type', 'product_ids', 'variant_ids', 'category_ids', 'customer_group_ids']
+
+// Only an admin's own click switches the target type — restoring a saved
+// promotion assigns it directly. The other types' selections are cleared so a
+// switch can never save targets of a type the promotion does not use.
+function selectTargetType(type) {
+  if (form.targetType === type) return
+
+  form.targetType = type
+  if (type !== TARGET_PRODUCTS) {
+    form.productIds = []
+    form.variantIds = []
+  }
+  if (type !== TARGET_CATEGORIES) {
+    form.categoryIds = []
+    form.includeSubcategories = false
+  }
+  if (type !== TARGET_CUSTOMER_GROUPS) form.customerGroupIds = []
+
+  const errors = { ...fieldErrors.value }
+  for (const key of Object.keys(errors)) {
+    if (TARGET_ERROR_FIELDS.some((field) => key === field || key.startsWith(`${field}.`))) delete errors[key]
+  }
+  fieldErrors.value = errors
+}
+
+function removeFrom(list, id) {
+  form[list] = form[list].filter((selected) => Number(selected) !== Number(id))
+}
+
+// Mirrors the API's rule so the admin hears about a missing target before a
+// round trip; the API still enforces it.
+function targetSelectionError() {
+  if (form.targetType === TARGET_PRODUCTS && !form.productIds.length) return { product_ids: ['Select at least one product.'] }
+  if (form.targetType === TARGET_CATEGORIES && !form.categoryIds.length) return { category_ids: ['Select at least one category.'] }
+  if (form.targetType === TARGET_CUSTOMER_GROUPS && !form.customerGroupIds.length) {
+    return { customer_group_ids: ['Select at least one customer group.'] }
+  }
+  return null
+}
 
 const pageTitle = computed(() =>
   isEdit.value ? `Edit Promotion: ${form.name || 'Promotion'}` : 'New Promotion',
@@ -100,8 +198,75 @@ const submitError = ref('')
 const fieldErrors = ref({})
 
 function errorFor(field) {
-  const messages = fieldErrors.value[field]
+  const key = Object.keys(fieldErrors.value).find((candidate) => candidate === field || candidate.startsWith(`${field}.`))
+  const messages = key ? fieldErrors.value[key] : null
   return Array.isArray(messages) ? messages[0] : messages
+}
+
+function mergeOptions(current, incoming, key = 'id') {
+  const options = new Map(current.map((item) => [String(item[key]), item]))
+  for (const item of incoming) options.set(String(item[key]), item)
+  return [...options.values()]
+}
+
+async function loadCategories(reset = false) {
+  if (reset) categoryPage.value = 1
+  targetOptionsLoading.value = true
+  targetOptionsError.value = ''
+  try {
+    const result = await fetchPromotionCategories(auth.accessToken, categorySearch.value, categoryPage.value)
+    categoryOptions.value = mergeOptions(categoryOptions.value, result.items)
+    categoryPage.value = result.currentPage
+    categoryLastPage.value = result.lastPage
+  } catch (err) {
+    targetOptionsError.value = err.message || 'Could not load categories.'
+  } finally {
+    targetOptionsLoading.value = false
+  }
+}
+
+async function loadSelectedProductDetails() {
+  const missing = form.productIds.filter((id) => !loadedProductIds.has(String(id)))
+  await Promise.all(missing.map(async (id) => {
+    loadedProductIds.add(String(id))
+    try {
+      const product = await fetchPromotionTargetProduct(id, auth.accessToken)
+      variantOptions.value = mergeOptions(variantOptions.value, product.variants ?? [])
+    } catch (err) {
+      targetOptionsError.value = err.message || 'Could not load product variants.'
+    }
+  }))
+}
+
+function onProductSelectionChanged() {
+  const selectedProductIds = new Set(form.productIds.map(String))
+  form.variantIds = form.variantIds.filter((variantId) => {
+    const variant = variantOptions.value.find((option) => Number(option.id) === Number(variantId))
+    return variant && selectedProductIds.has(String(variant.product_id))
+  })
+  loadSelectedProductDetails()
+}
+
+// Keeps the optional variant list in step with the product selection, however
+// it changed: a row click, a chip removal or "Clear all".
+watch(() => form.productIds.join(','), onProductSelectionChanged)
+
+async function loadTargetOptions() {
+  targetOptionsLoading.value = true
+  targetOptionsError.value = ''
+  try {
+    const [categories, groups] = await Promise.all([
+      fetchPromotionCategories(auth.accessToken),
+      fetchPromotionCustomerGroups(auth.accessToken),
+    ])
+    categoryOptions.value = mergeOptions(categoryOptions.value, categories.items)
+    groupOptions.value = mergeOptions(groupOptions.value, groups.items)
+    categoryLastPage.value = categories.lastPage
+  } catch (err) {
+    targetOptionsError.value = err.message || 'Could not load targeting options.'
+  } finally {
+    targetOptionsLoading.value = false
+  }
 }
 
 async function loadPromotion() {
@@ -110,7 +275,20 @@ async function loadPromotion() {
   loading.value = true
   submitError.value = ''
   try {
-    Object.assign(form, promotionToForm(await fetchPromotion(route.params.id, auth.accessToken)))
+    const promotion = await fetchPromotion(route.params.id, auth.accessToken)
+    Object.assign(form, promotionToForm(promotion))
+    knownProducts.value = promotion.products ?? []
+    if (savedTargetTypeCount(promotion) > 1) {
+      legacyTargetNotice.value =
+        'This promotion was saved with more than one kind of target. Saving keeps only the targets of the type selected below.'
+    } else if (!promotion.target_type && !savedTargetTypeCount(promotion)) {
+      legacyTargetNotice.value =
+        'This promotion currently applies to the whole order by coupon code. Saving requires choosing a target.'
+    }
+    categoryOptions.value = mergeOptions(categoryOptions.value, promotion.categories ?? [])
+    groupOptions.value = mergeOptions(groupOptions.value, promotion.customer_groups ?? [])
+    variantOptions.value = mergeOptions(variantOptions.value, promotion.variants ?? [])
+    await loadSelectedProductDetails()
   } catch (err) {
     submitError.value = err.message || 'Could not load the promotion.'
   } finally {
@@ -118,7 +296,9 @@ async function loadPromotion() {
   }
 }
 
-onMounted(loadPromotion)
+onMounted(async () => {
+  await Promise.all([loadPromotion(), loadTargetOptions()])
+})
 
 function pickBanner() {
   bannerInput.value?.click()
@@ -146,9 +326,16 @@ const usagePercent = computed(() => {
 async function save() {
   if (saving.value || loading.value) return
 
-  saving.value = true
   submitError.value = ''
   fieldErrors.value = {}
+  const targetError = targetSelectionError()
+  if (targetError) {
+    fieldErrors.value = targetError
+    submitError.value = 'Please correct the highlighted fields and try again.'
+    return
+  }
+
+  saving.value = true
   try {
     if (bannerFile.value) {
       form.bannerImage = (await uploadImage(bannerFile.value, { token: auth.accessToken, folder: 'promotions' })).url
@@ -253,6 +440,14 @@ async function save() {
                   <input id="minSpend" v-model="form.minimumSpend" type="text" placeholder="0.00" />
                 </div>
               </div>
+              <div class="field">
+                <label for="maxDiscount">Maximum Discount</label>
+                <div class="affix">
+                  <span>$</span>
+                  <input id="maxDiscount" v-model="form.maxDiscountAmount" :class="{ 'field--invalid': errorFor('max_discount_amount') }" type="number" min="0" step="0.01" placeholder="No cap" />
+                </div>
+                <span v-if="errorFor('max_discount_amount')" class="field-error">{{ errorFor('max_discount_amount') }}</span>
+              </div>
             </div>
             <div class="row">
               <div v-if="isFlash" class="field">
@@ -276,6 +471,134 @@ async function save() {
                 <input id="end" v-model="form.endDate" :class="{ 'field--invalid': errorFor('expires_at') }" type="date" />
                 <span v-if="errorFor('expires_at')" class="field-error">{{ errorFor('expires_at') }}</span>
               </div>
+            </div>
+          </section>
+
+          <section class="card targeting">
+            <h3 class="card__title">Promotion Targeting</h3>
+            <p v-if="legacyTargetNotice" class="targeting__notice" role="status">{{ legacyTargetNotice }}</p>
+
+            <div class="targeting__types" role="radiogroup" aria-label="Promotion target">
+              <label
+                v-for="target in targetTypes"
+                :key="target.value"
+                class="targeting__type"
+                :class="{ 'targeting__type--active': form.targetType === target.value }"
+              >
+                <input
+                  type="radio"
+                  name="targetType"
+                  :value="target.value"
+                  :checked="form.targetType === target.value"
+                  @change="selectTargetType(target.value)"
+                />
+                <span>
+                  <span class="targeting__type-label">{{ target.label }}</span>
+                  <span class="targeting__type-hint">{{ target.hint }}</span>
+                </span>
+              </label>
+            </div>
+            <span v-if="errorFor('target_type')" class="field-error">{{ errorFor('target_type') }}</span>
+            <p v-if="targetOptionsError" class="submit-error" role="alert">{{ targetOptionsError }}</p>
+
+            <!-- Products -->
+            <div v-if="form.targetType === TARGET_PRODUCTS" class="targeting__section">
+              <PromotionProductTargets
+                v-model="form.productIds"
+                :known="knownProducts"
+                :categories="activeCategoryOptions"
+                :discount="discountPreview"
+                :token="auth.accessToken"
+                :error="errorFor('product_ids')"
+              />
+
+              <div v-if="variantOptions.length" class="targeting__section">
+                <span class="targeting__label">Optional variants for selected products</span>
+                <label v-for="variant in variantOptions" :key="variant.id" class="targeting__option">
+                  <input v-model="form.variantIds" type="checkbox" :value="Number(variant.id)" />
+                  <span>{{ variant.name }} <small>{{ variant.sku }}</small></span>
+                </label>
+                <span v-if="errorFor('variant_ids')" class="field-error">{{ errorFor('variant_ids') }}</span>
+              </div>
+            </div>
+
+            <!-- Categories -->
+            <div v-else-if="form.targetType === TARGET_CATEGORIES" class="targeting__section">
+              <input id="categorySearch" v-model="categorySearch" type="search" placeholder="Search categories" aria-label="Search categories" @input="loadCategories(true)" />
+              <div v-if="targetOptionsLoading && !categoryOptions.length" class="targeting__state">Loading categories…</div>
+              <div v-else-if="!categoryOptions.length" class="targeting__state">No categories found.</div>
+              <div v-else class="targeting__list">
+                <label
+                  v-for="category in categoryOptions"
+                  :key="category.id"
+                  class="targeting__option"
+                  :class="{
+                    'targeting__option--selected': form.categoryIds.includes(Number(category.id)),
+                    'targeting__option--disabled': category.is_active === false,
+                  }"
+                >
+                  <input
+                    v-model="form.categoryIds"
+                    type="checkbox"
+                    :value="Number(category.id)"
+                    :disabled="category.is_active === false && !form.categoryIds.includes(Number(category.id))"
+                  />
+                  <span>
+                    {{ category.name }}
+                    <small v-if="category.parent?.name">in {{ category.parent.name }}</small>
+                    <small v-if="category.is_active === false">Inactive</small>
+                  </span>
+                </label>
+              </div>
+              <button v-if="categoryPage < categoryLastPage" type="button" class="targeting__more" @click="categoryPage += 1; loadCategories()">Load more categories</button>
+              <label class="targeting__toggle">
+                <input v-model="form.includeSubcategories" type="checkbox" />
+                Include products in descendant categories
+              </label>
+              <div class="targeting__selected">
+                <strong>{{ form.categoryIds.length }} {{ form.categoryIds.length === 1 ? 'category' : 'categories' }} selected</strong>
+                <ul v-if="selectedCategories.length" class="targeting__chips">
+                  <li v-for="category in selectedCategories" :key="category.id" class="targeting__chip">
+                    <span>{{ category.name }}</span>
+                    <button type="button" :aria-label="`Remove ${category.name}`" @click="removeFrom('categoryIds', category.id)">×</button>
+                  </li>
+                </ul>
+              </div>
+              <span v-if="errorFor('category_ids')" class="field-error">{{ errorFor('category_ids') }}</span>
+            </div>
+
+            <!-- Customer groups -->
+            <div v-else class="targeting__section">
+              <p class="field-hint">Applies to every product for customers in at least one selected group.</p>
+              <input v-if="groupOptions.length > 5" id="groupSearch" v-model="groupSearch" type="search" placeholder="Search customer groups" aria-label="Search customer groups" />
+              <div v-if="targetOptionsLoading && !groupOptions.length" class="targeting__state">Loading customer groups…</div>
+              <div v-else-if="!groupOptions.length" class="targeting__state">No active customer groups. Create one before targeting groups.</div>
+              <div v-else-if="!filteredGroups.length" class="targeting__state">No customer groups match “{{ groupSearch }}”.</div>
+              <div v-else class="targeting__list">
+                <label
+                  v-for="group in filteredGroups"
+                  :key="group.id"
+                  class="targeting__option"
+                  :class="{ 'targeting__option--selected': form.customerGroupIds.includes(Number(group.id)) }"
+                >
+                  <input v-model="form.customerGroupIds" type="checkbox" :value="Number(group.id)" />
+                  <span>
+                    {{ group.name }}
+                    <small v-if="group.users_count != null">{{ group.users_count }} {{ group.users_count === 1 ? 'member' : 'members' }}</small>
+                    <span v-if="group.description" class="targeting__desc">{{ group.description }}</span>
+                  </span>
+                </label>
+              </div>
+              <div class="targeting__selected">
+                <strong>{{ form.customerGroupIds.length }} {{ form.customerGroupIds.length === 1 ? 'group' : 'groups' }} selected</strong>
+                <ul v-if="selectedGroups.length" class="targeting__chips">
+                  <li v-for="group in selectedGroups" :key="group.id" class="targeting__chip">
+                    <span>{{ group.name }}</span>
+                    <button type="button" :aria-label="`Remove ${group.name}`" @click="removeFrom('customerGroupIds', group.id)">×</button>
+                  </li>
+                </ul>
+              </div>
+              <span v-if="errorFor('customer_group_ids')" class="field-error">{{ errorFor('customer_group_ids') }}</span>
             </div>
           </section>
         </div>
@@ -504,6 +827,108 @@ async function save() {
 .field-error, .submit-error { font-size: 0.75rem; color: var(--danger); }
 .field-hint { font-size: 0.75rem; color: var(--text-subtle); }
 .submit-error { margin: 0; }
+
+.targeting {
+  &__notice { margin: 0 0 1rem; padding: 0.6rem 0.8rem; border-radius: 10px; background: var(--bg); color: var(--text-body); font-size: 0.8rem; }
+  &__section { display: grid; gap: 0.45rem; margin-top: 1.1rem; }
+  &__label { color: var(--text-body); font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+
+  &__section > input[type='search'] {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.6rem 0.8rem;
+    font: inherit;
+    font-size: 0.85rem;
+    color: var(--text-strong);
+    background: var(--surface);
+
+    &:focus { outline: none; border-color: rgb(var(--accent-rgb)); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18); }
+  }
+
+  &__types {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.6rem;
+
+    @media (max-width: 700px) { grid-template-columns: 1fr; }
+  }
+
+  &__type {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+
+    input { margin-top: 0.15rem; accent-color: rgb(var(--accent-rgb)); }
+    > span { display: flex; flex-direction: column; gap: 0.15rem; }
+
+    &:hover { border-color: rgb(var(--accent-rgb) / 0.5); }
+    &:focus-within { box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18); }
+
+    &--active { border-color: rgb(var(--accent-rgb)); background: rgb(var(--accent-rgb) / 0.06); }
+  }
+
+  &__type-label { font-size: 0.85rem; font-weight: 700; color: var(--text-strong); }
+  &__type-hint { font-size: 0.74rem; color: var(--text-subtle); }
+
+  &__list { display: grid; max-height: 320px; overflow-y: auto; border: 1px solid var(--border-subtle); border-radius: 10px; }
+
+  &__option {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.35rem 0;
+    color: var(--text-body);
+    font-size: 0.82rem;
+
+    .targeting__list & { padding: 0.5rem 0.75rem; border-top: 1px solid var(--border-subtle); cursor: pointer; }
+    .targeting__list &:first-child { border-top: 0; }
+
+    &--selected { background: rgb(var(--accent-rgb) / 0.08); }
+    &--disabled { opacity: 0.55; cursor: default; }
+  }
+
+  &__option input, &__toggle input { accent-color: rgb(var(--accent-rgb)); }
+  &__option small { margin-left: 0.35rem; color: var(--text-subtle); }
+  &__desc { display: block; font-size: 0.74rem; color: var(--text-subtle); }
+
+  &__selected { padding: 0.75rem; border-radius: 10px; background: var(--bg); font-size: 0.8rem; color: var(--text-strong); }
+  &__chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0 0; padding: 0; list-style: none; }
+
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.35rem 0.25rem 0.6rem;
+    border: 1px solid rgb(var(--accent-rgb) / 0.35);
+    border-radius: 999px;
+    background: var(--surface);
+    font-size: 0.76rem;
+    color: var(--text-body);
+
+    button {
+      width: 20px;
+      height: 20px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--text-subtle);
+      cursor: pointer;
+      line-height: 1;
+
+      &:hover { background: var(--danger); color: var(--ink-on-solid); }
+    }
+  }
+
+  &__state { padding: 0.55rem 0; color: var(--text-subtle); font-size: 0.8rem; }
+  &__more { justify-self: start; padding: 0.25rem 0; border: 0; color: rgb(var(--accent-rgb)); background: transparent; cursor: pointer; font: inherit; }
+  &__toggle { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.35rem; color: var(--text-body); font-size: 0.8rem; }
+}
 
 .row {
   display: grid;
