@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
+import RichTextEditor from '@/components/RichTextEditor.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
@@ -85,7 +86,15 @@ onMounted(loadPage)
 
             <div class="field">
               <span class="field__label">Body</span>
-              <p class="field__value field__value--body">{{ page.body || 'No content yet.' }}</p>
+              <RichTextEditor
+                v-if="page.body"
+                :model-value="page.body"
+                label="Page body"
+                :min-height="0"
+                readonly
+                class="field__value--body"
+              />
+              <p v-else class="field__value field__value--body">No content yet.</p>
             </div>
           </section>
         </div>
@@ -102,7 +111,7 @@ onMounted(loadPage)
               </p>
             </div>
 
-            <div class="field">
+            <div v-if="page.status === 'published'" class="field">
               <span class="field__label">Publish date</span>
               <p class="field__value">{{ formatDate(page.published_at) }}</p>
             </div>
@@ -249,6 +258,16 @@ onMounted(loadPage)
       color: var(--text-body);
     }
   }
+}
+
+.field__value--body :deep(.rte) {
+  border: 0;
+  background: transparent;
+}
+
+.field__value--body :deep(.ProseMirror) {
+  padding: 0;
+  color: var(--text-body);
 }
 
 .badge {

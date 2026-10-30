@@ -1,8 +1,9 @@
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import RichTextEditor from '@/components/RichTextEditor.vue'
 import {
   Select,
   SelectContent,
@@ -90,28 +91,8 @@ const form = reactive({
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const editorRef = ref(null)
 // Keyed by field name, straight from the API's 422 body.
 const fieldErrors = ref({})
-
-function syncEditorContent() {
-  if (!editorRef.value) return
-  const html = form.body || ''
-  if (editorRef.value.innerHTML !== html) {
-    editorRef.value.innerHTML = html
-  }
-}
-
-function applyEditorCommand(command, value = null) {
-  if (!editorRef.value) return
-  editorRef.value.focus()
-  document.execCommand(command, false, value)
-  form.body = editorRef.value.innerHTML
-}
-
-function onEditorInput() {
-  form.body = editorRef.value?.innerHTML ?? ''
-}
 
 function firstError(field) {
   const messages = fieldErrors.value?.[field]
@@ -161,7 +142,7 @@ async function loadExistingPageSlugs() {
     }
 
     pageOptions.value = [...unique.values()]
-  } catch (err) {
+  } catch {
     existingPageSlugs.value = new Set()
     pageOptions.value = [...pageTypes]
   }
@@ -181,8 +162,6 @@ async function loadPage() {
       status: data?.status ?? 'draft',
       publishedAt: toLocalInput(data?.published_at),
     })
-    await nextTick()
-    syncEditorContent()
   } catch (err) {
     error.value =
       err.status === 404
@@ -212,13 +191,6 @@ watch(
     }
   },
   { immediate: true },
-)
-
-watch(
-  () => form.body,
-  () => {
-    nextTick(() => syncEditorContent())
-  },
 )
 
 const pageTitle = computed(() => (isEdit.value ? `Edit Page: ${form.title || 'Page'}` : 'New Page'))
@@ -343,27 +315,14 @@ async function save() {
                   <label for="body">Policy content</label>
                   <span class="field__format">Rich text</span>
                 </div>
-                <div class="editor-shell" :class="{ 'editor-shell--invalid': firstError('body') }">
-                  <div class="editor-shell__toolbar" role="toolbar" aria-label="Text formatting tools">
-                    <button type="button" class="editor-tool" @click="applyEditorCommand('bold')">Bold</button>
-                    <button type="button" class="editor-tool" @click="applyEditorCommand('italic')">Italic</button>
-                    <button type="button" class="editor-tool" @click="applyEditorCommand('underline')">Underline</button>
-                    <button type="button" class="editor-tool" @click="applyEditorCommand('insertUnorderedList')">Bullets</button>
-                    <button type="button" class="editor-tool" @click="applyEditorCommand('formatBlock', 'p')">Paragraph</button>
-                    <span class="editor-shell__toolbar-note">Rich text editor</span>
-                  </div>
-                  <div
-                    id="body"
-                    ref="editorRef"
-                    class="editor-content"
-                    contenteditable="true"
-                    role="textbox"
-                    aria-label="Policy content"
-                    aria-multiline="true"
-                    :aria-invalid="Boolean(firstError('body'))"
-                    @input="onEditorInput"
-                  ></div>
-                </div>
+                <RichTextEditor
+                  id="body"
+                  v-model="form.body"
+                  label="Policy content"
+                  placeholder="Write the policy customers will read…"
+                  :min-height="300"
+                  :invalid="Boolean(firstError('body'))"
+                />
                 <p v-if="firstError('body')" class="field__error">{{ firstError('body') }}</p>
                 <p class="field__hint">
                   Add headings, lists, and emphasis to keep the policy easier to scan and easier to trust.
@@ -442,7 +401,6 @@ async function save() {
         </div>
 
         <div class="form-footer">
-          <span class="form-footer__hint">Changes are saved to the selected page.</span>
           <BaseButton type="button" variant="ghost" @click="router.push({ name: 'pages' })">
             Cancel
           </BaseButton>
@@ -601,45 +559,6 @@ async function save() {
     line-height: 1.55;
   }
 
-  .editor-content {
-    min-height: 300px;
-    padding: 1rem;
-    background: transparent;
-    color: var(--text-strong);
-    line-height: 1.6;
-    outline: none;
-
-    &:empty::before {
-      content: 'Write the policy customers will read…';
-      color: var(--text-subtle);
-      pointer-events: none;
-    }
-
-    p {
-      margin: 0 0 0.8rem;
-    }
-
-    ul,
-    ol {
-      margin: 0.6rem 0 0.8rem 1.25rem;
-      padding: 0;
-    }
-
-    strong,
-    b {
-      font-weight: 700;
-    }
-
-    em,
-    i {
-      font-style: italic;
-    }
-
-    u {
-      text-decoration: underline;
-    }
-  }
-
   &__error {
     margin: 0;
     font-size: 0.76rem;
@@ -658,16 +577,6 @@ async function save() {
   align-items: center;
   justify-content: flex-end;
   gap: 0.6rem;
-  padding: 1rem 1.15rem;
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 14px;
-
-  &__hint {
-    margin-right: auto;
-    color: var(--text-subtle);
-    font-size: 0.76rem;
-  }
 }
 
 .page-intro {
@@ -758,101 +667,6 @@ async function save() {
   font-size: 0.7rem;
 }
 
-.editor-shell {
-  overflow: hidden;
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-
-  &:focus-within {
-    border-color: rgb(var(--accent-rgb));
-    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.16);
-  }
-
-  &--invalid {
-    border-color: var(--danger);
-    box-shadow: 0 0 0 3px rgb(var(--danger-rgb) / 0.14);
-  }
-
-  &__toolbar {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    min-height: 38px;
-    padding: 0.35rem 0.55rem;
-    color: var(--text-subtle);
-    background: var(--surface-sunken);
-    border-bottom: 1px solid var(--border-subtle);
-    font-size: 0.72rem;
-  }
-
-  .editor-content {
-    display: block;
-    min-height: 300px;
-    padding: 1rem;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    outline: none;
-    line-height: 1.6;
-    color: var(--text-strong);
-
-    &:empty::before {
-      content: 'Write the policy customers will read…';
-      color: var(--text-subtle);
-      pointer-events: none;
-    }
-
-    p {
-      margin: 0 0 0.8rem;
-    }
-
-    ul,
-    ol {
-      margin: 0.6rem 0 0.8rem 1.25rem;
-      padding: 0;
-    }
-
-    strong,
-    b {
-      font-weight: 700;
-    }
-
-    em,
-    i {
-      font-style: italic;
-    }
-
-    u {
-      text-decoration: underline;
-    }
-  }
-}
-
-.editor-tool {
-  appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface-alt);
-  color: var(--text-body);
-  border-radius: 6px;
-  padding: 0.3rem 0.45rem;
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.72rem;
-
-  &:hover {
-    background: var(--surface-hover);
-  }
-}
-
-.editor-shell__toolbar-note {
-  margin-left: auto;
-  color: var(--text-subtle);
-  font-size: 0.68rem;
-}
-
 .editor-note {
   display: flex;
   align-items: flex-start;
@@ -926,8 +740,6 @@ async function save() {
   .page-intro { align-items: flex-start; flex-direction: column; gap: 0.75rem; }
   .page-intro__type { align-self: flex-start; }
   .card { padding: 1rem; border-radius: 12px; }
-  .form-footer { align-items: stretch; flex-wrap: wrap; }
-  .form-footer__hint { width: 100%; margin-bottom: 0.15rem; }
-  .form-footer .btn { flex: 1; }
+  .form-footer { flex-wrap: wrap; }
 }
 </style>

@@ -20,7 +20,6 @@ import {
   highlightMatch,
   isPageStale,
   makePageRow,
-  normalizeStatus,
   PAGE_SORT_OPTIONS,
   sortPages,
 } from '@/lib/pages'
@@ -228,12 +227,6 @@ function handleOpenTemplate(template = 'blank') {
   router.push({ name: 'page-create', query: template === 'blank' ? {} : { template } })
 }
 
-function openLivePage(item) {
-  if (!item.slug) return
-  const url = item.slug.startsWith('http') ? item.slug : `${window.location.origin}${item.slug}`
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
-
 function openEditor(item) {
   router.push({ name: 'page-edit', params: { id: item.id } })
 }
@@ -253,16 +246,6 @@ function copySlug(item) {
     .catch(() => {
       pushToast('Copy not available', 'Use the URL in the page details instead.')
     })
-}
-
-function getPrimaryActionLabel(item) {
-  if (item.status === 'draft') return 'Publish'
-  if (item.status === 'published') return 'Unpublish'
-  return 'Restore'
-}
-
-function currentStatus(item) {
-  return normalizeStatus(item.status)
 }
 
 async function persistStatus(item, nextStatus) {
@@ -322,21 +305,6 @@ async function persistStatus(item, nextStatus) {
       pageItem.id === item.id ? { ...pageItem, ...previousPage } : pageItem,
     )
     pushToast('Action failed', err?.message || 'Please try again.', { type: 'error' })
-  }
-}
-
-async function performMainAction(item) {
-  actionBusyId.value = item.id
-  try {
-    const targetStatus =
-      currentStatus(item) === 'draft'
-        ? 'published'
-        : currentStatus(item) === 'published'
-          ? 'draft'
-          : 'draft'
-    await persistStatus(item, targetStatus)
-  } finally {
-    actionBusyId.value = null
   }
 }
 
@@ -702,28 +670,10 @@ watch(
                           <path d="m13.5 6.5 4 4" stroke-linecap="round" />
                         </svg>
                       </button>
-                      <button
-                        type="button"
-                        class="icon-btn icon-btn--sm"
-                        :disabled="!item.slug"
-                        :aria-label="`View ${item.title} live`"
-                        :title="item.slug ? 'View live' : 'No URL yet'"
-                        @click="openLivePage(item)"
-                      >
-                        <svg viewBox="0 0 24 24" fill="none">
-                          <path
-                            d="M14 5h5v5M10 14 19 5M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          />
-                        </svg>
-                      </button>
                       <PageActionsMenu
                         compact
                         :item="item"
                         :busy="actionBusyId === item.id"
-                        @view="openLivePage(item)"
-                        @edit="openEditor(item)"
                         @publish="persistStatus(item, 'published')"
                         @unpublish="persistStatus(item, 'draft')"
                         @archive="persistStatus(item, 'archived')"
@@ -752,15 +702,6 @@ watch(
               class="page-row"
               :class="{ 'page-row--selected': selectedIds.includes(item.id) }"
             >
-              <label class="page-row__check">
-                <input
-                  type="checkbox"
-                  :aria-label="`Select ${item.title}`"
-                  :checked="selectedIds.includes(item.id)"
-                  @change="toggleSelection(item.id, $event)"
-                />
-              </label>
-
               <div
                 class="page-row__body"
                 role="button"
@@ -798,14 +739,6 @@ watch(
               </div>
 
               <div class="page-row__actions">
-                <BaseButton
-                  variant="ghost"
-                  size="sm"
-                  :disabled="actionBusyId === item.id"
-                  @click="performMainAction(item)"
-                >
-                  {{ actionBusyId === item.id ? 'Working…' : getPrimaryActionLabel(item) }}
-                </BaseButton>
                 <button
                   type="button"
                   class="icon-btn"
@@ -818,27 +751,9 @@ watch(
                     <path d="m13.5 6.5 4 4" stroke-linecap="round" />
                   </svg>
                 </button>
-                <button
-                  type="button"
-                  class="icon-btn"
-                  :disabled="!item.slug"
-                  :aria-label="`View ${item.title} live`"
-                  :title="item.slug ? 'View live' : 'No URL yet'"
-                  @click="openLivePage(item)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M14 5h5v5M10 14 19 5M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </button>
                 <PageActionsMenu
                   :item="item"
                   :busy="actionBusyId === item.id"
-                  @view="openLivePage(item)"
-                  @edit="openEditor(item)"
                   @publish="persistStatus(item, 'published')"
                   @unpublish="persistStatus(item, 'draft')"
                   @archive="persistStatus(item, 'archived')"
@@ -1263,8 +1178,8 @@ watch(
 
 /* Page rows: the News card */
 .page-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
 
   &--compact {
@@ -1294,20 +1209,6 @@ watch(
     background: var(--surface);
     border-color: rgb(var(--accent-rgb) / 0.5);
     box-shadow: inset 0 0 0 9999px rgb(var(--accent-rgb) / 0.06);
-  }
-
-  &__check {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-
-    input {
-      width: 16px;
-      height: 16px;
-      margin: 0;
-      accent-color: rgb(var(--accent-rgb));
-      cursor: pointer;
-    }
   }
 
   &__body {
@@ -1805,12 +1706,12 @@ watch(
 }
 
 @media (max-width: 720px) {
+  .page-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .page-row {
     flex-wrap: wrap;
-
-    &__body {
-      flex-basis: calc(100% - 2rem);
-    }
 
     &__actions {
       width: 100%;

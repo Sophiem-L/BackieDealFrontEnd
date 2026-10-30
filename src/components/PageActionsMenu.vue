@@ -3,14 +3,13 @@ import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 
 const props = defineProps({
   item: { type: Object, required: true },
-  canEdit: { type: Boolean, default: true },
   canDelete: { type: Boolean, default: true },
   busy: { type: Boolean, default: false },
   // 32px trigger for table rows, matching the other tables' icon buttons.
   compact: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['view', 'edit', 'publish', 'unpublish', 'archive', 'restore', 'duplicate', 'delete'])
+const emit = defineEmits(['publish', 'unpublish', 'archive', 'restore', 'duplicate', 'delete'])
 
 const isOpen = ref(false)
 const rootRef = ref(null)
@@ -19,9 +18,6 @@ const itemRefs = ref([])
 
 const actionItems = computed(() => {
   const actions = [
-    // A page with no slug has no public URL to open yet.
-    { label: 'View live', action: 'view', visible: Boolean(props.item.slug) },
-    { label: 'Edit', action: 'edit', visible: props.canEdit },
     { label: 'Duplicate', action: 'duplicate', visible: true },
   ]
 
@@ -85,12 +81,6 @@ function handlePointerDown(event) {
 function onAction(action) {
   isOpen.value = false
   switch (action) {
-    case 'view':
-      emit('view')
-      break
-    case 'edit':
-      emit('edit')
-      break
     case 'publish':
       emit('publish')
       break
