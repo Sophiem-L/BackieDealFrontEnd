@@ -8,7 +8,10 @@ import {
   liveStatus,
   promotionFromApi,
   promotionPayload,
+  previewDiscount,
+  productBasePrice,
   promotionToForm,
+  savedTargetTypeCount,
 } from '@/services/promotions'
 
 vi.mock('@/services/api', () => ({ apiFetch: vi.fn() }))
@@ -105,6 +108,7 @@ describe('kindLabel', () => {
       'Free Shipping',
       'Bundle Deal',
       'Free Gift',
+      'Coupon',
     ])
   })
 
@@ -325,5 +329,83 @@ describe('liveStatus', () => {
 
   it('keeps an open-ended promotion active', () => {
     expect(liveStatus({ status: 'active', expiresAt: null }, Date.now())).toBe('active')
+  })
+})
+
+describe('promotion targets', () => {
+  const base = { name: 'X', code: 'X', kind: 'Standard', type: 'Percentage Discount', description: '', discountValue: '5', minimumSpend: '0', startDate: '2026-10-01', endDate: '', totalLimit: '', perCustomerLimit: '', maxDiscountAmount: '' }
+  const selections = { productIds: ['p-1'], variantIds: [3], categoryIds: [4], customerGroupIds: [5], includeSubcategories: true }
+
+  it('sends only the product target ids for a product promotion', () => {
+    const payload = promotionPayload({ ...base, ...selections, targetType: 'products' })
+
+    expect(payload).toMatchObject({ target_type: 'products', product_ids: ['p-1'], variant_ids: [3] })
+    expect(payload).not.toHaveProperty('category_ids')
+    expect(payload).not.toHaveProperty('customer_group_ids')
+    expect(payload).not.toHaveProperty('include_subcategories')
+  })
+
+  it('sends only the category ids and subcategory flag for a category promotion', () => {
+    const payload = promotionPayload({ ...base, ...selections, targetType: 'categories' })
+
+    expect(payload).toMatchObject({ target_type: 'categories', category_ids: [4], include_subcategories: true })
+    expect(payload).not.toHaveProperty('product_ids')
+    expect(payload).not.toHaveProperty('variant_ids')
+  })
+
+  it('sends only the group ids for a customer group promotion', () => {
+    const payload = promotionPayload({ ...base, ...selections, targetType: 'customer_groups' })
+
+    expect(payload).toMatchObject({ target_type: 'customer_groups', customer_group_ids: [5] })
+    expect(payload).not.toHaveProperty('product_ids')
+    expect(payload).not.toHaveProperty('category_ids')
+  })
+
+  it('restores the saved target type', () => {
+    expect(promotionToForm(promotion({ target_type: 'customer_groups' })).targetType).toBe('customer_groups')
+  })
+
+  it('infers the target type of a promotion saved before target types existed', () => {
+    expect(promotionToForm(promotion({ target_type: null, categories: [{ id: 1 }] })).targetType).toBe('categories')
+    expect(promotionToForm(promotion({ target_type: null, customer_groups: [{ id: 1 }] })).targetType).toBe('customer_groups')
+    expect(promotionToForm(promotion({ target_type: null, variants: [{ id: 1 }], categories: [{ id: 1 }] })).targetType).toBe('products')
+  })
+
+  it('counts how many kinds of target a saved promotion uses', () => {
+    expect(savedTargetTypeCount({ products: [{ id: 1 }], customer_groups: [{ id: 2 }] })).toBe(2)
+    expect(savedTargetTypeCount({ categories: [{ id: 1 }] })).toBe(1)
+    expect(savedTargetTypeCount({})).toBe(0)
+  })
+})
+
+describe('previewDiscount', () => {
+  it('takes a percentage of the price', () => {
+    expect(previewDiscount(199.99, { type: 'percentage', value: '15' })).toEqual({ discount: 30, finalPrice: 169.99 })
+  })
+
+  it('takes a fixed amount, never more than the price', () => {
+    expect(previewDiscount(80, { type: 'fixed', value: '25' })).toEqual({ discount: 25, finalPrice: 55 })
+    expect(previewDiscount(20, { type: 'fixed', value: '25' })).toEqual({ discount: 20, finalPrice: 0 })
+  })
+
+  it('applies the maximum discount cap', () => {
+    expect(previewDiscount(1000, { type: 'percentage', value: '50', maxDiscount: '100' })).toEqual({ discount: 100, finalPrice: 900 })
+    expect(previewDiscount(1000, { type: 'percentage', value: '5', maxDiscount: '' })).toEqual({ discount: 50, finalPrice: 950 })
+  })
+
+  it('rounds to cents', () => {
+    expect(previewDiscount(33.33, { type: 'percentage', value: '33' })).toEqual({ discount: 11, finalPrice: 22.33 })
+  })
+
+  it('returns null for an unusable price or discount', () => {
+    expect(previewDiscount(null, { type: 'fixed', value: '5' })).toBeNull()
+    expect(previewDiscount(10, { type: 'fixed', value: '' })).toBeNull()
+    expect(previewDiscount(10, { type: 'fixed', value: 'abc' })).toBeNull()
+  })
+
+  it('discounts the sale price when there is one', () => {
+    expect(productBasePrice({ price: 50, sale_price: 40 })).toBe(40)
+    expect(productBasePrice({ price: 50, sale_price: null })).toBe(50)
+    expect(productBasePrice({ price: null, sale_price: null })).toBeNull()
   })
 })

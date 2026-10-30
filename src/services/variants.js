@@ -183,7 +183,8 @@ export function pendingSerialReceipts(rows = [], savedVariants = []) {
 
 /**
  * Exactly one row must be the default. Keeps the first row already flagged,
- * and falls back to the first row when nothing is flagged.
+ * and falls back to the first row when nothing is flagged - the same fallback
+ * the API applies when no row is flagged.
  */
 export function normalizeDefault(rows) {
   if (!rows.length) return rows
@@ -193,6 +194,24 @@ export function normalizeDefault(rows) {
     row.isDefault = i === winner
   })
   return rows
+}
+
+/** A copy of `rows` with only the row at `index` flagged as the default. */
+export function setDefaultRow(rows, index) {
+  return rows.map((row, i) => ({ ...row, isDefault: i === index }))
+}
+
+/**
+ * Whether a saved product is edited without the variant editor: it has no
+ * variants (saved before every product had one) or only the single variant the
+ * API generates for a product created without variants, which carries no
+ * option values.
+ */
+export function isStandaloneProduct(apiVariants = []) {
+  if (apiVariants.length === 0) return true
+  if (apiVariants.length > 1) return false
+  const attributes = apiVariants[0]?.attributes
+  return !attributes || Array.isArray(attributes) || Object.keys(attributes).length === 0
 }
 
 /**
@@ -341,6 +360,64 @@ function toIntOrNull(value) {
 }
 
 /**
+ * A row's Price / Compare-at / Cost onto the API's `price`, `sale_price` and
+ * `cost_price` - shared by variants and by a product saved without them.
+ *
+ * Shopify semantics: the customer pays "Price"; "Compare-at" is the higher
+ * original shown struck through. The API keeps the higher value in `price` and
+ * the payable one in `sale_price` (its check is sale_price <= price), so a
+ * compare-at swaps the two.
+ */
+export function toApiPricing(row) {
+  const enteredPrice = toNumberOrNull(row?.price)
+  const compareAt = toNumberOrNull(row?.compareAt)
+
+  return {
+    price: compareAt != null ? compareAt : enteredPrice,
+    sale_price: compareAt != null ? enteredPrice : null,
+    cost_price: toNumberOrNull(row?.costPrice),
+  }
+}
+
+/** Inverse of toApiPricing, for a variant or product off the API. */
+export function fromApiPricing(record) {
+  // A stored sale_price means the customer pays that and `price` is the compare-at.
+  const hasSale = record?.sale_price != null && record?.sale_price !== ''
+  return {
+    price: hasSale ? record.sale_price : (record?.price ?? ''),
+    compareAt: hasSale ? (record?.price ?? '') : '',
+    costPrice: record?.cost_price ?? '',
+  }
+}
+
+/**
+ * What must hold for a product saved without variants: the fields the API
+ * copies onto the default variant it generates. Returns '' when valid.
+ */
+export function validateSimplePricing(row) {
+  const price = toNumberOrNull(row?.price)
+  if (price === null) return 'Enter a price.'
+  if (price < 0) return 'Price cannot be negative.'
+
+  const compareAt = toNumberOrNull(row?.compareAt)
+  if (String(row?.compareAt ?? '').trim() && compareAt === null) return 'Compare-at price must be a number.'
+  if (compareAt !== null && compareAt < price) return 'Compare-at price must be higher than the price.'
+
+  const cost = toNumberOrNull(row?.costPrice)
+  if (String(row?.costPrice ?? '').trim() && (cost === null || cost < 0)) return 'Cost per item must be a positive number.'
+
+  const stock = Number(String(row?.stock ?? '').trim() || 0)
+  if (!Number.isInteger(stock) || stock < 0) return 'Stock must be a whole number of 0 or more.'
+
+  return ''
+}
+
+/** "12" -> 12, "" -> 0; for the stock figures sent with a product. */
+export function toStockQuantity(value) {
+  return Math.max(0, toIntOrNull(value) ?? 0)
+}
+
+/**
  * Map editor rows onto the nested `variants[]` contract.
  *
  * `in_stock` is intentionally absent - the controller recomputes it from
@@ -348,16 +425,6 @@ function toIntOrNull(value) {
  */
 export function toApiVariants(rows) {
   return rows.map((row, index) => {
-    const enteredPrice = toNumberOrNull(row.price)
-    const compareAt = toNumberOrNull(row.compareAt)
-
-    // Shopify semantics: the customer pays "Price"; "Compare-at" is the higher
-    // original shown struck through. The API keeps the higher value in `price`
-    // and the payable one in `sale_price` (its check is sale_price <= price), so
-    // a compare-at swaps the two.
-    const price = compareAt != null ? compareAt : enteredPrice
-    const salePrice = compareAt != null ? enteredPrice : null
-
     const barcode = String(row.barcode ?? '').trim()
 
     return {
@@ -366,9 +433,7 @@ export function toApiVariants(rows) {
       slug: row.slug || slugifyPart(row.sku) || slugifyPart(row.name),
       sku: String(row.sku ?? '').trim(),
       barcode: barcode ? barcode.slice(0, 64) : null,
-      price,
-      sale_price: salePrice,
-      cost_price: toNumberOrNull(row.costPrice),
+      ...toApiPricing(row),
       stock_quantity: toIntOrNull(row.stock) ?? 0,
       min_stock_alert: toIntOrNull(row.minStockAlert) ?? 0,
       // Only a stored URL is worth sending; a blob: preview would not resolve for
@@ -473,12 +538,6 @@ export function fromApiVariant(variant) {
   const attributes =
     variant?.attributes && !Array.isArray(variant.attributes) ? variant.attributes : {}
 
-  // Inverse of the price/sale_price mapping in toApiVariants: a stored
-  // sale_price means the customer pays that and `price` is the compare-at.
-  const hasSale = variant?.sale_price != null && variant?.sale_price !== ''
-  const price = hasSale ? variant.sale_price : (variant?.price ?? '')
-  const compareAt = hasSale ? (variant?.price ?? '') : ''
-
   return {
     // Which saved variant this row edits. It lets the API tell a changed SKU
     // from a new variant; rows added in the form have none.
@@ -487,9 +546,7 @@ export function fromApiVariant(variant) {
     sku: variant?.sku ?? '',
     slug: variant?.slug ?? '',
     barcode: variant?.barcode ?? '',
-    price,
-    compareAt,
-    costPrice: variant?.cost_price ?? '',
+    ...fromApiPricing(variant),
     stock: variant?.stock_quantity ?? 0,
     minStockAlert: variant?.min_stock_alert ?? 0,
     image: variant?.image ?? '',

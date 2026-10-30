@@ -7,14 +7,20 @@ import RichTextEditor from '@/components/RichTextEditor.vue'
 import ProductImageGallery from '@/components/products/ProductImageGallery.vue'
 import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
-import { fetchPromotions } from '@/services/promotions'
+import { TARGET_PRODUCTS, fetchPromotions } from '@/services/promotions'
 import { receiveSerials } from '@/services/serials'
 import {
+  blankRow,
   deriveProductPrice,
+  fromApiPricing,
   fromApiVariant,
+  isStandaloneProduct,
   pendingSerialReceipts,
   sumVariantStock,
+  toApiPricing,
   toApiVariants,
+  toStockQuantity,
+  validateSimplePricing,
 } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
 
@@ -45,6 +51,11 @@ const categories = ref([])
 // `coupon_product` pivot, sent as `promotion_ids[]` on save.
 const promotions = ref([])
 const promotionsError = ref('')
+// Only product-targeted promotions can take a product; the API rejects the
+// rest. One already attached stays listed so it can still be removed.
+const attachablePromotions = computed(() =>
+  promotions.value.filter((p) => p.target_type === TARGET_PRODUCTS || form.promotionIds.includes(p.id)),
+)
 
 const form = reactive({
   name: '',
@@ -54,9 +65,17 @@ const form = reactive({
   // Multiple promotions can apply to one product; ids of the checked rows.
   // Edited from the variant screen — promotions apply across every variant.
   promotionIds: [],
-  // Variants carry all pricing / stock / SKU now. Sent nested under `variants[]`
-  // on both create and update.
+  // Off: the product is sold as a single item. Its price and stock are entered
+  // in `simple`, and on create the API generates the one default variant
+  // ("Standard") from them. On: variants carry all pricing / stock / SKU and are
+  // sent nested under `variants[]` on both create and update.
+  hasVariants: false,
   variants: [],
+  // Price / stock for a product without variants. On edit it is the product's
+  // single default variant (with its `id`), or - for a product saved before
+  // every product had a variant - the product's own figures.
+  simple: { ...blankRow(), isDefault: true },
+  barcode: '',
   // Kept for the API's still-required product columns, not shown in the form.
   // `sku` is generated on create and preserved from the loaded product on edit;
   // `price` / `stock` are derived from the variants at save time.
@@ -82,6 +101,39 @@ function makeProductSku(name) {
 // or malformed variant SKUs come back as a raw 500 rather than a 422, so the
 // Create button stays disabled until they're clean.
 const variantsValid = ref(true)
+
+const simpleError = computed(() => (form.hasVariants ? '' : validateSimplePricing(form.simple)))
+
+// Why the form can't be saved yet, shown beside the save button.
+const blockedReason = computed(() => {
+  if (form.hasVariants) {
+    if (!variantsValid.value) return 'Fix the highlighted variant before saving.'
+    if (!form.variants.length) return 'Add at least one variant, or turn off "This product has variants".'
+    return ''
+  }
+  return simpleError.value
+})
+
+// A saved product with more than one variant can't drop back to a single price:
+// its other variants would have to be removed first.
+const canTurnOffVariants = computed(() => !isEdit.value || form.variants.length <= 1)
+
+function setHasVariants(on) {
+  if (on === form.hasVariants) return
+  if (on) {
+    // A saved product's default variant becomes the first row, so switching on
+    // adds variants beside it instead of replacing it.
+    if (!form.variants.length && form.simple.id != null) {
+      form.variants = [{ ...form.simple, isDefault: true }]
+    }
+  } else {
+    if (!canTurnOffVariants.value) return
+    if (isEdit.value && form.variants.length === 1) {
+      form.simple = { ...form.variants[0], isDefault: true }
+    }
+  }
+  form.hasVariants = on
+}
 
 async function loadCategories() {
   try {
@@ -123,6 +175,8 @@ async function loadProduct() {
       token: auth.accessToken,
     })
     const p = response?.data ?? {}
+    const variants = p.variants ?? []
+    const standalone = isStandaloneProduct(variants)
     Object.assign(form, {
       name: p.name ?? '',
       sku: p.sku ?? '',
@@ -132,7 +186,18 @@ async function loadProduct() {
       images: toGalleryEntries(p),
       isActive: p.is_active == null ? true : Boolean(p.is_active),
       isSerialized: Boolean(p.is_serialized),
-      variants: (p.variants ?? []).map(fromApiVariant),
+      hasVariants: !standalone,
+      variants: standalone ? [] : variants.map(fromApiVariant),
+      simple:
+        variants.length === 1 && standalone
+          ? { ...fromApiVariant(variants[0]), isDefault: true }
+          : {
+              ...blankRow(),
+              ...fromApiPricing(p),
+              stock: p.stock_quantity ?? 0,
+              minStockAlert: p.min_stock_alert ?? 0,
+              isDefault: true,
+            },
       promotionIds: (p.promotion_ids ?? []).map(Number),
     })
   } catch (err) {
@@ -211,7 +276,12 @@ async function receivePendingSerials(product) {
 async function save() {
   error.value = ''
 
-  if (!form.isSerialized && form.variants.some((row) => row.serials?.length)) {
+  if (blockedReason.value) {
+    error.value = blockedReason.value
+    return
+  }
+
+  if (form.hasVariants && !form.isSerialized && form.variants.some((row) => row.serials?.length)) {
     error.value =
       'Serial numbers are entered, but "Track individual serial numbers" is off. Turn it on, or remove the serial numbers.'
     return
@@ -220,23 +290,39 @@ async function save() {
   saving.value = true
   const updating = Boolean(savedProductId.value)
 
-  // Pricing and stock live on the variants now; the product columns the API
-  // still requires are derived from them.
-  const productStock = sumVariantStock(form.variants)
-
   if (!form.sku) form.sku = makeProductSku(form.name)
 
   const body = {
     name: form.name,
     sku: form.sku,
-    barcode: form.barcode,
+    barcode: form.barcode || null,
     description: form.description || null,
-    price: deriveProductPrice(form.variants),
-    stock_quantity: productStock,
-    min_stock_alert: 0,
-    in_stock: productStock > 0,
     is_active: form.isActive,
     is_serialized: form.isSerialized,
+  }
+
+  if (form.hasVariants) {
+    // Pricing and stock live on the variants; the product columns the API still
+    // requires are derived from them.
+    const productStock = sumVariantStock(form.variants)
+    Object.assign(body, {
+      price: deriveProductPrice(form.variants),
+      stock_quantity: productStock,
+      min_stock_alert: 0,
+      in_stock: productStock > 0,
+    })
+  } else {
+    // The API copies these onto the default variant it generates on create.
+    const pricing = toApiPricing(form.simple)
+    const stock = toStockQuantity(form.simple.stock)
+    Object.assign(body, {
+      price: pricing.price ?? 0,
+      sale_price: pricing.sale_price,
+      cost_price: pricing.cost_price,
+      stock_quantity: stock,
+      min_stock_alert: toStockQuantity(form.simple.minStockAlert),
+      in_stock: stock > 0,
+    })
   }
 
   if (form.categoryId) body.category_id = Number(form.categoryId)
@@ -253,8 +339,13 @@ async function save() {
   }))
   body.thumbnail = primaryImageUrl.value || null
 
-  if (form.variants.length) {
-    body.variants = toApiVariants(form.variants)
+  // Without variants on create, `variants` is left out and the API generates the
+  // default one. On edit, the product's single default variant is kept in step
+  // with the price and stock entered above.
+  const rows = form.hasVariants ? form.variants : form.simple.id != null ? [form.simple] : []
+
+  if (rows.length) {
+    body.variants = toApiVariants(rows)
     if (updating) {
       // Sync in place so each variant keeps its id (serials, stock history and
       // orders point at it). Rows carry the id of the variant they edit, and a
@@ -281,6 +372,11 @@ async function save() {
       ...row,
       id: row.id ?? product.variants?.find((saved) => saved.sku === row.sku)?.id ?? null,
     }))
+    // Likewise the default variant the API generated for a product without any.
+    if (!form.hasVariants && form.simple.id == null && product.default_variant_id != null) {
+      const generated = product.variants?.find((saved) => saved.id === product.default_variant_id)
+      if (generated) form.simple = { ...fromApiVariant(generated), isDefault: true }
+    }
   } catch (err) {
     error.value = messageFrom(err, 'Unable to save this product.')
     saving.value = false
@@ -288,7 +384,7 @@ async function save() {
   }
 
   try {
-    await receivePendingSerials(product)
+    if (form.hasVariants) await receivePendingSerials(product)
   } catch (err) {
     error.value = `The product was saved, but its serial numbers were not all received: ${messageFrom(err, 'unknown error')}`
     saving.value = false
@@ -384,14 +480,101 @@ function cancel() {
           -->
           <section class="card">
             <h3 class="card__title">Variants</h3>
+            <label v-if="!isView" class="serialized-toggle variants-toggle">
+              <input
+                type="checkbox"
+                :checked="form.hasVariants"
+                :disabled="form.hasVariants && !canTurnOffVariants"
+                @change="setHasVariants($event.target.checked)"
+              />
+              <span>
+                <strong>This product has variants</strong>
+                <small v-if="form.hasVariants && !canTurnOffVariants">
+                  Remove variants until one is left to sell this product as a single item.
+                </small>
+                <small v-else-if="form.hasVariants">
+                  Options such as size or color, each with its own price, stock and SKU.
+                </small>
+                <small v-else>
+                  Off: sold as a single item. A default variant is created automatically from the
+                  price and stock below.
+                </small>
+              </span>
+            </label>
             <p v-if="promotionsError" class="card__hint card__hint--error">{{ promotionsError }}</p>
+
+            <!-- A single item: one price and stock, kept on its default variant. -->
+            <div v-if="!form.hasVariants" class="simple">
+              <div class="simple__grid">
+                <div class="field">
+                  <label for="simple-price">Price</label>
+                  <input
+                    id="simple-price"
+                    v-model="form.simple.price"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div class="field">
+                  <label for="simple-compare">Compare-at price</label>
+                  <input
+                    id="simple-compare"
+                    v-model="form.simple.compareAt"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="Optional"
+                  />
+                </div>
+                <div class="field">
+                  <label for="simple-cost">Cost per item</label>
+                  <input
+                    id="simple-cost"
+                    v-model="form.simple.costPrice"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="Optional"
+                  />
+                </div>
+                <div class="field">
+                  <label for="simple-stock">Stock</label>
+                  <input id="simple-stock" v-model="form.simple.stock" type="number" min="0" step="1" />
+                </div>
+                <div class="field">
+                  <label for="simple-alert">Low stock alert</label>
+                  <input id="simple-alert" v-model="form.simple.minStockAlert" type="number" min="0" step="1" />
+                </div>
+                <div class="field">
+                  <label for="simple-barcode">Barcode</label>
+                  <input id="simple-barcode" v-model="form.barcode" type="text" maxlength="64" placeholder="Optional" />
+                </div>
+              </div>
+              <p v-if="simpleError && !isView" class="simple__error">{{ simpleError }}</p>
+              <p class="simple__default">
+                <span class="simple__badge">Default variant</span>
+                <template v-if="form.simple.id != null">
+                  {{ form.simple.name || 'Standard' }} · <code>{{ form.simple.sku }}</code>
+                </template>
+                <template v-else-if="!isEdit">
+                  "Standard" is created when you save, with SKU <code>{{ form.sku }}-DEFAULT</code>.
+                </template>
+                <template v-else>
+                  None yet. Turn on variants to add one; this product is sold at product level until then.
+                </template>
+              </p>
+              <p v-if="form.isSerialized && !isView" class="card__hint simple__hint">
+                Serial numbers are received from Stock once the product is saved.
+              </p>
+            </div>
+
             <VariantEditor
+              v-show="form.hasVariants"
               v-model="form.variants"
               v-model:valid="variantsValid"
               :base-sku="form.sku"
               :seed-images="seedImages"
               :mode="variantMode"
-              :promotions="promotions"
+              :promotions="attachablePromotions"
               :promotion-ids="form.promotionIds"
               :product-name="form.name || 'New product'"
               :product-image="primaryImageUrl"
@@ -404,11 +587,11 @@ function cancel() {
       </fieldset>
 
       <div v-if="!isView && !loading" class="form-footer">
-        <p v-if="!variantsValid" class="form-footer__blocked">
-          Fix the highlighted variant before saving.
+        <p v-if="blockedReason" class="form-footer__blocked">
+          {{ blockedReason }}
         </p>
         <BaseButton variant="ghost" :disabled="saving" @click="cancel">Cancel</BaseButton>
-        <BaseButton variant="primary" :disabled="saving || !variantsValid" @click="save">
+        <BaseButton variant="primary" :disabled="saving || Boolean(blockedReason)" @click="save">
           <template v-if="saving">Saving…</template>
           <template v-else>{{ savedProductId ? 'Update Product' : 'Create Product' }}</template>
         </BaseButton>
@@ -443,6 +626,53 @@ function cancel() {
   input { margin-top: .2rem; }
   strong, small { display: block; }
   small { margin-top: .2rem; color: var(--text-muted); font-size: .78rem; }
+}
+
+.variants-toggle { margin: 0 0 1rem; }
+
+.simple {
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+
+    // The grid owns the spacing between fields.
+    .field + .field { margin-top: 0; }
+
+    @media (max-width: 720px) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    @media (max-width: 480px) { grid-template-columns: 1fr; }
+  }
+
+  &__error {
+    margin: 0.75rem 0 0;
+    font-size: 0.78rem;
+    color: var(--danger);
+  }
+
+  &__default {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 1rem 0 0;
+    font-size: 0.8rem;
+    color: var(--text-body);
+
+    code { font-size: 0.75rem; color: var(--text-subtle); }
+  }
+
+  &__badge {
+    padding: 0.1rem 0.5rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: rgb(var(--accent-rgb));
+    background: rgb(var(--accent-rgb) / 0.12);
+    border-radius: 999px;
+  }
+
+  &__hint { text-align: left; }
 }
 
 .subhead {
