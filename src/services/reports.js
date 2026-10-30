@@ -1,8 +1,10 @@
 import { apiFetch } from '@/services/api'
+import { deriveStockStatus } from '@/services/stock'
 
-// Report API: Sold Products and Customer Orders have production endpoints.
-// The remaining report tabs have no production endpoint today and
-// keep reading mock data (see src/data/reports.js).
+// Report API: Sales, Stock, Sold Products and Customer Orders are all live. The
+// Stock report reads the existing /admin/stock listing rather than a dedicated
+// report endpoint. The remaining report tabs have no production endpoint today
+// and keep reading mock data (see src/data/reports.js).
 
 const PRESET_BY_GRANULARITY = {
   daily: 'daily',
@@ -149,4 +151,65 @@ export async function fetchSalesReport(
 
   const response = await apiFetch(`/admin/reports/sales?${params.toString()}`, { token })
   return normalizeSalesReportPayload(response?.data)
+}
+const STOCK_REPORT_PAGE_SIZE = 100
+const STOCK_REPORT_MAX_PAGES = 20
+
+const round2 = (value) => Math.round(value * 100) / 100
+
+/**
+ * Normalise one /admin/stock item into a Stock Report row.
+ *
+ * `unitCost` stays null when the product has no cost price, and so does
+ * `stockValue`: a missing cost must not read as a $0 asset in the totals or the
+ * export. Negative on-hand (an oversold product) is shown as-is but counts as 0
+ * towards value, so a backorder never reduces the inventory total.
+ */
+export function normalizeStockReportRow(item) {
+  const onHand = Number(item.stock_quantity ?? 0)
+  const sellable = Math.max(onHand, 0)
+  const unitCost = item.cost_price == null ? null : Number(item.cost_price)
+  const unitPrice = Number(item.price ?? 0)
+
+  return {
+    id: item.id,
+    name: item.name ?? 'Unknown product',
+    sku: item.sku ?? '',
+    category: item.category?.name ?? 'Uncategorized',
+    brand: item.brand?.name ?? '',
+    onHand,
+    threshold: Number(item.min_stock_alert ?? 0),
+    unitCost,
+    unitPrice,
+    stockValue: unitCost === null ? null : round2(sellable * unitCost),
+    retailValue: round2(sellable * unitPrice),
+    status: deriveStockStatus(item),
+  }
+}
+
+/**
+ * Load every tracked product for the Stock Report. The report filters, ranks and
+ * totals client-side, so it needs the whole catalogue rather than one page; pages
+ * are capped so a runaway catalogue degrades to `truncated` instead of an endless
+ * request loop.
+ */
+export async function fetchStockReport(token) {
+  const rows = []
+  let page = 1
+  let lastPage
+
+  do {
+    const response = await apiFetch(
+      `/admin/stock?page=${page}&per_page=${STOCK_REPORT_PAGE_SIZE}&sort=name&direction=asc`,
+      { token },
+    )
+    const data = response?.data ?? {}
+    const items = Array.isArray(data.items) ? data.items : []
+
+    rows.push(...items.map(normalizeStockReportRow))
+    lastPage = Number(data.pagination?.last_page ?? 1)
+    page += 1
+  } while (page <= lastPage && page <= STOCK_REPORT_MAX_PAGES)
+
+  return { rows, truncated: lastPage > STOCK_REPORT_MAX_PAGES }
 }

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchSalesReport,
   fetchSoldProductsReport,
+  fetchStockReport,
   normalizeSalesReportPayload,
   normalizeSoldProductsPayload,
+  normalizeStockReportRow,
 } from '@/services/reports'
 
 describe('normalizeSalesReportPayload', () => {
@@ -174,5 +176,134 @@ describe('fetchSalesReport', () => {
       }),
     )
     expect(result.summary.revenue).toBe(10)
+  })
+})
+describe('normalizeStockReportRow', () => {
+  it('maps an /admin/stock item and derives value and status', () => {
+    const row = normalizeStockReportRow({
+      id: 7,
+      name: 'Keyboard',
+      sku: 'KB-01',
+      price: '80.00',
+      cost_price: '50.00',
+      stock_quantity: '12',
+      min_stock_alert: '5',
+      category: { name: 'Peripherals' },
+      brand: { name: 'Logi' },
+    })
+
+    expect(row).toEqual({
+      id: 7,
+      name: 'Keyboard',
+      sku: 'KB-01',
+      category: 'Peripherals',
+      brand: 'Logi',
+      onHand: 12,
+      threshold: 5,
+      unitCost: 50,
+      unitPrice: 80,
+      stockValue: 600,
+      retailValue: 960,
+      status: 'in-stock',
+    })
+  })
+
+  it('flags low and out of stock, counting the threshold itself as low', () => {
+    const base = { id: 1, name: 'A', sku: 'A', price: 10, cost_price: 4, min_stock_alert: 5 }
+
+    expect(normalizeStockReportRow({ ...base, stock_quantity: 5 }).status).toBe('low-stock')
+    expect(normalizeStockReportRow({ ...base, stock_quantity: 0 }).status).toBe('out-of-stock')
+  })
+
+  it('leaves value null when there is no cost price instead of reporting $0', () => {
+    const row = normalizeStockReportRow({
+      id: 2,
+      name: 'Mouse',
+      price: 20,
+      cost_price: null,
+      stock_quantity: 10,
+    })
+
+    expect(row.unitCost).toBeNull()
+    expect(row.stockValue).toBeNull()
+    expect(row.retailValue).toBe(200)
+  })
+
+  it('does not let negative stock reduce inventory value', () => {
+    const row = normalizeStockReportRow({
+      id: 3,
+      name: 'Oversold',
+      price: 20,
+      cost_price: 10,
+      stock_quantity: -4,
+    })
+
+    expect(row.onHand).toBe(-4)
+    expect(row.stockValue).toBe(0)
+    expect(row.retailValue).toBe(0)
+    expect(row.status).toBe('out-of-stock')
+  })
+
+  it('falls back to safe defaults for missing relations and names', () => {
+    const row = normalizeStockReportRow({ id: 4 })
+
+    expect(row.name).toBe('Unknown product')
+    expect(row.category).toBe('Uncategorized')
+    expect(row.brand).toBe('')
+    expect(row.onHand).toBe(0)
+  })
+})
+
+describe('fetchStockReport', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const page = (items, lastPage) => ({
+    ok: true,
+    status: 200,
+    json: vi.fn().mockResolvedValue({ data: { items, pagination: { last_page: lastPage } } }),
+  })
+
+  it('walks every page with the bearer token and flattens the rows', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(page([{ id: 1, name: 'A' }], 2))
+      .mockResolvedValueOnce(page([{ id: 2, name: 'B' }], 2))
+
+    const result = await fetchStockReport('token-123')
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    expect(globalThis.fetch.mock.calls[0][0]).toMatch(/\/api\/v1\/admin\/stock\?page=1&per_page=100/)
+    expect(globalThis.fetch.mock.calls[1][0]).toMatch(/page=2/)
+    expect(globalThis.fetch.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer token-123' }),
+      }),
+    )
+    expect(result.rows.map((row) => row.id)).toEqual([1, 2])
+    expect(result.truncated).toBe(false)
+  })
+
+  it('stops at the page cap and reports the list as truncated', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => page([], 25))
+
+    const result = await fetchStockReport('token-123')
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(20)
+    expect(result.truncated).toBe(true)
+  })
+
+  it('returns an empty list for an empty or malformed payload', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: { items: 'nope' } }),
+    })
+
+    const result = await fetchStockReport('token-123')
+
+    expect(result.rows).toEqual([])
+    expect(result.truncated).toBe(false)
   })
 })
