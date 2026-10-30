@@ -78,8 +78,8 @@ function mapArticle(row) {
     excerpt: excerpt(row.body),
     category: row.category || 'Uncategorised',
     image: row.image_url || '',
+    video: row.video_url || '',
     status: row.status ?? 'draft',
-    author: row.author?.name ?? 'Unknown',
     dateline: dateline(row),
   }
 }
@@ -267,11 +267,22 @@ async function deleteArticle(article) {
             @keyup.enter="viewArticle(item)"
           >
             <div
+              v-if="item.image"
               class="news__cover"
-              :class="{ 'news__cover--empty': !item.image }"
-              :style="item.image ? { backgroundImage: `url(${item.image})` } : null"
+              :style="{ backgroundImage: `url(${item.image})` }"
             >
-              <svg v-if="!item.image" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            </div>
+            <video
+              v-else-if="item.video"
+              class="news__cover news__cover--video"
+              :src="item.video"
+              muted
+              playsinline
+              preload="metadata"
+              aria-label="Article video preview"
+            ></video>
+            <div v-else class="news__cover news__cover--empty">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect x="3" y="4" width="18" height="16" rx="2" />
                 <path d="m3 15 5-4 4 3 4-4 5 5" stroke-linecap="round" stroke-linejoin="round" />
                 <circle cx="9" cy="9" r="1.5" />
@@ -288,19 +299,17 @@ async function deleteArticle(article) {
               <h3 class="news__title">{{ item.title }}</h3>
               <p class="news__excerpt">{{ item.excerpt }}</p>
               <div class="news__footer">
-                <span class="news__byline">
+                <span class="news__date">
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <circle cx="12" cy="8" r="3.5" />
-                    <path d="M5 20a7 7 0 0 1 14 0" stroke-linecap="round" />
+                    <rect x="3" y="5" width="18" height="16" rx="2" />
+                    <path d="M16 3v4M8 3v4M3 10h18" stroke-linecap="round" />
                   </svg>
-                  {{ item.author }}
+                  {{ item.dateline }}
                 </span>
-                <span class="news__dot" aria-hidden="true">·</span>
-                <span>{{ item.dateline }}</span>
               </div>
             </div>
 
-            <div class="news__actions">
+            <div class="news__actions" :aria-busy="busyId === item.id">
               <button
                 v-if="auth.hasPermission('content.update') && item.status !== 'published'"
                 type="button"
@@ -532,14 +541,17 @@ async function deleteArticle(article) {
 
 .news {
   display: flex;
-  align-items: flex-start;
-  gap: 1rem;
+  align-items: center;
+  gap: 1.1rem;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
-  padding: 1.1rem 1.25rem;
+  padding: 1rem 1.1rem;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
 
   &:hover,
   &:focus-visible {
@@ -547,12 +559,19 @@ async function deleteArticle(article) {
     box-shadow: 0 2px 10px rgba(20, 23, 28, 0.05);
   }
 
-  &:focus-visible { outline: 2px solid rgb(var(--accent-rgb) / 0.5); outline-offset: 2px; }
+  &:hover {
+    transform: translateY(-1px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--accent-rgb) / 0.5);
+    outline-offset: 2px;
+  }
 
   &__cover {
     flex-shrink: 0;
-    width: 104px;
-    height: 78px;
+    width: 116px;
+    height: 88px;
     border-radius: 10px;
     background-color: var(--surface-alt);
     background-size: cover;
@@ -571,6 +590,10 @@ async function deleteArticle(article) {
         stroke-width: 1.6;
       }
     }
+
+    &--video {
+      object-fit: cover;
+    }
   }
 
   &__body {
@@ -581,57 +604,71 @@ async function deleteArticle(article) {
   &__meta {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.5rem;
     flex-wrap: wrap;
   }
 
   &__category {
-    font-size: 0.74rem;
-    font-weight: 600;
+    overflow: hidden;
+    max-width: 180px;
+    padding: 0.2rem 0.5rem;
     color: var(--text-subtle);
+    background: var(--surface-alt);
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   &__title {
-    margin: 0.5rem 0 0.3rem;
-    font-size: 1.02rem;
+    display: -webkit-box;
+    overflow: hidden;
+    margin: 0.45rem 0 0.25rem;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    font-size: 0.98rem;
     font-weight: 700;
     color: var(--text-strong);
   }
 
   &__excerpt {
+    display: -webkit-box;
+    overflow: hidden;
     margin: 0;
-    font-size: 0.85rem;
-    color: var(--text-body);
-    line-height: 1.45;
+    color: var(--text-subtle);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   &__footer {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.7rem;
-    font-size: 0.78rem;
+    margin-top: 0.55rem;
+    font-size: 0.72rem;
     color: var(--text-subtle);
-    flex-wrap: wrap;
   }
 
-  &__byline {
+  &__date {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    font-weight: 600;
-    color: var(--text-body);
+    gap: 0.4rem;
 
-    svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 1.8; }
+    svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
   }
-
-  &__dot { color: var(--text-faint); }
 
   &__actions {
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
   }
 }
 
@@ -656,12 +693,12 @@ async function deleteArticle(article) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   color: var(--text-body);
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
@@ -670,7 +707,7 @@ async function deleteArticle(article) {
 
   &:disabled { opacity: 0.55; cursor: not-allowed; }
 
-  svg { width: 17px; height: 17px; stroke: currentColor; stroke-width: 1.7; }
+  svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.7; }
 
   &--ok {
     color: var(--success);
@@ -680,6 +717,29 @@ async function deleteArticle(article) {
   &--danger {
     color: var(--danger);
     &:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger-border); }
+  }
+}
+
+@media (max-width: 680px) {
+  .news {
+    align-items: flex-start;
+    flex-wrap: wrap;
+
+    &__cover {
+      width: 88px;
+      height: 72px;
+    }
+
+    &__body {
+      flex-basis: calc(100% - 104px);
+    }
+
+    &__actions {
+      width: 100%;
+      justify-content: flex-end;
+      padding-top: 0.7rem;
+      border-top: 1px solid var(--border-subtle);
+    }
   }
 }
 </style>

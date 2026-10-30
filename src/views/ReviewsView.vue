@@ -1,6 +1,14 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { useAuthStore } from '@/stores/auth'
 import {
   fetchReviews,
@@ -100,6 +108,16 @@ const rangeStart = computed(() => (total.value === 0 ? 0 : (page.value - 1) * pe
 const rangeEnd = computed(() =>
   total.value === 0 ? 0 : Math.min(page.value * perPage.value, total.value),
 )
+
+function initials(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join('') || 'C'
+}
 </script>
 
 <template>
@@ -107,6 +125,16 @@ const rangeEnd = computed(() =>
     <AppHeader title="Customer Ratings" />
 
     <div class="page__body">
+      <section class="intro">
+        <div>
+          <h2 class="intro__title">Customer reviews</h2>
+          <p class="intro__description">
+            Review customer feedback, ratings, and moderation status.
+          </p>
+        </div>
+        <span class="intro__count">{{ total.toLocaleString() }} reviews</span>
+      </section>
+
       <section class="toolbar">
         <label class="toolbar__search">
           <span class="toolbar__search-icon" aria-hidden="true">
@@ -115,49 +143,71 @@ const rangeEnd = computed(() =>
               <path d="m20 20-3.2-3.2" stroke-linecap="round" />
             </svg>
           </span>
-          <input v-model="search" type="search" placeholder="Search reviews or customers..." />
+          <input
+            v-model="search"
+            type="search"
+            aria-label="Search reviews or customers"
+            placeholder="Search reviews or customers..."
+          />
         </label>
 
-        <label class="toolbar__select">
-          <span>Status</span>
-          <select v-model="statusFilter">
-            <option v-for="option in statusOptions" :key="option.value" :value="option.value">
+        <Select v-model="statusFilter">
+          <SelectTrigger
+            :class="TOOLBAR_SELECT.trigger"
+            aria-label="Filter by status"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent :class="TOOLBAR_SELECT.content">
+            <SelectItem
+              v-for="option in statusOptions"
+              :key="option.value"
+              :value="option.value"
+              :class="TOOLBAR_SELECT.item"
+            >
               {{ option.label }}
-            </option>
-          </select>
-        </label>
+            </SelectItem>
+          </SelectContent>
+        </Select>
 
-        <label class="toolbar__select toolbar__select--compact">
-          <span>Rating</span>
-          <select v-model="ratingFilter">
-            <option value="all">All ratings</option>
-            <option
-              v-for="option in ratingOptions.filter((item) => item !== 'all')"
+        <Select v-model="ratingFilter">
+          <SelectTrigger
+            :class="TOOLBAR_SELECT.trigger"
+            aria-label="Filter by rating"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent :class="TOOLBAR_SELECT.content">
+            <SelectItem
+              v-for="option in ratingOptions"
               :key="option"
               :value="option"
+              :class="TOOLBAR_SELECT.item"
             >
-              {{ option }} stars
-            </option>
-          </select>
-        </label>
+              {{ option === 'all' ? 'All ratings' : `${option} stars` }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
       </section>
 
       <p v-if="error" class="page__error" role="alert">{{ error }}</p>
 
       <section class="table-card">
         <div class="table-card__summary">
-          <span v-if="total > 0"
-            >Showing {{ rangeStart }}-{{ rangeEnd }} of {{ total.toLocaleString() }} reviews</span
-          >
-          <span v-else>No reviews found</span>
+          <span class="table-card__summary-label">Review queue</span>
+          <span v-if="total > 0" class="table-card__summary-count">
+            Showing {{ rangeStart }}-{{ rangeEnd }} of {{ total.toLocaleString() }}
+          </span>
+          <span v-else class="table-card__summary-count">No reviews found</span>
         </div>
 
-        <table class="table">
+        <div class="table-scroll">
+          <table class="table">
           <thead>
             <tr>
               <th>Customer</th>
               <th>Product</th>
-              <th>Rating</th>
+              <th>Review</th>
               <th>Status</th>
               <th>Helpful</th>
               <th class="table__actions-head">Actions</th>
@@ -167,6 +217,9 @@ const rangeEnd = computed(() =>
             <tr v-for="review in reviews" :key="review.id" class="table__row">
               <td>
                 <div class="customer">
+                  <span class="customer__avatar" aria-hidden="true">
+                    {{ initials(review.customerName) }}
+                  </span>
                   <div class="customer__meta">
                     <p class="customer__name">{{ review.customerName }}</p>
                     <p class="customer__email">{{ review.customerEmail || 'No email' }}</p>
@@ -176,6 +229,16 @@ const rangeEnd = computed(() =>
 
               <td>
                 <div class="product">
+                  <img
+                    v-if="review.productThumbnail"
+                    class="product__image"
+                    :src="review.productThumbnail"
+                    :alt="`${review.productName} product`"
+                    loading="lazy"
+                  />
+                  <span v-else class="product__placeholder" aria-hidden="true">
+                    {{ initials(review.productName) }}
+                  </span>
                   <div class="product__meta">
                     <p class="product__name">{{ review.productName }}</p>
                     <p class="product__sku">{{ review.productSku || 'No SKU' }}</p>
@@ -185,35 +248,45 @@ const rangeEnd = computed(() =>
 
               <td>
                 <div class="rating-box">
-                  <span class="rating-box__stars" :title="`${review.rating} / 5`">{{
-                    reviewStars(review.rating)
-                  }}</span>
-                  <span class="rating-box__score">{{ review.rating }}/5</span>
-                  <p class="review__title" v-if="review.title">{{ review.title }}</p>
-                  <p class="review__comment" v-if="review.comment">{{ review.comment }}</p>
+                  <div class="rating-box__line">
+                    <span
+                      class="rating-box__stars"
+                      role="img"
+                      :aria-label="`${review.rating} out of 5 stars`"
+                    >{{ reviewStars(review.rating) }}</span>
+                    <span class="rating-box__score">{{ review.rating }}/5</span>
+                    <span v-if="review.isVerified" class="rating-box__verified">Verified</span>
+                  </div>
+                  <p class="review__title">{{ review.title }}</p>
+                  <p v-if="review.comment" class="review__comment">{{ review.comment }}</p>
                 </div>
               </td>
 
               <td>
                 <span class="status-badge" :class="`status-badge--${reviewTone(review.status)}`">
+                  <span class="status-badge__dot" aria-hidden="true"></span>
                   {{ reviewStatuses[normalizeStatus(review.status)] }}
                 </span>
               </td>
 
               <td>
                 <div class="helpful">
-                  <strong>{{ review.helpfulScore }}</strong>
-                  <span>{{ review.helpfulCount }} helpful</span>
+                  <span class="helpful__score">{{ review.helpfulScore }}</span>
+                  <span class="helpful__detail">
+                    <strong>{{ review.helpfulCount }}</strong>
+                    {{ review.helpfulCount === 1 ? 'helpful vote' : 'helpful votes' }}
+                  </span>
                 </div>
               </td>
 
               <td>
-                <div v-if="canUpdate" class="row-actions">
+                <div v-if="canUpdate" class="row-actions" :aria-busy="submittingId === review.id">
                   <button
                     v-if="review.status !== 'approved'"
                     type="button"
                     class="action-btn action-btn--success"
                     :disabled="submittingId === review.id"
+                    :aria-label="`Approve review by ${review.customerName}`"
                     @click="setStatus(review, 'approved')"
                   >
                     Approve
@@ -223,6 +296,7 @@ const rangeEnd = computed(() =>
                     type="button"
                     class="action-btn action-btn--danger"
                     :disabled="submittingId === review.id"
+                    :aria-label="`Reject review by ${review.customerName}`"
                     @click="setStatus(review, 'rejected')"
                   >
                     Reject
@@ -232,6 +306,7 @@ const rangeEnd = computed(() =>
                     type="button"
                     class="action-btn action-btn--muted"
                     :disabled="submittingId === review.id"
+                    :aria-label="`Hide review by ${review.customerName}`"
                     @click="setStatus(review, 'hidden')"
                   >
                     Hide
@@ -254,7 +329,8 @@ const rangeEnd = computed(() =>
               </td>
             </tr>
           </tbody>
-        </table>
+          </table>
+        </div>
 
         <div v-if="lastPage > 1" class="pager">
           <button
@@ -300,6 +376,37 @@ const rangeEnd = computed(() =>
   }
 }
 
+.intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+
+  &__title {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 1.15rem;
+    font-weight: 700;
+  }
+
+  &__description {
+    margin: 0.3rem 0 0;
+    color: var(--text-subtle);
+    font-size: 0.84rem;
+  }
+
+  &__count {
+    flex-shrink: 0;
+    padding: 0.45rem 0.75rem;
+    color: var(--text-body);
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -312,7 +419,7 @@ const rangeEnd = computed(() =>
 
   &__search {
     flex: 1;
-    min-width: 260px;
+    min-width: min(260px, 100%);
     display: flex;
     align-items: center;
     padding: 0 0.75rem;
@@ -321,8 +428,9 @@ const rangeEnd = computed(() =>
     border-radius: 10px;
 
     &:focus-within {
-      border-color: var(--border);
+      border-color: rgb(var(--accent-rgb));
       background: var(--surface);
+      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.1);
     }
   }
 
@@ -353,72 +461,54 @@ const rangeEnd = computed(() =>
     }
   }
 
-  &__select {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    padding: 0.1rem 0.7rem;
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: 10px;
-    color: var(--text-body);
-    font-size: 0.8rem;
-    transition: border-color 150ms ease, box-shadow 150ms ease;
-
-    &:focus-within {
-      border-color: rgb(var(--accent-rgb));
-      box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.14);
-    }
-
-    &--compact {
-      min-width: 150px;
-    }
-
-    select {
-      border: none;
-      background: transparent;
-      color: var(--text-strong);
-      padding: 0.6rem 0;
-      font: inherit;
-      outline: none;
-      color-scheme: inherit;
-      cursor: pointer;
-
-      option {
-        color: var(--text-strong);
-        background: var(--surface);
-      }
-    }
-  }
 }
 
 .table-card {
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
 
   &__summary {
     display: flex;
-    justify-content: flex-end;
-    padding: 0.8rem 1.1rem 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.1rem;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  &__summary-label {
+    color: var(--text-strong);
+    font-size: 0.88rem;
+    font-weight: 700;
+  }
+
+  &__summary-count {
     color: var(--text-subtle);
     font-size: 0.8rem;
   }
 }
 
+.table-scroll {
+  overflow-x: auto;
+}
+
 .table {
   width: 100%;
+  min-width: 1040px;
   border-collapse: collapse;
 
   th,
   td {
-    padding: 0.95rem 1.1rem;
+    padding: 1rem 1.1rem;
     text-align: left;
-    vertical-align: top;
+    vertical-align: middle;
     border-bottom: 1px solid var(--border-subtle);
   }
 
   th {
+    background: var(--surface-alt);
     font-size: 0.72rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -426,20 +516,68 @@ const rangeEnd = computed(() =>
     font-weight: 700;
   }
 
+  tbody tr {
+    transition: background-color 0.15s ease;
+
+    &:hover {
+      background: var(--surface-alt);
+    }
+  }
+
   tbody tr:last-child td {
     border-bottom: none;
   }
+
+  td:nth-child(1) { min-width: 210px; }
+  td:nth-child(2) { min-width: 230px; }
+  td:nth-child(3) { min-width: 320px; }
+  td:nth-child(4) { min-width: 120px; }
+  td:nth-child(5) { min-width: 110px; }
+  td:last-child { min-width: 210px; }
 }
 
 .customer,
 .product {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.customer__avatar,
+.product__placeholder,
+.product__image {
+  display: grid;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 11px;
+}
+
+.customer__avatar {
+  color: rgb(var(--accent-rgb));
+  background: rgb(var(--accent-rgb) / 0.1);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.product__image {
+  object-fit: cover;
+  background: var(--surface-alt);
+}
+
+.product__placeholder {
+  color: var(--text-subtle);
+  background: var(--surface-alt);
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 .customer__meta,
 .product__meta {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.12rem;
@@ -450,6 +588,14 @@ const rangeEnd = computed(() =>
   margin: 0;
   color: var(--text-strong);
   font-weight: 600;
+  line-height: 1.35;
+}
+
+.product__name {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .customer__email,
@@ -461,33 +607,65 @@ const rangeEnd = computed(() =>
   font-size: 0.76rem;
 }
 
+.customer__email,
+.product__sku {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rating-box {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-width: 180px;
+}
+
+.rating-box__line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .rating-box__stars {
   color: #fbbf24;
+  font-size: 0.9rem;
+  line-height: 1;
   letter-spacing: 0.08em;
 }
 
 .rating-box__score {
-  font-size: 0.8rem;
-  color: var(--text-body);
+  color: var(--text-strong);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.rating-box__verified {
+  padding: 0.15rem 0.42rem;
+  color: #16834a;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  border-radius: 999px;
+  font-size: 0.64rem;
   font-weight: 600;
 }
 
 .review__title {
-  margin: 0.18rem 0 0;
+  margin: 0.15rem 0 0;
   color: var(--text-strong);
   font-size: 0.8rem;
   font-weight: 700;
+  line-height: 1.4;
 }
 
 .review__comment {
   line-height: 1.45;
-  max-width: 38ch;
+  max-width: 48ch;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .status-badge {
@@ -498,56 +676,93 @@ const rangeEnd = computed(() =>
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 700;
+  white-space: nowrap;
   border: 1px solid transparent;
+}
+
+.status-badge__dot {
+  width: 6px;
+  height: 6px;
+  margin-right: 0.38rem;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .status-badge--warning {
   background: rgba(245, 158, 11, 0.12);
   border-color: rgba(245, 158, 11, 0.35);
-  color: #f8b333;
+  color: #a96800;
 }
 
 .status-badge--success {
   background: rgba(34, 197, 94, 0.12);
   border-color: rgba(34, 197, 94, 0.32);
-  color: #47c77d;
+  color: #16834a;
 }
 
 .status-badge--danger {
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.32);
-  color: #f26f6f;
+  color: #c03939;
 }
 
 .status-badge--muted {
   background: rgba(148, 163, 184, 0.12);
   border-color: rgba(148, 163, 184, 0.32);
-  color: #a5b4c8;
+  color: var(--text-subtle);
 }
 
 .helpful {
   display: flex;
   flex-direction: column;
-  gap: 0.18rem;
+  gap: 0.25rem;
+}
+
+.helpful__score {
+  color: var(--text-strong);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.helpful__detail {
   color: var(--text-subtle);
-  font-size: 0.76rem;
+  font-size: 0.7rem;
+
+  strong {
+    color: var(--text-body);
+    font-weight: 600;
+  }
 }
 
 .row-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
+  gap: 0.35rem;
 }
 
 .action-btn {
   appearance: none;
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0.42rem 0.7rem;
+  padding: 0.42rem 0.6rem;
   font: inherit;
   font-size: 0.76rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(20, 23, 28, 0.08);
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--accent-rgb));
+    outline-offset: 2px;
+  }
 
   &:disabled {
     opacity: 0.6;
@@ -573,7 +788,7 @@ const rangeEnd = computed(() =>
 }
 
 .table__empty {
-  padding: 1.3rem 1.1rem;
+  padding: 2rem 1.1rem;
   text-align: center;
   color: var(--text-subtle);
 }
@@ -613,12 +828,41 @@ const rangeEnd = computed(() =>
     padding: 1rem;
   }
 
-  .table {
-    min-width: 820px;
+  .intro {
+    align-items: flex-start;
+
+    &__description {
+      max-width: 42ch;
+      line-height: 1.45;
+    }
   }
 
-  .table-card {
-    overflow-x: auto;
+  .toolbar {
+    align-items: stretch;
+
+    &__search {
+      flex-basis: 100%;
+    }
+
+    :deep([role='combobox']) {
+      flex: 1;
+    }
+  }
+
+  .table-card__summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .intro {
+    flex-direction: column;
+  }
+
+  .toolbar {
+    padding: 0.75rem;
   }
 }
 </style>

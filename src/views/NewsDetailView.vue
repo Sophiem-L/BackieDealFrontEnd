@@ -124,14 +124,22 @@ onMounted(loadArticle)
           </section>
 
           <section class="card">
-            <h3 class="card__title">Cover Image</h3>
+            <h3 class="card__title">Cover Media</h3>
 
-            <div
-              v-if="article.image_url"
+            <video
+              v-if="article.video_url"
               class="cover-preview"
-              :style="{ backgroundImage: `url(${article.image_url})` }"
-            ></div>
-            <p v-else class="field__value">No cover image.</p>
+              :src="article.video_url"
+              controls
+              preload="metadata"
+            ></video>
+            <img
+              v-else-if="article.image_url"
+              class="cover-preview"
+              :src="article.image_url"
+              alt="Article cover"
+            />
+            <p v-else class="field__value">No cover media.</p>
           </section>
         </div>
       </div>
@@ -235,12 +243,12 @@ onMounted(loadArticle)
 }
 
 .cover-preview {
+  display: block;
   width: 100%;
   height: 130px;
+  object-fit: cover;
   border-radius: 10px;
-  background-color: var(--surface-alt);
-  background-size: cover;
-  background-position: center;
+  background: var(--surface-alt);
   border: 1px solid var(--border-subtle);
 }
 

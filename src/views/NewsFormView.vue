@@ -11,12 +11,18 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { FORM_SELECT } from '@/lib/selectPresets'
+import { ACCEPT_ATTR, VIDEO_ACCEPT_ATTR, uploadImage, uploadVideo } from '@/services/media'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const imageFileInput = ref(null)
+const videoFileInput = ref(null)
+const mediaType = ref('image')
+const mediaUploading = ref(false)
+const mediaError = ref('')
 
 // One component serves both routes: /news/new has no :id, /news/:id/edit does.
 const articleId = computed(() => route.params.id ?? null)
@@ -31,46 +37,6 @@ const statuses = [
   { value: 'archived', label: 'Archived' },
 ]
 
-// GET /admin/categories hard-codes paginate(20) and ignores per_page, so walk
-// the pages (guarded at 10 = 200 categories), same as CategoriesView.
-const MAX_CATEGORY_PAGES = 10
-
-// The article category field should offer the same categories as the
-// Categories admin page rather than a guessed-at or usage-derived list.
-const fetchedCategories = ref([])
-
-const categories = computed(() => {
-  const base = fetchedCategories.value
-  // Keep the article's own category selectable even if it's since been
-  // removed from the Categories page (or the fetch above hasn't resolved yet).
-  return form.category && !base.includes(form.category) ? [form.category, ...base] : base
-})
-
-async function loadCategories() {
-  try {
-    const collected = []
-    let current = 1
-    let last = 1
-    do {
-      const response = await apiFetch(`/admin/categories?page=${current}`, {
-        token: auth.accessToken,
-      })
-      // The endpoint wraps a paginator, so `data` may be the array itself or {data: [...]}.
-      const payload = response?.data
-      const rows = Array.isArray(payload) ? payload : (payload?.data ?? [])
-      collected.push(...rows)
-      last = payload?.meta?.last_page ?? 1
-      current += 1
-    } while (current <= last && current <= MAX_CATEGORY_PAGES)
-
-    fetchedCategories.value = collected.map((row) => row?.name).filter(Boolean)
-  } catch {
-    // Leave fetchedCategories empty — the computed above still keeps the
-    // article's own category selectable, and this picker isn't critical
-    // enough to surface an error.
-  }
-}
-
 // The scoped `.is-invalid` rule below only reaches native controls; the Select
 // trigger is a Tailwind-styled button, so its error state is expressed the same
 // way FORM_SELECT expresses its focus ring.
@@ -79,8 +45,8 @@ const INVALID_TRIGGER = 'border-[var(--danger)] shadow-[0_0_0_3px_rgb(var(--dang
 const form = reactive({
   title: '',
   body: '',
-  category: '',
   imageUrl: '',
+  videoUrl: '',
   status: 'draft',
   // datetime-local wants `YYYY-MM-DDTHH:mm`; empty means "leave it to the API".
   publishedAt: '',
@@ -119,11 +85,12 @@ async function loadArticle() {
     Object.assign(form, {
       title: data?.title ?? '',
       body: data?.body ?? '',
-      category: data?.category ?? '',
       imageUrl: data?.image_url ?? '',
+      videoUrl: data?.video_url ?? '',
       status: data?.status ?? 'draft',
       publishedAt: toLocalInput(data?.published_at),
     })
+    mediaType.value = data?.video_url && !data?.image_url ? 'video' : 'image'
   } catch (err) {
     error.value =
       err.status === 404
@@ -136,17 +103,40 @@ async function loadArticle() {
 
 onMounted(() => {
   loadArticle()
-  loadCategories()
 })
 
 const pageTitle = computed(() =>
   isEdit.value ? `Edit Article: ${form.title || 'Article'}` : 'New Article',
 )
 
-const canSave = computed(() => form.title.trim().length > 0 && !saving.value && !loading.value)
+const canSave = computed(
+  () => form.title.trim().length > 0 && !saving.value && !loading.value && !mediaUploading.value,
+)
+
+async function uploadCoverMedia(event, type) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+
+  mediaError.value = ''
+  mediaUploading.value = true
+  try {
+    const upload = type === 'video' ? uploadVideo : uploadImage
+    const { url } = await upload(file, { token: auth.accessToken, folder: 'news' })
+    if (type === 'video') {
+      form.videoUrl = url
+    } else {
+      form.imageUrl = url
+    }
+  } catch (err) {
+    mediaError.value = err.message || `Unable to upload this ${type}. Please try again.`
+  } finally {
+    mediaUploading.value = false
+  }
+}
 
 async function save() {
-  if (!canSave.value) return
+  if (!canSave.value || mediaUploading.value) return
   saving.value = true
   error.value = ''
   fieldErrors.value = {}
@@ -156,8 +146,8 @@ async function save() {
   const body = {
     title: form.title.trim(),
     body: form.body,
-    category: form.category,
-    image_url: form.imageUrl.trim() || null,
+    image_url: mediaType.value === 'image' ? form.imageUrl.trim() || null : null,
+    video_url: mediaType.value === 'video' ? form.videoUrl.trim() || null : null,
     status: form.status,
     ...(isEdit.value ? {} : { type: TYPE }),
     // Omitted rather than sent empty: the API validates `date` when present,
@@ -282,60 +272,116 @@ async function save() {
             </section>
 
             <section class="card">
-              <h3 class="card__title">Category</h3>
-              <div class="field">
-                <label for="category">Article category</label>
-                <Select v-model="form.category">
-                  <SelectTrigger
-                    id="category"
-                    :class="[FORM_SELECT.trigger, firstError('category') && INVALID_TRIGGER]"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent :class="FORM_SELECT.content">
-                    <SelectItem
-                      v-for="opt in categories"
-                      :key="opt"
-                      :value="opt"
-                      :class="FORM_SELECT.item"
-                    >
-                      {{ opt }}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <p v-if="firstError('category')" class="field__error">
-                  {{ firstError('category') }}
-                </p>
+              <h3 class="card__title">Cover Media</h3>
+
+              <div class="media-type" role="group" aria-label="Cover media type">
+                <button
+                  type="button"
+                  :disabled="mediaUploading"
+                  :class="{ 'media-type__option--active': mediaType === 'image' }"
+                  :aria-pressed="mediaType === 'image'"
+                  @click="mediaType = 'image'; mediaError = ''"
+                >
+                  Image
+                </button>
+                <button
+                  type="button"
+                  :disabled="mediaUploading"
+                  :class="{ 'media-type__option--active': mediaType === 'video' }"
+                  :aria-pressed="mediaType === 'video'"
+                  @click="mediaType = 'video'; mediaError = ''"
+                >
+                  Video
+                </button>
               </div>
-            </section>
 
-            <section class="card">
-              <h3 class="card__title">Cover Image</h3>
-
-              <div
-                v-if="form.imageUrl"
-                class="cover-preview"
-                :style="{ backgroundImage: `url(${form.imageUrl})` }"
-              ></div>
-
-              <div class="field">
-                <label for="image-url">Image URL</label>
-                <input
-                  id="image-url"
-                  v-model="form.imageUrl"
-                  type="url"
-                  maxlength="2048"
-                  placeholder="https://…"
-                  :class="{ 'is-invalid': firstError('image_url') }"
+              <div v-if="mediaType === 'image'">
+                <img
+                  v-if="form.imageUrl"
+                  class="cover-preview"
+                  :src="form.imageUrl"
+                  alt="Article cover preview"
                 />
-                <p v-if="firstError('image_url')" class="field__error">
-                  {{ firstError('image_url') }}
-                </p>
-                <p class="field__hint">
-                  Optional. Shown at the top of the article and in listings. Recommended:
-                  1200x630px.
-                </p>
+                <div class="field">
+                  <label for="image-url">Image URL</label>
+                  <input
+                    id="image-url"
+                    v-model="form.imageUrl"
+                    type="url"
+                    maxlength="2048"
+                    placeholder="https://…"
+                    :class="{ 'is-invalid': firstError('image_url') }"
+                  />
+                  <p v-if="firstError('image_url')" class="field__error">
+                    {{ firstError('image_url') }}
+                  </p>
+                  <p class="field__hint">
+                    Optional. Shown at the top of the article and in listings. Recommended:
+                    1200x630px.
+                  </p>
+                  <input
+                    ref="imageFileInput"
+                    class="media-file-input"
+                    type="file"
+                    :accept="ACCEPT_ATTR"
+                    aria-label="Upload cover image"
+                    @change="uploadCoverMedia($event, 'image')"
+                  />
+                  <BaseButton
+                    type="button"
+                    variant="ghost"
+                    :disabled="mediaUploading"
+                    @click="imageFileInput?.click()"
+                  >
+                    {{ mediaUploading ? 'Uploading…' : 'Upload image' }}
+                  </BaseButton>
+                </div>
               </div>
+
+              <div v-else>
+                <video
+                  v-if="form.videoUrl"
+                  class="cover-preview"
+                  :src="form.videoUrl"
+                  controls
+                  preload="metadata"
+                ></video>
+                <div class="field">
+                  <label for="video-url">Video URL</label>
+                  <input
+                    id="video-url"
+                    v-model="form.videoUrl"
+                    type="url"
+                    maxlength="2048"
+                    placeholder="https://…"
+                    :class="{ 'is-invalid': firstError('video_url') }"
+                  />
+                  <p v-if="firstError('video_url')" class="field__error">
+                    {{ firstError('video_url') }}
+                  </p>
+                  <p class="field__hint">
+                    Upload a video or paste a hosted video URL. MP4, MOV, WebM, M4V, or AVI up to
+                    100MB.
+                  </p>
+                  <input
+                    ref="videoFileInput"
+                    class="media-file-input"
+                    type="file"
+                    :accept="VIDEO_ACCEPT_ATTR"
+                    aria-label="Upload cover video"
+                    @change="uploadCoverMedia($event, 'video')"
+                  />
+                  <BaseButton
+                    type="button"
+                    variant="ghost"
+                    :disabled="mediaUploading"
+                    @click="videoFileInput?.click()"
+                  >
+                    {{ mediaUploading ? 'Uploading…' : 'Upload video' }}
+                  </BaseButton>
+                </div>
+              </div>
+              <p v-if="mediaError" class="field__error" role="alert">{{ mediaError }}</p>
             </section>
           </div>
         </div>
@@ -344,7 +390,7 @@ async function save() {
           <BaseButton type="button" variant="ghost" @click="router.push({ name: 'news' })">
             Cancel
           </BaseButton>
-          <BaseButton type="submit" variant="primary" :disabled="!canSave">
+          <BaseButton type="submit" variant="primary" :disabled="!canSave || mediaUploading">
             {{ saving ? 'Saving…' : isEdit ? 'Update Article' : 'Create Article' }}
           </BaseButton>
         </div>
@@ -449,14 +495,51 @@ async function save() {
 }
 
 .cover-preview {
+  display: block;
   width: 100%;
   height: 130px;
   margin-bottom: 1rem;
   border-radius: 10px;
-  background-color: var(--surface-alt);
-  background-size: cover;
-  background-position: center;
+  object-fit: cover;
+  background: var(--surface-alt);
   border: 1px solid var(--border-subtle);
+}
+
+.media-type {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  padding: 0.25rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+
+  button {
+    padding: 0.45rem 0.8rem;
+    color: var(--text-subtle);
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  &__option--active {
+    color: var(--text-strong);
+    background: var(--surface);
+    box-shadow: 0 1px 3px rgba(20, 23, 28, 0.12);
+  }
+}
+
+.media-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
 .field {
