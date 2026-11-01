@@ -138,6 +138,12 @@ const router = createRouter({
       component: () => import('@/views/StockDetailView.vue'),
     },
     {
+      path: '/suppliers',
+      name: 'suppliers',
+      meta: { permission: 'suppliers.view' },
+      component: () => import('@/views/SuppliersView.vue'),
+    },
+    {
       path: '/reports',
       name: 'reports',
       meta: { permission: 'logs.view' },

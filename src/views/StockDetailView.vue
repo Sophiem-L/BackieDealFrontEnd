@@ -283,6 +283,7 @@ watch(
                   <th>Change</th>
                   <th>Balance</th>
                   <th>Adjusted By</th>
+                  <th>Supplier</th>
                   <th>Reference</th>
                 </tr>
               </thead>
@@ -305,6 +306,7 @@ watch(
                       <span class="muted">{{ entry.by }}</span>
                     </span>
                   </td>
+                  <td class="muted">{{ entry.supplier || '—' }}</td>
                   <td class="muted">{{ entry.reference || '—' }}</td>
                 </tr>
               </tbody>

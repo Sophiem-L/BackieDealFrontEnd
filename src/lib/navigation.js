@@ -44,6 +44,7 @@ export const NAV_SECTIONS = [
     title: 'Users',
     items: [
       { label: 'Customers', icon: 'customers', to: '/customers', permission: 'customers.view' },
+      { label: 'Suppliers', icon: 'suppliers', to: '/suppliers', permission: 'suppliers.view' },
       {
         label: 'Customer Ratings',
         icon: 'reviews',

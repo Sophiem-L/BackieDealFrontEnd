@@ -140,6 +140,8 @@ export function movementFromApi(m) {
     balance: m.new_quantity,
     by: m.created_by ? `${m.created_by.first_name || ''} ${m.created_by.last_name || ''}`.trim() || 'Admin User' : 'Admin User',
     reference: m.reference || m.receiving_reference || null,
+    supplier: m.supplier?.name ?? null,
+    unitCost: m.unit_cost ?? null,
     reason: m.notes || m.reason || null,
     timestamp: m.created_at,
     stockableType: m.stockable_type,
@@ -206,6 +208,8 @@ export async function fetchStockCatalog(per_page = 100, token) {
     threshold: Number(item.min_stock_alert ?? 0),
     thumbnail: usableImage(item.thumbnail),
     isSerialized: Boolean(item.is_serialized),
+    // Pre-selects the supplier on a supplier delivery; variants share it.
+    defaultSupplierId: item.default_supplier_id ?? null,
     variants: (item.variants ?? []).map((variant) => ({
       id: variant.id,
       name: variant.name,
