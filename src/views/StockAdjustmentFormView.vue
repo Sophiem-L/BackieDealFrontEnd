@@ -86,8 +86,19 @@ function isVariantRow() {
   return Boolean(product.value?.variants?.length)
 }
 
+// Matches the API, which checks `is_serialized` on whatever the row adjusts —
+// the variant for a variant row, the product otherwise.
+function isSerializedRow(item) {
+  return Boolean(item?.isSerialized)
+}
+
+// Any serialized row means the table needs its Serial column at all.
+const hasSerializedRows = computed(() => Boolean(product.value?.adjustments?.some(isSerializedRow)))
+
 function getSerialTarget(item) {
   if (!item) return 0
+  // Units of a non-serialized item are only counted, so no serials are asked for.
+  if (!isSerializedRow(item)) return 0
 
   const currentQty = Number(item.currentStock) || 0
   const adjQty = Number(item.quantityChange) || 0
@@ -119,6 +130,8 @@ function getAfterQty(item) {
 }
 
 function getSerialTriggerTitle(item) {
+  if (!isSerializedRow(item)) return 'This item does not track serial numbers'
+
   const qty = getRowQty(item)
   if (!Number.isFinite(qty) || qty === 0) {
     return 'Enter quantity first'
@@ -155,7 +168,9 @@ const summaryText = computed(() => {
   const signedTotal = rows.reduce((sum, item) => sum + getRowQty(item), 0)
   const serialRequired = rows.reduce((sum, item) => sum + getRequiredSerials(item), 0)
 
-  return `${variantCount} variants · ${signedTotal >= 0 ? '+' : ''}${signedTotal} units · ${serialRequired} serials required`
+  const parts = [`${variantCount} variants`, `${signedTotal >= 0 ? '+' : ''}${signedTotal} units`]
+  parts.push(hasSerializedRows.value ? `${serialRequired} serials required` : 'No serials required')
+  return parts.join(' · ')
 })
 
 const incompleteRows = computed(() => {
@@ -350,7 +365,7 @@ async function checkSerialExists(serialNumber) {
 }
 
 async function openSerialDrawer(item) {
-  if (!item) return
+  if (!item || !isSerializedRow(item)) return
 
   drawer.lastFocusedEl = document.activeElement
   drawer.open = true
@@ -571,7 +586,7 @@ async function complete() {
     const reference = form.reason?.trim() || form.adjustmentType
     const payload = rows.map((item) => {
       const qty = Number(item.quantityChange) || 0
-      const serials = getRowSerials(item)
+      const serials = isSerializedRow(item) ? getRowSerials(item) : []
       return {
         stockable_type: product.value.variants.length ? 'variant' : 'product',
         stockable_id: String(item.id),
@@ -755,6 +770,9 @@ watch(
           <h3 class="card__title">Quantities</h3>
           <span class="card__summary">{{ summaryText }}</span>
         </header>
+        <p v-if="!hasSerializedRows" class="card__note">
+          This product does not track serial numbers. Enter the quantity only.
+        </p>
 
         <div class="table-wrap">
           <table class="table">
@@ -765,7 +783,7 @@ watch(
                 <th class="col-variant">Variant Info</th>
                 <th class="col-current">Current Qty</th>
                 <th class="col-qty">Stock In Qty</th>
-                <th class="col-serial">Serial</th>
+                <th v-if="hasSerializedRows" class="col-serial">Serial</th>
                 <th class="col-after">After Update</th>
               </tr>
             </thead>
@@ -804,8 +822,19 @@ watch(
                     @input="updateVariantQuantity(item, $event.target.valueAsNumber)"
                   />
                 </td>
-                <td class="col-serial">
+                <td v-if="hasSerializedRows" class="col-serial">
+                  <!-- A non-serialized variant beside serialized ones: quantity only. -->
                   <button
+                    v-if="!isSerializedRow(item)"
+                    type="button"
+                    class="serial-trigger serial-trigger--disabled serial-trigger--na"
+                    disabled
+                    :title="getSerialTriggerTitle(item)"
+                  >
+                    <span class="serial-trigger__label">Not required</span>
+                  </button>
+                  <button
+                    v-else
                     type="button"
                     class="serial-trigger"
                     :class="{
@@ -1132,6 +1161,15 @@ watch(
   &__lead { margin: -0.5rem 0 1rem; font-size: 0.82rem; color: var(--text-subtle); }
 
   &__summary { font-size: 0.82rem; font-weight: 600; color: var(--text-body); }
+
+  &__note {
+    margin: 0;
+    padding: 0.7rem 1.25rem;
+    font-size: 0.8rem;
+    color: var(--text-subtle);
+    background: var(--surface-sunken);
+    border-bottom: 1px solid var(--border-subtle);
+  }
 }
 
 /* Fields */
@@ -1398,6 +1436,8 @@ watch(
   }
 
   &:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  &--na { font-weight: 500; }
 
   &__label { white-space: nowrap; }
   &__count { white-space: nowrap; font-variant-numeric: tabular-nums; }
