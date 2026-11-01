@@ -101,6 +101,12 @@ const sections = computed(() => visibleSections((permission) => auth.hasPermissi
                   <path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5v-9Z" stroke-linejoin="round" />
                   <path d="M3 7.5 12 12m0 0 9-4.5M12 12v9M7.5 5.2v5" stroke-linecap="round" />
                 </svg>
+                <!-- Suppliers (delivery truck) -->
+                <svg v-else-if="item.icon === 'suppliers'" viewBox="0 0 24 24" fill="none">
+                  <path d="M3 6.5h11v9.5H3zM14 9.5h3.8L21 13v3h-7" stroke-linejoin="round" />
+                  <circle cx="7" cy="17.5" r="1.8" />
+                  <circle cx="17" cy="17.5" r="1.8" />
+                </svg>
                 <!-- Slides (image) -->
                 <svg v-else-if="item.icon === 'slides'" viewBox="0 0 24 24" fill="none">
                   <rect x="3" y="4" width="18" height="14" rx="2" />

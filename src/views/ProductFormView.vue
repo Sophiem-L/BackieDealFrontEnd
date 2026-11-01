@@ -9,6 +9,7 @@ import VariantEditor from '@/components/products/VariantEditor.vue'
 import { apiFetch } from '@/services/api'
 import { TARGET_PRODUCTS, fetchPromotions } from '@/services/promotions'
 import { receiveSerials } from '@/services/serials'
+import { fetchSupplierOptions } from '@/services/suppliers'
 import {
   blankRow,
   deriveProductPrice,
@@ -62,6 +63,9 @@ const attachablePromotions = computed(() =>
 const form = reactive({
   name: '',
   categoryId: '',
+  // '' = none. Only sent when the field is shown, so a role that can't see
+  // suppliers never clears one by saving.
+  defaultSupplierId: '',
   description: '',
   images: [],
   // Multiple promotions can apply to one product; ids of the checked rows.
@@ -147,6 +151,31 @@ async function loadCategories() {
   }
 }
 
+// Same grants the API takes for the supplier list.
+const canChooseSupplier = computed(() => auth.hasPermission('suppliers.view') || auth.hasPermission('stock.view'))
+const suppliers = ref([])
+// The loaded product's supplier, kept so an inactive one (left out of the
+// active list) still shows as selected instead of reading as "none".
+const loadedSupplier = ref(null)
+
+const supplierOptions = computed(() => {
+  const list = suppliers.value.map((s) => ({ id: s.id, label: s.code ? `${s.name} (${s.code})` : s.name }))
+  const current = loadedSupplier.value
+  if (current && !list.some((s) => String(s.id) === String(current.id))) {
+    list.push({ id: current.id, label: `${current.name} (inactive)` })
+  }
+  return list
+})
+
+async function loadSuppliers() {
+  if (!canChooseSupplier.value) return
+  try {
+    suppliers.value = await fetchSupplierOptions(auth.accessToken)
+  } catch {
+    suppliers.value = []
+  }
+}
+
 async function loadPromotions() {
   promotionsError.value = ''
   try {
@@ -177,6 +206,7 @@ async function loadProduct() {
       token: auth.accessToken,
     })
     const p = response?.data ?? {}
+    loadedSupplier.value = p.default_supplier ?? null
     const variants = p.variants ?? []
     const standalone = isStandaloneProduct(variants)
     Object.assign(form, {
@@ -184,6 +214,7 @@ async function loadProduct() {
       sku: p.sku ?? '',
       barcode: p.barcode ?? '',
       categoryId: p.category_id ?? '',
+      defaultSupplierId: p.default_supplier_id ?? '',
       description: p.description ?? '',
       images: toGalleryEntries(p),
       isActive: p.is_active == null ? true : Boolean(p.is_active),
@@ -215,7 +246,7 @@ async function loadProduct() {
 if (!isEdit.value) form.sku = makeProductSku(form.name)
 
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadPromotions(), loadProduct()])
+  await Promise.all([loadCategories(), loadPromotions(), loadSuppliers(), loadProduct()])
 })
 
 const pageTitle = computed(() => {
@@ -328,6 +359,9 @@ async function save() {
   }
 
   if (form.categoryId) body.category_id = Number(form.categoryId)
+  if (canChooseSupplier.value) {
+    body.default_supplier_id = form.defaultSupplierId ? Number(form.defaultSupplierId) : null
+  }
   body.promotion_ids = form.promotionIds.map(Number)
 
   const galleryImages = form.images.filter(
@@ -465,6 +499,17 @@ function cancel() {
                 <label for="meta-title">Meta Title</label>
                 <input id="meta-title" v-model="form.metaTitle" type="text" placeholder="SEO Title" />
               </div>
+            </div>
+            <div v-if="canChooseSupplier" class="field">
+              <label for="default-supplier">Default Supplier</label>
+              <div class="select-wrap">
+                <select id="default-supplier" v-model="form.defaultSupplierId">
+                  <option value="">No default supplier</option>
+                  <option v-for="supplier in supplierOptions" :key="supplier.id" :value="supplier.id">{{ supplier.label }}</option>
+                </select>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </div>
+              <p class="field__hint">Pre-selected when stock for this product arrives as a supplier delivery. Optional.</p>
             </div>
             <div class="field field--description">
               <label for="description">Description</label>
@@ -821,6 +866,8 @@ function cancel() {
   &--description { gap: 0.7rem; }
 
   & + .field { margin-top: 1rem; }
+
+  &__hint { margin: 0; font-size: 0.72rem; color: var(--text-subtle); }
 
   label {
     font-size: 0.72rem;

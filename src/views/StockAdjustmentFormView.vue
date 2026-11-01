@@ -13,6 +13,7 @@ import {
 import { FORM_SELECT } from '@/lib/selectPresets'
 import { fetchStockCatalog, createBulkStockMovement } from '@/services/stock'
 import { fetchSerials, lookupSerial } from '@/services/serials'
+import { fetchSupplierOptions, suggestedSupplierId } from '@/services/suppliers'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toasts'
 
@@ -57,7 +58,44 @@ const drawer = reactive({
 const form = reactive({
   adjustmentType: 'Inventory Recount',
   reason: '',
+  // '' = no supplier. Only sent for a supplier delivery.
+  supplierId: '',
 })
+
+// Every increase is sent as stock_in, so only this type says the units came
+// from a supplier; returns and recounts never carry one.
+const SUPPLIER_DELIVERY = 'Supplier Delivery'
+// The Select can't hold an empty value, so "no supplier" travels as this.
+const NO_SUPPLIER = 'none'
+
+const suppliers = ref([])
+const isSupplierDelivery = computed(() => form.adjustmentType === SUPPLIER_DELIVERY)
+
+async function loadSuppliers() {
+  try {
+    suppliers.value = await fetchSupplierOptions(auth.accessToken)
+  } catch {
+    // Optional field: without the list the delivery is saved with no supplier.
+    suppliers.value = []
+  }
+  if (!form.supplierId) applySuggestedSupplier()
+}
+
+function applySuggestedSupplier() {
+  form.supplierId = suggestedSupplierId(product.value?.defaultSupplierId, suppliers.value)
+}
+
+function onSupplierChange(value) {
+  form.supplierId = value === NO_SUPPLIER ? '' : value
+}
+
+// A blank cost is sent as nothing at all rather than 0.
+function rowUnitCost(item) {
+  const raw = String(item.unitCost ?? '').trim()
+  if (raw === '') return null
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : null
+}
 
 const selectedAdjustmentType = computed(
   () => adjustmentTypes.find((type) => type.value === form.adjustmentType) || adjustmentTypes[0],
@@ -257,6 +295,7 @@ function selectProduct(picked) {
     unitPrice: picked.unitPrice,
     threshold: Number(picked.threshold ?? 0),
     thumbnail: picked.thumbnail,
+    defaultSupplierId: picked.defaultSupplierId ?? null,
     variants: picked.variants ?? [],
     adjustments: (picked.variants?.length ? picked.variants : [{
       id: picked.id,
@@ -273,8 +312,11 @@ function selectProduct(picked) {
 
   product.value.adjustments = product.value.adjustments.map((item) => ({
     ...item,
+    unitCost: '',
     serialNumbers: Array.from({ length: Math.max(0, Math.abs(Number(item.quantityChange) || 0)) }, () => ''),
   }))
+
+  applySuggestedSupplier()
 }
 
 function updateVariantQuantity(item, rawValue) {
@@ -588,10 +630,15 @@ async function complete() {
         reference,
         serial_numbers: serials,
         metadata: { adjustment_type: form.adjustmentType },
+        ...(isSupplierDelivery.value && rowUnitCost(item) !== null ? { unit_cost: rowUnitCost(item) } : {}),
       }
     })
 
-    await createBulkStockMovement({ items: payload }, auth.accessToken)
+    // The delivery's supplier applies to every row.
+    const body = { items: payload }
+    if (isSupplierDelivery.value && form.supplierId) body.supplier_id = Number(form.supplierId)
+
+    await createBulkStockMovement(body, auth.accessToken)
     toast.success('Stock adjustment saved', `"${product.value.name}" inventory was updated.`)
     router.push({ name: 'stock-detail', params: { id: product.value.id }, query: { refresh: Date.now() } })
   } catch (err) {
@@ -610,6 +657,7 @@ let leaveGuard = null
 
 onMounted(() => {
   loadCatalog()
+  loadSuppliers()
   document.addEventListener('keydown', handleModalKeydown)
   window.addEventListener('beforeunload', (event) => {
     if (hasUnsavedChanges()) {
@@ -642,7 +690,8 @@ watch(
 
 watch(
   () => form.adjustmentType,
-  () => {
+  (type) => {
+    if (type === SUPPLIER_DELIVERY && !form.supplierId) applySuggestedSupplier()
     if (!product.value?.adjustments?.length) return
     const nextSeries = isIncreaseAdjustment(form.adjustmentType)
     product.value.adjustments.forEach((item) => {
@@ -735,6 +784,27 @@ watch(
               </SelectContent>
             </Select>
           </div>
+
+          <div v-if="isSupplierDelivery" class="field">
+            <label for="supplierSelect">Supplier <span class="field__optional">(optional)</span></label>
+            <Select :model-value="form.supplierId || NO_SUPPLIER" @update:model-value="onSupplierChange">
+              <SelectTrigger id="supplierSelect" :class="FORM_SELECT.trigger">
+                <SelectValue placeholder="No supplier" />
+              </SelectTrigger>
+              <SelectContent :class="FORM_SELECT.content">
+                <SelectItem :value="NO_SUPPLIER" :class="FORM_SELECT.item">No supplier</SelectItem>
+                <SelectItem
+                  v-for="supplier in suppliers"
+                  :key="supplier.id"
+                  :value="String(supplier.id)"
+                  :class="FORM_SELECT.item"
+                >
+                  {{ supplier.name }}<template v-if="supplier.code"> ({{ supplier.code }})</template><template v-if="supplier.isDefault"> · Default</template>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="field__hint">Pre-selected from the product's default supplier, or the store default supplier.</p>
+          </div>
         </div>
 
         <div v-if="product" class="product-header">
@@ -776,6 +846,7 @@ watch(
                 <th class="col-current">Current Qty</th>
                 <th class="col-qty">Stock In Qty</th>
                 <th v-if="hasSerializedRows" class="col-serial">Serial</th>
+                <th v-if="isSupplierDelivery" class="col-cost">Unit Cost</th>
                 <th class="col-after">After Update</th>
               </tr>
             </thead>
@@ -851,6 +922,18 @@ watch(
                       <path d="m5 12.5 4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                   </button>
+                </td>
+                <td v-if="isSupplierDelivery" class="col-cost">
+                  <input
+                    v-model="item.unitCost"
+                    class="qty-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputmode="decimal"
+                    placeholder="Optional"
+                    :aria-label="`Unit cost for ${item.name}`"
+                  />
                 </td>
                 <td class="col-after" :class="{ 'col-after--negative': getAfterQty(item) < 0 }">{{ getAfterQty(item) }}</td>
               </tr>
@@ -1169,6 +1252,7 @@ watch(
   gap: 0.4rem;
 
   &__hint { margin: 0; font-size: 0.74rem; color: var(--text-subtle); }
+  &__optional { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-subtle); }
 
   label {
     font-size: 0.72rem;
@@ -1321,6 +1405,7 @@ watch(
   .col-after { width: 110px; text-align: center; font-variant-numeric: tabular-nums; }
   .col-qty { width: 140px; }
   .col-serial { width: 150px; text-align: center; }
+  .col-cost { width: 140px; }
 
   td.col-after { font-weight: 700; color: var(--text-strong); }
   td.col-after--negative { color: var(--danger); }
