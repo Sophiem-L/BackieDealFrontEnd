@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import ShippingMethodPicker from '@/components/orders/ShippingMethodPicker.vue'
 import {
   Select,
   SelectContent,
@@ -23,8 +24,9 @@ const auth = useAuthStore()
 // from the selected catalog entry and the API payload remains unchanged.
 const items = ref([])
 
-// Order-level amounts, matching the columns the API persists.
-const fees = ref({ shipping: null })
+// The chosen shipping method's id, or null for none. Only the id is sent: the
+// API prices shipping from the method and the lines' weight.
+const shippingMethodId = ref(null)
 
 const customerId = ref('')
 // Only the method is set at creation. payment_status defaults to `pending`
@@ -90,6 +92,30 @@ async function loadReferenceData() {
     refsError.value = err.message || 'Could not load products and customers.'
   } finally {
     loadingRefs.value = false
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Shipping methods — GET /admin/orders/shipping-methods
+ *
+ * The active methods at their base price, so the picker has something to show
+ * before any line is added. Once there are lines, the preview below returns
+ * the same list repriced for their weight, and that list is shown instead.
+ * ------------------------------------------------------------------------- */
+const shippingMethods = ref([])
+const shippingLoading = ref(false)
+const shippingError = ref('')
+
+async function loadShippingMethods() {
+  shippingLoading.value = true
+  shippingError.value = ''
+  try {
+    const response = await apiFetch('/admin/orders/shipping-methods', { token: auth.accessToken })
+    shippingMethods.value = Array.isArray(response?.data) ? response.data : []
+  } catch (err) {
+    shippingError.value = err.message || 'Could not load shipping methods.'
+  } finally {
+    shippingLoading.value = false
   }
 }
 
@@ -209,7 +235,10 @@ function changeProductPage(page) {
   loadProducts()
 }
 
-onMounted(loadReferenceData)
+onMounted(() => {
+  loadReferenceData()
+  loadShippingMethods()
+})
 
 const selectedCustomer = computed(
   () => customerList.value.find((c) => c.id === customerId.value) ?? null,
@@ -229,12 +258,12 @@ const customerChoice = computed({
 const subtotal = computed(() =>
   items.value.reduce((sum, i) => sum + (Number(i.qty) || 0) * (Number(i.unitPrice) || 0), 0),
 )
-// Product promotions or the VIP discount are calculated by the API preview;
-// each line gets at most one, so the discount cannot exceed the subtotal.
+// Product promotions, the VIP discount, tax and shipping are calculated by the
+// API preview, whose total is the grand total the order will save. Until it
+// answers, the total is estimated from the subtotal and the method's fee.
 const total = computed(
   () =>
-    (livePreview.value?.total ?? subtotal.value - promotionDiscount.value) +
-    (Number(fees.value.shipping) || 0),
+    livePreview.value?.total ?? subtotal.value - promotionDiscount.value + shippingFee.value,
 )
 const taxTotal = computed(() => livePreview.value?.tax ?? 0)
 const taxLabel = computed(() => livePreview.value?.taxSettings?.label || 'Tax')
@@ -274,7 +303,7 @@ const isComplete = computed(
   () =>
     Boolean(customerId.value) && Boolean(payment.value.method) && completeItems.value.length > 0,
 )
-const canSubmit = computed(() => isComplete.value && !saving.value)
+const canSubmit = computed(() => isComplete.value && !shippingInvalid.value && !saving.value)
 
 /* ---------------------------------------------------------------------------
  * Promotions — POST /admin/orders/preview
@@ -295,12 +324,33 @@ let previewRun = 0
 const previewKey = computed(() =>
   JSON.stringify([
     customerId.value,
+    shippingMethodId.value,
     completeItems.value.map((i) => [i.productId, Number(i.qty), Number(i.unitPrice) || 0]),
   ]),
 )
 
 const livePreview = computed(() => (preview.value?.key === previewKey.value ? preview.value : null))
 const promotionDiscount = computed(() => livePreview.value?.discount ?? 0)
+
+// The methods as the preview priced them for these lines, or at base price
+// while there is no preview (no lines yet, or it is still loading).
+const shippingOptions = computed(() => livePreview.value?.shippingOptions ?? shippingMethods.value)
+const shippingPriced = computed(() => Boolean(livePreview.value))
+const selectedShipping = computed(
+  () => shippingOptions.value.find((m) => m.id === shippingMethodId.value) ?? null,
+)
+const shippingFee = computed(() => {
+  if (livePreview.value) return livePreview.value.shippingTotal
+  return selectedShipping.value?.available ? Number(selectedShipping.value.fee) || 0 : 0
+})
+// A method is picked that is not offered (any more) or cannot carry the
+// order's weight. The API would reject it, so the form does not submit it.
+const shippingInvalid = computed(
+  () =>
+    shippingMethodId.value != null &&
+    !shippingLoading.value &&
+    (!selectedShipping.value || !selectedShipping.value.available),
+)
 
 // What the promotion took off this row, or null when none did.
 function promotionFor(item) {
@@ -319,6 +369,7 @@ async function loadPreview() {
     })),
   }
   if (customerId.value) body.customer_id = customerId.value
+  if (shippingMethodId.value != null) body.shipping_method_id = shippingMethodId.value
 
   try {
     const response = await apiFetch('/admin/orders/preview', {
@@ -345,6 +396,8 @@ async function loadPreview() {
       discount: Number(data.promotion_discount) || 0,
       tax: Number(data.tax_total) || 0,
       taxSettings: data.tax_settings ?? null,
+      shippingOptions: Array.isArray(data.shipping_options) ? data.shipping_options : null,
+      shippingTotal: Number(data.shipping_total) || 0,
       total: Number(data.total) || 0,
     }
     previewFailed.value = false
@@ -390,7 +443,7 @@ async function createOrder() {
       unit_price: Number(i.unitPrice) || 0,
     })),
   }
-  if (Number(fees.value.shipping)) payload.shipping_total = Number(fees.value.shipping)
+  if (shippingMethodId.value != null) payload.shipping_method_id = shippingMethodId.value
   if (payment.value.method) payload.payment_method = payment.value.method
   if (note.value.trim()) payload.notes = note.value.trim()
 
@@ -517,8 +570,8 @@ async function createOrder() {
             </table>
 
             <!-- Tax and shipping map to the tax_total / shipping_total columns
-                 the API persists. Product promotions and VIP discounts are
-                 calculated by the API and reported in the preview above. -->
+                 the API persists. Promotions, VIP discounts, tax and the
+                 shipping fee are all calculated by the API preview. -->
             <dl class="summary">
               <div class="summary__row"><dt>Subtotal</dt><dd>{{ money(subtotal) }}</dd></div>
               <div v-if="promotionDiscount > 0" class="summary__row summary__row--promo">
@@ -529,13 +582,13 @@ async function createOrder() {
                 <dd>{{ money(taxTotal) }}</dd>
               </div>
               <div class="summary__row">
-                <dt>Shipping</dt>
-                <dd><input v-model.number="fees.shipping" class="field field--right field--inline" type="number" min="0" step="0.01" placeholder="0.00" /></dd>
+                <dt>Shipping<template v-if="selectedShipping"> · {{ selectedShipping.name }}</template></dt>
+                <dd>{{ money(shippingFee) }}</dd>
               </div>
               <div class="summary__row summary__row--total"><dt>Total</dt><dd>{{ money(total) }}</dd></div>
             </dl>
             <p v-if="previewFailed" class="summary__note">
-              Couldn't check promotions just now. Any that apply are still taken off when the order is saved.
+              Couldn't check promotions and shipping just now. The order is still priced in full when it is saved.
             </p>
           </section>
 
@@ -598,6 +651,30 @@ async function createOrder() {
             </div>
           </section>
 
+          <!-- Shipping -->
+          <section class="card">
+            <header class="card__head">
+              <h3 class="card__title">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M3 6h11v10H3Z" stroke-linejoin="round" />
+                  <path d="M14 9h4l3 3v4h-7" stroke-linejoin="round" />
+                  <circle cx="7" cy="17.5" r="1.8" />
+                  <circle cx="17" cy="17.5" r="1.8" />
+                </svg>
+                Shipping
+              </h3>
+            </header>
+            <ShippingMethodPicker
+              v-model="shippingMethodId"
+              :methods="shippingOptions"
+              :priced="shippingPriced"
+              :loading="shippingLoading"
+              :error="shippingError"
+              :field-error="errorFor('shipping_method_id')"
+              @retry="loadShippingMethods"
+            />
+          </section>
+
           <!-- Payment -->
           <section class="card">
             <header class="card__head">
@@ -653,6 +730,9 @@ async function createOrder() {
             <p v-if="submitError" class="submit-error">{{ submitError }}</p>
             <p v-else-if="!isComplete" class="submit-hint">
               Choose a customer, a payment method and at least one product to save.
+            </p>
+            <p v-else-if="shippingInvalid" class="submit-hint">
+              The selected shipping method can't be used for this order. Choose another one.
             </p>
             <BaseButton variant="ghost" type="button" block :disabled="saving" @click="cancel">
               Cancel

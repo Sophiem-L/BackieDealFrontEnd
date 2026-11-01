@@ -44,7 +44,7 @@ const error = ref('')
 
 const order = ref({ id: '—', status: '', deliveryStatus: '', createdAt: '—', updatedAgo: '—' })
 const items = ref([])
-const totals = ref({ subtotal: '—', discount: '—', tax: '—', shipping: '—', total: '—' })
+const totals = ref({ subtotal: '—', discount: '—', tax: '—', shipping: '—', shippingMethod: '', total: '—' })
 // The coupon / promotion applied at checkout, or null. `code` is always set
 // when one was used; `name`/`type`/`value` are null once the coupon is deleted.
 const coupon = ref(null)
@@ -148,6 +148,9 @@ function applyOrder(data) {
     discount: money(data?.discount_total),
     tax: money(data?.tax_total),
     shipping: money(data?.shipping_total),
+    // The method's name as it was when the order was placed. Checkout orders
+    // carry it only as the tracking provider.
+    shippingMethod: data?.shipping_method?.name || data?.tracking?.provider || '',
     total: money(data?.total),
   }
 
@@ -425,7 +428,10 @@ async function editOrder() {
                 <dd>{{ totals.discount }}</dd>
               </div>
               <div class="summary__row"><dt>Tax</dt><dd>{{ totals.tax }}</dd></div>
-              <div class="summary__row"><dt>Shipping</dt><dd>{{ totals.shipping }}</dd></div>
+              <div class="summary__row">
+                <dt>Shipping<template v-if="totals.shippingMethod"> · {{ totals.shippingMethod }}</template></dt>
+                <dd>{{ totals.shipping }}</dd>
+              </div>
               <div class="summary__row summary__row--total"><dt>Total</dt><dd>{{ totals.total }}</dd></div>
             </dl>
           </section>

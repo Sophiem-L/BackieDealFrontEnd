@@ -97,6 +97,9 @@ const dateTimeFormat = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
   hour12: true,
 })
+// The table splits the timestamp over two lines to keep the column narrow.
+const dateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
+const timeFormat = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
 
 const PAYMENT_METHOD_LABELS = {
   cod: 'Cash on Delivery',
@@ -182,6 +185,8 @@ function mapOrder(raw) {
     reference: raw?.order_number || (raw?.id ? `#${String(raw.id).slice(0, 8).toUpperCase()}` : '—'),
     placedAtDate,
     placedAt: placedAtDate ? dateTimeFormat.format(placedAtDate) : '—',
+    placedDay: placedAtDate ? dateFormat.format(placedAtDate) : '—',
+    placedTime: placedAtDate ? timeFormat.format(placedAtDate) : '',
     customer: customerName || customerEmail || '—',
     customerName: customerName || 'Unknown customer',
     customerEmail,
@@ -199,6 +204,7 @@ function mapOrder(raw) {
     payment: method ? (PAYMENT_METHOD_LABELS[method] ?? statusLabel(method)) : '—',
     paymentIcon: method === 'stripe' || method === 'paypal' ? 'qr' : 'card',
     paymentStatus: raw?.payment?.status ? statusLabel(raw.payment.status) : '',
+    paymentStatusKey: raw?.payment?.status ?? 'unknown',
     amount: formatMoney(raw?.total, raw?.currency),
     status: raw?.status ?? 'unknown',
   }
@@ -530,6 +536,7 @@ const EXPORT_COLUMNS = [
   { key: 'item', label: 'Item', width: 24 },
   { key: 'spec', label: 'Specification', width: 38 },
   { key: 'payment', label: 'Payment', width: 22 },
+  { key: 'paymentStatus', label: 'Payment Status', width: 16, align: 'center' },
   { key: 'amount', label: 'Amount', width: 15, align: 'right', format: '$#,##0.00' },
   { key: 'status', label: 'Status', width: 14, align: 'center' },
 ]
@@ -704,6 +711,7 @@ function toPlainRow(order) {
     item: order.item,
     spec: order.spec,
     payment: order.payment,
+    paymentStatus: order.paymentStatus || null,
     // null rather than 0 for a missing amount — the two must not look alike.
     amount: amountValue(order.amount),
     status: statusLabel(order.status),
@@ -933,6 +941,8 @@ async function exportOrders(format) {
           </div>
         </div>
 
+        <!-- Scrolls sideways on its own so a wide table never widens the page. -->
+        <div class="table-scroll">
         <table class="table">
           <thead>
             <tr>
@@ -946,12 +956,14 @@ async function exportOrders(format) {
                 />
               </th>
               <th>Order ID</th>
+              <th>Order Date</th>
               <th>Customer</th>
               <th>Items &amp; Specs</th>
               <th>Payment</th>
+              <th>Payment Status</th>
               <th>Total Amount</th>
               <th>Status</th>
-              <th class="table__actions-head">Actions</th>
+              <th class="table__actions table__actions-head">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -977,6 +989,12 @@ async function exportOrders(format) {
                   {{ order.reference }}
                   <span v-if="order.id === justCreatedId" class="new-flag">New</span>
                   <span v-else-if="isUnviewed(order)" class="new-flag new-flag--unviewed" title="You have not opened this order yet">New</span>
+                </p>
+              </td>
+              <td>
+                <p class="order-date" :title="order.placedAt">
+                  <span class="order-date__day">{{ order.placedDay }}</span>
+                  <span v-if="order.placedTime" class="order-date__time">{{ order.placedTime }}</span>
                 </p>
               </td>
               <td>
@@ -1012,13 +1030,18 @@ async function exportOrders(format) {
                   <span class="payment__label">{{ order.payment }}</span>
                 </div>
               </td>
+              <td>
+                <span class="badge" :class="`badge--pay-${order.paymentStatusKey}`">
+                  {{ order.paymentStatus || '—' }}
+                </span>
+              </td>
               <td class="amount">{{ order.amount }}</td>
               <td>
                 <span class="badge" :class="`badge--${order.status}`">
                   {{ statusLabel(order.status) }}
                 </span>
               </td>
-              <td>
+              <td class="table__actions">
                 <div class="row-actions">
                   <button
                     type="button"
@@ -1079,19 +1102,20 @@ async function exportOrders(format) {
               </td>
             </tr>
             <tr v-if="loading">
-              <td colspan="8" class="table__empty">Loading orders…</td>
+              <td colspan="10" class="table__empty">Loading orders…</td>
             </tr>
             <tr v-else-if="error">
-              <td colspan="8" class="table__empty table__empty--error">
+              <td colspan="10" class="table__empty table__empty--error">
                 {{ error }}
                 <button type="button" class="retry-btn" @click="loadOrders">Retry</button>
               </td>
             </tr>
             <tr v-else-if="orders.length === 0">
-              <td colspan="8" class="table__empty">{{ emptyMessage }}</td>
+              <td colspan="10" class="table__empty">{{ emptyMessage }}</td>
             </tr>
           </tbody>
         </table>
+        </div>
 
         <!-- Pagination -->
         <footer class="pagination">
@@ -1139,6 +1163,7 @@ async function exportOrders(format) {
     gap: 1.25rem;
   }
 }
+
 
 /* Toolbar */
 .toolbar {
@@ -1351,6 +1376,14 @@ async function exportOrders(format) {
   }
 }
 
+.table-scroll {
+  overflow-x: auto;
+  /* Rounds the bottom corners the card would otherwise clip; the card itself
+     stays overflow: visible for the export popup. */
+  border-radius: 0 0 14px 14px;
+  -webkit-overflow-scrolling: touch;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -1359,6 +1392,28 @@ async function exportOrders(format) {
     text-align: left;
     padding: 0.9rem 1rem;
     vertical-align: middle;
+  }
+
+  thead th { white-space: nowrap; }
+
+  /* Actions stay pinned to the right edge while the rest scrolls underneath,
+     so they need an opaque background per row state. Tints are layered over
+     the surface colour because the row tints are translucent. */
+  &__actions {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--surface);
+    box-shadow: inset 1px 0 0 var(--border-subtle);
+  }
+
+  thead th#{&}__actions { background: var(--surface-sunken); }
+  tbody tr:hover td#{&}__actions { background: var(--surface-sunken); }
+  tbody tr.is-selected td#{&}__actions {
+    background: linear-gradient(rgb(var(--accent-rgb) / 0.08), rgb(var(--accent-rgb) / 0.08)), var(--surface);
+  }
+  tbody tr.is-new td#{&}__actions {
+    background: linear-gradient(var(--success-bg), var(--success-bg)), var(--surface);
   }
 
   thead th {
@@ -1495,7 +1550,7 @@ async function exportOrders(format) {
        lives on the paragraph rather than the cell because `max-width` on a
        table-cell is ignored under automatic table layout. Full text is in the
        element's title attribute. */
-    max-width: 26rem;
+    max-width: clamp(12rem, 22vw, 26rem);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1521,7 +1576,8 @@ async function exportOrders(format) {
     svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.7; }
   }
 
-  &__label { font-size: 0.84rem; color: var(--text-body); }
+  /* Keeps "Cash on Delivery" to two lines at most instead of one word per line. */
+  &__label { font-size: 0.84rem; color: var(--text-body); min-width: 6.5rem; }
 }
 
 .amount { font-size: 0.9rem; font-weight: 700; color: var(--text-strong); }
@@ -1545,6 +1601,23 @@ async function exportOrders(format) {
   &--processing { background: rgb(var(--accent-rgb) / 0.22); color: var(--accent-ink); }
   &--completed { background: var(--success-bg); color: var(--success); }
   &--cancelled { background: var(--danger-bg); color: var(--danger); }
+
+  /* Payment status chips — prefixed so `pending` etc. can differ from order status. */
+  &--pay-pending { background: rgb(var(--accent-rgb) / 0.18); color: var(--accent-ink); }
+  &--pay-paid { background: var(--success-bg); color: var(--success); }
+  &--pay-failed,
+  &--pay-expired { background: var(--danger-bg); color: var(--danger); }
+}
+
+.order-date {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  white-space: nowrap;
+
+  &__day { font-size: 0.84rem; color: var(--text-body); }
+  &__time { font-size: 0.75rem; color: var(--text-subtle); }
 }
 
 .row-actions {
@@ -1627,5 +1700,29 @@ async function exportOrders(format) {
     border-color: rgb(var(--accent-rgb));
     color: var(--ink-on-accent);
   }
+}
+
+/* Tighter cells on laptop widths so more columns fit before scrolling. */
+@media (max-width: 1440px) {
+  .table {
+    th, td { padding: 0.8rem 0.7rem; }
+  }
+}
+
+@media (max-width: 768px) {
+  .page__body { padding: 1rem; gap: 1rem; }
+
+  .toolbar__search { min-width: 100%; }
+
+  /* One scrollable row of tabs instead of wrapping onto several lines. */
+  .tabs__list {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    max-width: 100%;
+    scrollbar-width: none;
+  }
+  .tabs__tab { white-space: nowrap; }
+
+  .pagination { justify-content: center; }
 }
 </style>
