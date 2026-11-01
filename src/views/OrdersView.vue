@@ -65,6 +65,7 @@ const PERIODS = [
 const DEFAULT_PERIOD = 'yearly'
 
 const activeTab = ref('all')
+const paymentFilter = ref('all')
 const search = ref('')
 const periodFilter = ref(DEFAULT_PERIOD)
 
@@ -84,6 +85,7 @@ const page = ref(1)
 const lastPage = ref(1)
 const total = ref(0)
 const statusCounts = ref({})
+const paymentStatusCounts = ref({})
 const loading = ref(false)
 const error = ref('')
 const exportTruncated = ref(false)
@@ -214,6 +216,7 @@ function mapOrder(raw) {
 function buildQuery({ page: p, perPage }) {
   const params = new URLSearchParams({ page: String(p), per_page: String(perPage) })
   if (activeTab.value !== 'all') params.set('status', activeTab.value)
+  if (paymentFilter.value !== 'all') params.set('payment_status', paymentFilter.value)
   const q = search.value.trim()
   if (q) params.set('q', q)
   // A period is always selected, so every request carries a date range.
@@ -248,6 +251,7 @@ async function loadOrders() {
 
     const filters = data.filters ?? {}
     statusCounts.value = filters.status_counts ?? {}
+    paymentStatusCounts.value = filters.payment_status_counts ?? {}
 
     // A deletion can empty the last page; step back onto a page with rows.
     if (orders.value.length === 0 && page.value > lastPage.value) {
@@ -261,6 +265,7 @@ async function loadOrders() {
     total.value = 0
     lastPage.value = 1
     statusCounts.value = {}
+    paymentStatusCounts.value = {}
   } finally {
     if (id === requestId) loading.value = false
   }
@@ -288,6 +293,29 @@ const tabs = computed(() => {
   return [
     { key: 'all', label: 'All Orders', count: scopedTotal },
     ...ORDER_STATUSES.map((status) => ({
+      ...status,
+      count: Number(counts[status.key] ?? 0),
+    })),
+  ]
+})
+
+// Payment statuses an order can carry — mirrors StoreOrderRequest::PAYMENT_STATUSES,
+// which the API also uses to validate the `payment_status` filter. Like the
+// status tabs, every option is listed even at zero.
+const PAYMENT_STATUSES = [
+  { key: 'pending', label: 'Pending' },
+  { key: 'paid', label: 'Paid' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'refunded', label: 'Refunded' },
+]
+
+const paymentOptions = computed(() => {
+  const counts = paymentStatusCounts.value ?? {}
+  const scopedTotal = Object.values(counts).reduce((sum, n) => sum + Number(n ?? 0), 0)
+
+  return [
+    { key: 'all', label: 'All Payments', count: scopedTotal },
+    ...PAYMENT_STATUSES.map((status) => ({
       ...status,
       count: Number(counts[status.key] ?? 0),
     })),
@@ -336,8 +364,10 @@ const periodSpanLabel = computed(() => {
   }
 })
 
-// Status and search narrow the result set on top of the period.
-const hasNarrowingFilters = computed(() => activeTab.value !== 'all' || search.value.trim() !== '')
+// Status, payment status and search narrow the result set on top of the period.
+const hasNarrowingFilters = computed(
+  () => activeTab.value !== 'all' || paymentFilter.value !== 'all' || search.value.trim() !== '',
+)
 
 const emptyMessage = computed(() =>
   hasNarrowingFilters.value
@@ -355,7 +385,7 @@ function resetAndLoad() {
   loadOrders()
 }
 
-watch([activeTab, periodFilter], resetAndLoad)
+watch([activeTab, paymentFilter, periodFilter], resetAndLoad)
 
 let searchTimer
 watch(search, () => {
@@ -560,9 +590,11 @@ function toExcelDate(date) {
 
 // e.g. orders-pending-daily-2026-08-04.xlsx — the range is in the name because
 // two exports of the same period taken on different days differ in content.
+// A payment filter adds itself (orders-pending-paid-daily-…) only when set.
 function exportFileName(extension) {
   const { from } = periodRange(periodFilter.value)
-  return `orders-${activeTab.value}-${periodFilter.value}-${from}.${extension}`
+  const payment = paymentFilter.value === 'all' ? '' : `-${paymentFilter.value}`
+  return `orders-${activeTab.value}${payment}-${periodFilter.value}-${from}.${extension}`
 }
 
 const exporting = ref(false)
@@ -830,6 +862,26 @@ async function exportOrders(format) {
               :class="TOOLBAR_SELECT.item"
             >
               {{ tab.key === 'all' ? 'All Statuses' : tab.label }} ({{ tab.count }})
+            </SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select v-model="paymentFilter">
+          <SelectTrigger :class="TOOLBAR_SELECT.trigger" aria-label="Filter payment status">
+            <svg :class="TOOLBAR_SELECT.icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="2.5" y="5" width="19" height="14" rx="2" />
+              <path d="M2.5 9.5h19" stroke-linecap="round" />
+            </svg>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent :class="TOOLBAR_SELECT.content">
+            <SelectItem
+              v-for="opt in paymentOptions"
+              :key="opt.key"
+              :value="opt.key"
+              :class="TOOLBAR_SELECT.item"
+            >
+              {{ opt.label }} ({{ opt.count }})
             </SelectItem>
           </SelectContent>
         </Select>
@@ -1605,6 +1657,7 @@ async function exportOrders(format) {
   /* Payment status chips — prefixed so `pending` etc. can differ from order status. */
   &--pay-pending { background: rgb(var(--accent-rgb) / 0.18); color: var(--accent-ink); }
   &--pay-paid { background: var(--success-bg); color: var(--success); }
+  &--pay-refunded { background: var(--border-subtle); color: var(--text-muted); }
   &--pay-failed,
   &--pay-expired { background: var(--danger-bg); color: var(--danger); }
 }
