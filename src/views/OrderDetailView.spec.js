@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import OrderDetailView from '@/views/OrderDetailView.vue'
 import { apiFetch } from '@/services/api'
+import { loadInvoiceExchangeRate, printInvoiceDocument } from '@/services/printInvoice'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toasts'
 
@@ -10,6 +11,12 @@ vi.mock('@/services/api', () => ({
   apiFetch: vi.fn(),
   setUnauthenticatedHandler: vi.fn(),
   resetUnauthenticatedHandler: vi.fn(),
+}))
+
+// Only the printing itself is replaced; the rate parsing and storage are real.
+vi.mock('@/services/printInvoice', async (importOriginal) => ({
+  ...(await importOriginal()),
+  printInvoiceDocument: vi.fn(() => Promise.resolve()),
 }))
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }))
@@ -261,5 +268,58 @@ describe('OrderDetailView delivery status', () => {
     await flushPromises()
 
     expect(deliveryRow(wrapper).find('dd').text()).toBe('Pending')
+  })
+})
+
+describe('OrderDetailView tax invoice', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    window.localStorage.clear()
+  })
+
+  async function mountLoaded(data = order({ status: 'pending' })) {
+    apiFetch.mockResolvedValue({ data })
+    const wrapper = mount(OrderDetailView, { global: { stubs } })
+    await flushPromises()
+    return wrapper
+  }
+
+  const button = (wrapper, label) => wrapper.findAll('button').find((b) => b.text() === label)
+
+  it('asks for the exchange rate, then prints the invoice with it', async () => {
+    const wrapper = await mountLoaded()
+    expect(wrapper.find('#invoice-rate').exists()).toBe(false)
+
+    await button(wrapper, 'Print Invoice').trigger('click')
+    await wrapper.find('#invoice-rate').setValue('4,011')
+    await button(wrapper, 'Print invoice').trigger('click')
+    await flushPromises()
+
+    expect(printInvoiceDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ order_number: 'ORD-1' }),
+      { exchangeRate: 4011 },
+    )
+    expect(wrapper.find('#invoice-rate').exists()).toBe(false)
+    expect(loadInvoiceExchangeRate()).toBe('4011')
+  })
+
+  it('prints nothing if the dialog is cancelled', async () => {
+    const wrapper = await mountLoaded()
+
+    await button(wrapper, 'Print Invoice').trigger('click')
+    await button(wrapper, 'Cancel').trigger('click')
+
+    expect(wrapper.find('#invoice-rate').exists()).toBe(false)
+    expect(printInvoiceDocument).not.toHaveBeenCalled()
+  })
+
+  it('says so, rather than printing wrong amounts, for an order that is not in dollars', async () => {
+    const wrapper = await mountLoaded({ ...order({ status: 'pending' }), currency: 'KHR' })
+
+    await button(wrapper, 'Print Invoice').trigger('click')
+
+    expect(wrapper.find('#invoice-rate').exists()).toBe(false)
+    expect(useToastStore().toasts[0]).toMatchObject({ type: 'error', message: expect.stringContaining('KHR') })
   })
 })

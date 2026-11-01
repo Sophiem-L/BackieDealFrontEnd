@@ -1,0 +1,153 @@
+<style>
+  .lg-row { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 14px; font-size: 13px; }
+  .lg { padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; }
+  .lg-data  { background: #e3f4ea; border-color: #52b37d; color: #14532d; }
+  .lg-fixed { background: #e4eefc; border-color: #6f9ee3; color: #17365f; }
+  .lg-blank { background: #fff6cf; border: 1px dashed #c99a06; color: #5c4400; }
+
+  .inv { background: #fff; color: #111; max-width: 780px; margin: 0 auto; padding: 26px 30px 24px;
+         font-family: 'Khmer UI', 'Leelawadee UI', 'Khmer OS Battambang', Arial, sans-serif; font-size: 12px; line-height: 1.45; }
+  .inv * { box-sizing: border-box; }
+  .d { background: #e3f4ea; outline: 1px solid #52b37d; }
+  .f { background: #e4eefc; outline: 1px solid #6f9ee3; }
+  .b { background: #fff6cf; outline: 1px dashed #c99a06; }
+
+  .hd { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 14px; }
+  .hd img { width: 108px; height: 108px; object-fit: contain; }
+  .hd .kh { font-size: 38px; font-weight: 700; text-align: center; line-height: 1.15; }
+  .hd .en { font-size: 28px; font-weight: 800; letter-spacing: .01em; text-align: center; font-family: Arial, sans-serif; }
+  .seller { margin-top: 8px; padding-bottom: 6px; border-bottom: 2px solid #111; }
+  .seller div { margin: 1px 0; }
+  .ttl { text-align: center; margin: 8px 0 2px; font-weight: 700; }
+  .ttl .kh { font-size: 17px; } .ttl .en { font-size: 13px; font-family: Arial, sans-serif; }
+  .ref { text-align: right; font-size: 11px; margin-bottom: 4px; }
+
+  .cust { display: grid; grid-template-columns: 190px 1fr auto; gap: 4px 10px; margin: 6px 0 8px; align-items: start; }
+  .cust .span { grid-column: 2 / 4; }
+  .cust .when { text-align: right; white-space: nowrap; font-size: 11px; }
+  .cust .lbl small { display: block; font-size: 10px; color: #444; font-family: Arial, sans-serif; }
+  .cust .vat { min-height: 20px; }
+
+  table.items { width: 100%; border-collapse: collapse; border: 1px solid #111; }
+  table.items th { border: 1px solid #111; padding: 4px 6px; font-weight: 600; text-align: center; font-size: 11px; }
+  table.items th small { display: block; font-weight: 400; font-size: 10px; font-family: Arial, sans-serif; }
+  table.items td { border-left: 1px solid #111; border-right: 1px solid #111; padding: 6px; vertical-align: top; height: 190px; }
+  table.items td.num { text-align: right; white-space: nowrap; }
+  table.items .sku { color: #555; font-size: 10px; font-family: Arial, sans-serif; }
+
+  .lower { display: grid; grid-template-columns: 1fr 330px; gap: 0; }
+  .notes { padding: 6px 10px 6px 2px; font-size: 9.5px; line-height: 1.35; font-family: Arial, sans-serif; }
+  .notes p { margin: 0 0 4px; }
+  .pay { margin-top: 8px; font-size: 11px; }
+  .tot { border: 1px solid #111; border-top: 0; border-collapse: collapse; width: 100%; font-size: 11px; }
+  .tot td { border-top: 1px solid #111; padding: 4px 6px; }
+  .tot td:first-child { border-right: 1px solid #111; }
+  .tot td:last-child { text-align: right; white-space: nowrap; font-weight: 600; }
+  .tot small { font-family: Arial, sans-serif; font-size: 9.5px; }
+
+  .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 18px; }
+  .sign .space { height: 80px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #8a6d00; font-family: Arial, sans-serif; }
+  .sign .line { border-top: 1px solid #111; margin-top: 2px; }
+  .sign .cap { text-align: center; padding-top: 3px; }
+  .sign .cap b { display: block; font-family: Arial, sans-serif; font-size: 11px; }
+</style>
+
+<h2>Proposed Tax Invoice layout</h2>
+<p class="subtitle">Built from your sample, with its own numbers so you can compare side by side. Colours show where each piece comes from.</p>
+
+<div class="lg-row">
+  <span class="lg lg-data">From the order</span>
+  <span class="lg lg-fixed">Fixed company text (copied from your sample)</span>
+  <span class="lg lg-blank">Left empty on purpose &mdash; filled in by hand</span>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Preview: A4 portrait, one page</div>
+  <div class="mockup-body" style="background:#d7dbe2;padding:18px;">
+    <div class="inv">
+
+      <div class="hd">
+        <img src="/files/logo.png" alt="Beckie Deal logo">
+        <div>
+          <div class="kh f">បេកគីឌៀល កុំព្យូទ័រ</div>
+          <div class="en f">BECKIE DEAL COMPUTER</div>
+        </div>
+      </div>
+
+      <div class="seller">
+        <div class="f">លេខអត្តសញ្ញាណកម្ម អតប(VATTIN): <b>K005-902105220</b></div>
+        <div class="f">អាសយដ្ឋាន ៖ ផ្ទះលេខ 519Eo ផ្លូវ កម្ពុជាក្រោម(128) សង្កាត់ផ្សារដេប៉ូទី៣ ខណ្ឌទួលគោក រាជធានីភ្នំពេញ</div>
+        <div class="f">ទូរស័ព្ទលេខ: <span style="font-family:Arial">[phone &mdash; to be confirmed by you]</span></div>
+        <div class="f" style="font-family:Arial">Website : www.beckie-khmer.com</div>
+      </div>
+
+      <div class="ttl"><div class="kh">វិក្កយបត្រអាករ</div><div class="en">TAX INVOICE</div></div>
+      <div class="ref">លេខរៀងវិក្កយបត្រ៖ <b class="d">BK2025-0090</b></div>
+
+      <div class="cust">
+        <div class="lbl f">ឈ្មោះក្រុមហ៊ុនឬអតិថិជន<small>Company Name / Customer</small></div>
+        <div class="d"><b>KH ORIENT STAR LOGISTICS CO., LTD.</b></div>
+        <div class="when">កាលបរិច្ឆេទ៖ <b class="d">01-10-2025</b></div>
+        <div class="lbl f">អាសយដ្ឋាន<small>Address</small></div>
+        <div class="d span">#The Fortune Tower C7-1607 Oknha Tepphon Street (Street 182) and Street 161, Village 7, Sangkat Veal Vong, Khan 7 Makara, Phnom Penh</div>
+        <div class="lbl f">លេខអត្តសញ្ញាណកម្ម អតប(VATTIN)</div>
+        <div class="vat b span"></div>
+      </div>
+
+      <table class="items">
+        <thead>
+          <tr>
+            <th style="width:44px" class="f">ល.រ<small>N°</small></th>
+            <th class="f">បរិយាយមុខទំនិញ<small>Description</small></th>
+            <th style="width:78px" class="f">បរិមាណ<small>Quantity</small></th>
+            <th style="width:104px" class="f">ថ្លៃឯកតា<small>Unit Price</small></th>
+            <th style="width:122px" class="f">ថ្លៃទំនិញ<small>Amount</small></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="text-align:center" class="d">1</td>
+            <td class="d"><b style="font-family:Arial">ASUS Vivobook Go 15 E1504FA-NJ976W 1K-MIXED BLACK</b><div class="sku">SKU: E1504FA-NJ976W</div></td>
+            <td class="num d" style="text-align:center">1</td>
+            <td class="num d">$ 499.00</td>
+            <td class="num d">$ 499.00</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="lower">
+        <div class="notes">
+          <p class="f">One Year Warranty on Part and Service (for Computer only).</p>
+          <p class="f">Warranty does not cover any malfunction, dropped, damaged, improper handling, liquid spills, inadequate ventilation and Software.</p>
+          <p class="f">Goods sold are not refundable</p>
+          <div class="pay f" style="font-family:Arial">
+            Payment Note: Cash, Transfer or Check by this Name<br>
+            Bank Name: ABA Bank &nbsp;&middot;&nbsp; Account Name: <b>CHEA VASNA</b> &nbsp;&middot;&nbsp; Account Number: 092 747 456<br>
+            Bank Name: ACLEDA BANK &nbsp;&middot;&nbsp; Account Name: <b>CHEA VASNA</b> &nbsp;&middot;&nbsp; Account Number: 36000447038118
+          </div>
+        </div>
+        <table class="tot">
+          <tr><td class="f">សរុបមុនអាករ<br><small>Total before VAT</small></td><td class="d">$ 499.00</td></tr>
+          <tr><td class="f">អាករលើតម្លៃបន្ថែម១០%<br><small>VAT 10%</small></td><td class="d">$ 49.90</td></tr>
+          <tr><td class="f">សរុបរួម ដុល្លារ<br><small>Grand Total USD</small></td><td class="d">$ 548.90</td></tr>
+          <tr><td class="f">អត្រាប្តូរប្រាក់ជារៀល<br><small>Exchange Rate in Real</small></td><td class="f">KHR 4,011.00</td></tr>
+          <tr><td class="f">ទឹកប្រាក់សរុបជារៀល<br><small>Grand Total in Real</small></td><td class="d">KHR 2,201,600</td></tr>
+        </table>
+      </div>
+
+      <div class="sign">
+        <div>
+          <div class="space b">blank &mdash; customer signs / writes name by hand</div>
+          <div class="line"></div>
+          <div class="cap f">ហត្ថលេខា និងឈ្មោះអ្នកទិញ<b>Customer's Signature &amp; Name</b></div>
+        </div>
+        <div>
+          <div class="space b">blank &mdash; seller signs / stamps by hand</div>
+          <div class="line"></div>
+          <div class="cap f">ហត្ថលេខា និងឈ្មោះអ្នកលក់<b>Seller's Signature &amp; Name</b></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>

@@ -3,7 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import InvoiceRateDialog from '@/components/orders/InvoiceRateDialog.vue'
 import { apiFetch } from '@/services/api'
+import { invoiceCurrencyProblem, printInvoiceDocument } from '@/services/printInvoice'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toasts'
 import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
@@ -307,6 +309,33 @@ async function printOrder() {
   }
 }
 
+const printingInvoice = ref(false)
+const showInvoiceDialog = ref(false)
+
+// The invoice needs the day's exchange rate, so ask for it before printing.
+function openInvoiceDialog() {
+  if (!rawOrder.value || printingInvoice.value) return
+
+  const problem = invoiceCurrencyProblem(rawOrder.value)
+  if (problem) {
+    toast.error('Can’t print a tax invoice', problem)
+    return
+  }
+
+  showInvoiceDialog.value = true
+}
+
+async function printInvoice(exchangeRate) {
+  if (!rawOrder.value || printingInvoice.value) return
+
+  printingInvoice.value = true
+  try {
+    await printInvoiceDocument(rawOrder.value, { exchangeRate })
+  } finally {
+    printingInvoice.value = false
+  }
+}
+
 // Persist the status change. Only `status` is editable here, and the API
 // accepts just the four canonical values.
 async function editOrder() {
@@ -363,6 +392,15 @@ async function editOrder() {
               </svg>
             </template>
             {{ printing ? 'Preparing…' : 'Print Order' }}
+          </BaseButton>
+          <BaseButton variant="ghost" :disabled="!rawOrder || printingInvoice" @click="openInvoiceDialog">
+            <template #icon>
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" stroke-linejoin="round" />
+                <path d="M14 3v5h5M9 13h6M9 17h6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </template>
+            {{ printingInvoice ? 'Preparing…' : 'Print Invoice' }}
           </BaseButton>
         </div>
       </section>
@@ -615,6 +653,8 @@ async function editOrder() {
         </div>
       </div>
     </div>
+
+    <InvoiceRateDialog v-model="showInvoiceDialog" @confirm="printInvoice" />
   </div>
 </template>
 
@@ -1107,8 +1147,6 @@ $status-colors: (
 
   &:hover:not(:disabled) { background: var(--success-bg); }
   &:disabled { opacity: 0.6; cursor: not-allowed; }
-  &__mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
-  &__total { color: var(--accent-ink) !important; font-weight: 800 !important; font-size: 1rem; }
 }
 
 /* Notes */
@@ -1119,7 +1157,6 @@ $status-colors: (
   padding: 0.75rem 0.85rem;
 
   &__body { margin: 0; font-size: 0.82rem; color: var(--text-body); line-height: 1.45; }
-  &__by { margin: 0.5rem 0 0; font-size: 0.72rem; color: var(--text-subtle); }
   &__empty { margin: 0; font-size: 0.82rem; color: var(--text-subtle); text-align: center; }
 }
 </style>

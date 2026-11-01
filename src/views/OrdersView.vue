@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import InvoiceRateDialog from '@/components/orders/InvoiceRateDialog.vue'
 import {
   Select,
   SelectContent,
@@ -12,6 +13,7 @@ import {
 } from '@/components/ui/select'
 import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
+import { invoiceCurrencyProblem, printInvoiceDocument } from '@/services/printInvoice'
 import { downloadCsv, downloadJson } from '@/services/tableExport'
 import { initialsFrom } from '@/lib/identity'
 import { useAuthStore } from '@/stores/auth'
@@ -529,22 +531,39 @@ async function deleteOrder(order) {
   }
 }
 const printing = ref('')
+const showInvoiceDialog = ref(false)
+// The fetched order the invoice is waiting to print, once its rate is known.
+const invoiceOrder = ref(null)
 
 // The row only holds display strings, so the invoice is built from a fresh
-// fetch — that is where the totals breakdown, phone and address live.
+// fetch — that is where the totals breakdown, phone and address live. Printing
+// then waits for the exchange rate, asked for by InvoiceRateDialog.
 async function printOrder(order) {
   if (printing.value) return
 
   printing.value = order.id
   try {
     const response = await apiFetch(`/admin/orders/${order.id}`, { token: auth.accessToken })
-    const { printOrderDocument } = await import('@/services/printOrder')
-    await printOrderDocument(response?.data ?? {})
+    const data = response?.data ?? {}
+
+    const problem = invoiceCurrencyProblem(data)
+    if (problem) {
+      toast.error('Can’t print a tax invoice', problem)
+      return
+    }
+
+    invoiceOrder.value = data
+    showInvoiceDialog.value = true
   } catch (err) {
-    window.alert(err.message || 'Could not prepare this invoice for printing.')
+    toast.error('Could not prepare invoice', err?.message || 'Please try again.')
   } finally {
     printing.value = ''
   }
+}
+
+async function printInvoice(exchangeRate) {
+  if (!invoiceOrder.value) return
+  await printInvoiceDocument(invoiceOrder.value, { exchangeRate })
 }
 
 /* ---------------------------------------------------------------------------
@@ -1132,8 +1151,8 @@ async function exportOrders(format) {
                   <button
                     type="button"
                     class="icon-btn"
-                    :title="printing === order.id ? 'Preparing invoice…' : 'Print order'"
-                    aria-label="Print order"
+                    :title="printing === order.id ? 'Preparing invoice…' : 'Print invoice'"
+                    aria-label="Print invoice"
                     :disabled="printing === order.id"
                     @click="printOrder(order)"
                   >
@@ -1207,6 +1226,8 @@ async function exportOrders(format) {
         </footer>
       </section>
     </div>
+
+    <InvoiceRateDialog v-model="showInvoiceDialog" @confirm="printInvoice" />
   </div>
 </template>
 

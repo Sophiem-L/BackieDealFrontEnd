@@ -2,27 +2,12 @@
 //
 // This is the order record — reference, placement date, status, customer, line
 // items, fulfilment and amounts — not a billing invoice, so there is no
-// "billed to" / amount-due framing.
+// "billed to" / amount-due framing. The tax invoice is printInvoice.js.
 //
-// The app chrome (sidebar, filters, toolbars) must not end up on the page, so
-// rather than calling window.print() on the SPA we build a self-contained
-// document and print that from a hidden iframe. An iframe is used instead of
-// window.open() because popup blockers routinely kill the latter.
+// The document is printed through printDocument.js, which keeps the app chrome
+// off the page.
 
-const ESCAPES = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-}
-
-// Order data is user-supplied (product names, customer names, notes), so every
-// interpolated value goes through this.
-function esc(value) {
-  if (value === null || value === undefined) return ''
-  return String(value).replace(/[&<>"']/g, (c) => ESCAPES[c])
-}
+import { escapeHtml as esc, formatAddress, printHtmlDocument } from '@/services/printDocument'
 
 function money(value, code) {
   const n = Number(value)
@@ -58,20 +43,6 @@ const PAYMENT_METHOD_LABELS = {
   bank_transfer: 'Bank Transfer',
   stripe: 'Card (Stripe)',
   paypal: 'PayPal',
-}
-
-function formatAddress(snapshot) {
-  if (!snapshot) return '—'
-  if (typeof snapshot === 'string') return snapshot
-  const parts = [
-    snapshot.line1 ?? snapshot.address_line_1 ?? snapshot.street,
-    snapshot.line2 ?? snapshot.address_line_2,
-    snapshot.city,
-    snapshot.state ?? snapshot.province,
-    snapshot.postal_code ?? snapshot.zip,
-    snapshot.country,
-  ].filter(Boolean)
-  return parts.length ? parts.join(', ') : '—'
 }
 
 export function buildOrderHtml(order) {
@@ -212,47 +183,5 @@ export function buildOrderHtml(order) {
  * @param {object} order The order payload from GET /admin/orders/{uuid}.
  */
 export function printOrderDocument(order) {
-  return new Promise((resolve) => {
-    const frame = document.createElement('iframe')
-    frame.setAttribute('aria-hidden', 'true')
-    frame.title = 'Order print frame'
-    // Off-screen rather than display:none — a hidden frame will not print.
-    Object.assign(frame.style, {
-      position: 'fixed',
-      right: '0',
-      bottom: '0',
-      width: '1px',
-      height: '1px',
-      opacity: '0',
-      border: '0',
-    })
-
-    let settled = false
-    const cleanup = () => {
-      if (settled) return
-      settled = true
-      // Removing the frame while the dialog is still open cancels the job in
-      // some browsers, so this is always deferred.
-      setTimeout(() => frame.remove(), 500)
-      resolve()
-    }
-
-    frame.onload = () => {
-      const win = frame.contentWindow
-      if (!win) {
-        cleanup()
-        return
-      }
-      win.addEventListener('afterprint', cleanup, { once: true })
-      win.focus()
-      win.print()
-      // Safety net for browsers that never fire afterprint.
-      setTimeout(cleanup, 60_000)
-    }
-
-    // srcdoc rather than document.write() — the latter is deprecated, and this
-    // gives a reliable single load event to hook onto.
-    frame.srcdoc = buildOrderHtml(order)
-    document.body.appendChild(frame)
-  })
+  return printHtmlDocument(buildOrderHtml(order), 'Order print frame')
 }
