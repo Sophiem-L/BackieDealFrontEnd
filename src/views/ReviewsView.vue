@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select'
 import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 import {
   fetchReviews,
   reviewStars,
@@ -19,6 +20,7 @@ import {
 } from '@/services/reviews'
 
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const reviews = ref([])
 const loading = ref(false)
@@ -96,9 +98,11 @@ async function setStatus(review, status) {
   submittingId.value = review.id
   try {
     await updateReview(review.id, { status }, auth.accessToken)
+    toast.updated(`Review ${status}`, `The review by ${review.customerName} is now ${status}.`)
     await loadReviews()
   } catch (err) {
     error.value = err.message || 'Could not update this review.'
+    toast.error('Could not update review', error.value)
   } finally {
     submittingId.value = null
   }

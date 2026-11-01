@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ProductFormView from '@/views/ProductFormView.vue'
 import { apiFetch } from '@/services/api'
+import { useToastStore } from '@/stores/toasts'
 
 vi.mock('@/services/api', () => ({ apiFetch: vi.fn() }))
 vi.mock('@/services/promotions', async () => {
@@ -108,6 +109,29 @@ describe('ProductFormView default variant', () => {
     expect(body).not.toHaveProperty('variants')
     expect(body).toMatchObject({ price: 120, sale_price: 90, stock_quantity: 4, in_stock: true })
     expect(push).toHaveBeenCalledWith('/products')
+    expect(useToastStore().toasts).toMatchObject([
+      { type: 'success', title: 'Product created', message: '"Gaming Laptop" was added.' },
+    ])
+  })
+
+  it('shows an error toast and stays on the form when the create fails', async () => {
+    apiFetch.mockImplementation(async (url, options = {}) => {
+      if (url.startsWith('/admin/categories')) return { data: [] }
+      if (options.method === 'POST') throw new Error('The sku has already been taken.')
+      return { data: null }
+    })
+    const wrapper = await mountForm()
+
+    await wrapper.find('#name').setValue('Gaming Laptop')
+    await wrapper.find('#simple-price').setValue('90')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(push).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('The sku has already been taken.')
+    expect(useToastStore().toasts).toMatchObject([
+      { type: 'error', title: 'Could not create product', message: 'The sku has already been taken.' },
+    ])
   })
 
   it('will not save a product without variants until it has a price', async () => {
@@ -147,6 +171,9 @@ describe('ProductFormView default variant', () => {
     expect(body.replace_variants).toBe(false)
     expect(body.variants).toHaveLength(1)
     expect(body.variants[0]).toMatchObject({ id: 5, sku: 'LAP-1-DEFAULT', is_default: true, stock_quantity: 9 })
+    expect(useToastStore().toasts).toMatchObject([
+      { type: 'update', title: 'Product updated', message: 'Changes to "Laptop" were saved.' },
+    ])
   })
 
   it('opens a product with option variants in the variant editor and keeps the switch on', async () => {

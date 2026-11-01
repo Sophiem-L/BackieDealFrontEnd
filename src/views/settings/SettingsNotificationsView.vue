@@ -2,15 +2,16 @@
 import { onMounted, reactive, ref } from 'vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 import { fetchSettingsSection, saveSettingsSection, FALLBACK_SETTINGS } from '@/services/settingsApi.js'
 import SettingsShell from '@/views/settings/SettingsShell.vue'
 
 const auth = useAuthStore()
+const toast = useToastStore()
 const fallback = JSON.parse(JSON.stringify(FALLBACK_SETTINGS.notifications))
 const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
-const toast = ref('')
 const loadError = ref('')
 const newRecipient = ref('')
 const recipientError = ref('')
@@ -34,20 +35,18 @@ async function save() {
     const remote = await saveSettingsSection('notifications', form, auth.accessToken)
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
-    toast.value = 'Notification settings saved.'
+    toast.updated('Notification settings saved', 'Your notification preferences were saved.')
   } catch (error) {
-    toast.value = 'Unable to save notification settings right now.'
+    toast.error('Could not save notification settings', error?.message || 'Please try again.')
     console.error(error)
   } finally {
     saving.value = false
-    setTimeout(() => (toast.value = ''), 2200)
   }
 }
 
 function discard() {
   Object.assign(form, JSON.parse(JSON.stringify(initialState.value)))
-  toast.value = 'Changes discarded.'
-  setTimeout(() => (toast.value = ''), 1400)
+  toast.info('Changes discarded')
 }
 
 function addRecipient() {
@@ -129,8 +128,6 @@ function addRecipient() {
       </form>
       <p v-if="recipientError" class="recipient-error" role="alert">{{ recipientError }}</p>
     </section>
-
-    <div v-if="toast" class="settings-toast" role="status">{{ toast }}</div>
   </SettingsShell>
 </template>
 
@@ -242,19 +239,6 @@ input[type='checkbox'] {
   color: var(--text-strong);
   padding: 0.7rem 0.8rem;
   font: inherit;
-}
-
-.settings-toast {
-  position: fixed;
-  right: 1.2rem;
-  bottom: 1.2rem;
-  background: rgba(27, 31, 37, 0.95);
-  color: var(--text-strong);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  padding: 0.75rem 0.9rem;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.24);
-  font-size: 0.8rem;
 }
 
 @media (max-width: 640px) {

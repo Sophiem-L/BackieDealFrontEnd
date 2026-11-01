@@ -23,10 +23,12 @@ import {
   validateSimplePricing,
 } from '@/services/variants'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 // Edit mode when the route carries a product key; otherwise we're creating.
 // The param holds the product `id` (UUID) — the API's route key.
@@ -379,6 +381,7 @@ async function save() {
     }
   } catch (err) {
     error.value = messageFrom(err, 'Unable to save this product.')
+    toast.error(`Could not ${updating ? 'update' : 'create'} product`, error.value)
     saving.value = false
     return
   }
@@ -386,12 +389,24 @@ async function save() {
   try {
     if (form.hasVariants) await receivePendingSerials(product)
   } catch (err) {
-    error.value = `The product was saved, but its serial numbers were not all received: ${messageFrom(err, 'unknown error')}`
+    const detail = messageFrom(err, 'unknown error')
+    error.value = `The product was saved, but its serial numbers were not all received: ${detail}`
+    // One toast, not a success plus an error: the admin stays on this form, and
+    // the product being saved is the context for what failed.
+    toast.error(
+      'Could not receive serial numbers',
+      `"${form.name}" was saved, but receiving its serial numbers failed: ${detail}`,
+    )
     saving.value = false
     return
   }
 
   saving.value = false
+  const notify = updating ? toast.updated : toast.success
+  notify(
+    updating ? 'Product updated' : 'Product created',
+    updating ? `Changes to "${form.name}" were saved.` : `"${form.name}" was added.`,
+  )
   router.push('/products')
 }
 function cancel() {

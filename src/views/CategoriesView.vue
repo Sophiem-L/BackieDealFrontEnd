@@ -6,9 +6,11 @@ import BaseButton from '@/components/BaseButton.vue'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const search = ref('')
 const categories = ref([])
@@ -120,9 +122,11 @@ async function deleteCategory(cat) {
   try {
     await apiFetch(`/admin/categories/${cat.id}`, { method: 'DELETE', token: auth.accessToken })
     categories.value = categories.value.filter((c) => c.id !== cat.id)
+    toast.deleted('Category deleted', `"${cat.name}" was removed.`)
   } catch (err) {
     // 409 means the category still has products; the API message says as much.
     actionError.value = err.message || `Unable to delete "${cat.name}".`
+    toast.error('Could not delete category', actionError.value)
   } finally {
     deletingId.value = null
   }

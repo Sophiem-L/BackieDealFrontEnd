@@ -8,9 +8,9 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import PageActionsMenu from '@/components/PageActionsMenu.vue'
 import StatusChip from '@/components/StatusChip.vue'
-import ToastStack from '@/components/ToastStack.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 import {
   filterPages,
   formatRelativeTime,
@@ -27,6 +27,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const TYPE = 'page'
 const searchRef = ref(null)
@@ -54,7 +55,6 @@ const pages = ref([])
 const loading = ref(true)
 const page = ref(Number(route.query.page || 1))
 const actionBusyId = ref(null)
-const toasts = ref([])
 const error = ref('')
 
 let searchTimer = null
@@ -92,30 +92,6 @@ const deleteConfirmReady = computed(() => {
   const typed = deleteConfirmationText.value.trim()
   return typed === expected || typed === 'DELETE'
 })
-
-function pushToast(title, message = '', options = {}) {
-  const toast = {
-    id: Date.now() + Math.random(),
-    type: options.type || 'info',
-    title,
-    message,
-    actionLabel: options.actionLabel || '',
-    onAction: options.onAction || null,
-  }
-  toasts.value.push(toast)
-  if (!options.persist) {
-    setTimeout(() => removeToast(toast.id), 6000)
-  }
-}
-
-function removeToast(id) {
-  toasts.value = toasts.value.filter((toast) => toast.id !== id)
-}
-
-function handleToastAction(toast) {
-  if (toast.onAction) toast.onAction()
-  removeToast(toast.id)
-}
 
 function updateRouteState() {
   const query = { ...route.query }
@@ -241,14 +217,22 @@ function copySlug(item) {
   navigator.clipboard
     ?.writeText(text)
     .then(() => {
-      pushToast('Slug copied', text)
+      toast.info('Slug copied', text)
     })
     .catch(() => {
-      pushToast('Copy not available', 'Use the URL in the page details instead.')
+      toast.info('Copy not available', 'Use the URL in the page details instead.')
     })
 }
 
-async function persistStatus(item, nextStatus) {
+const statusToasts = {
+  published: { done: 'Page published', detail: 'is now live', failed: 'Could not publish page' },
+  archived: { done: 'Page archived', detail: 'was archived', failed: 'Could not archive page' },
+  draft: { done: 'Page moved to draft', detail: 'is back in draft', failed: 'Could not move page to draft' },
+}
+
+// Shows the new status in the list straight away and rolls it back if the API
+// refuses. Throws on failure so the caller decides how to report it.
+async function applyStatus(item, nextStatus) {
   const previousPage = { ...item }
 
   pages.value = pages.value.map((pageItem) => {
@@ -262,25 +246,6 @@ async function persistStatus(item, nextStatus) {
       published_at: nextStatus === 'published' ? nextUpdated : pageItem.published_at,
     }
   })
-
-  const undoAction = () => {
-    pages.value = pages.value.map((pageItem) =>
-      pageItem.id === item.id ? { ...pageItem, ...previousPage } : pageItem,
-    )
-  }
-
-  pushToast(
-    nextStatus === 'published'
-      ? `Published "${item.title}"`
-      : nextStatus === 'archived'
-        ? `Archived "${item.title}"`
-        : `Moved "${item.title}" back to draft`,
-    'Your change is in progress.',
-    {
-      actionLabel: 'Undo',
-      onAction: undoAction,
-    },
-  )
 
   try {
     if (nextStatus === 'published') {
@@ -304,8 +269,34 @@ async function persistStatus(item, nextStatus) {
     pages.value = pages.value.map((pageItem) =>
       pageItem.id === item.id ? { ...pageItem, ...previousPage } : pageItem,
     )
-    pushToast('Action failed', err?.message || 'Please try again.', { type: 'error' })
+    throw err
   }
+}
+
+// The toast only appears once the API has answered. Undo sends the previous
+// status back to the API, so what the list shows is what is actually saved.
+async function persistStatus(item, nextStatus, { undoable = true } = {}) {
+  const previousStatus = item.status
+
+  try {
+    await applyStatus(item, nextStatus)
+  } catch (err) {
+    toast.error(statusToasts[nextStatus].failed, err?.message || 'Please try again.')
+    return
+  }
+
+  toast.push({
+    type: 'update',
+    title: statusToasts[nextStatus].done,
+    message: `"${item.title}" ${statusToasts[nextStatus].detail}.`,
+    ...(undoable
+      ? {
+          actionLabel: 'Undo',
+          onAction: () =>
+            persistStatus({ ...item, status: nextStatus }, previousStatus, { undoable: false }),
+        }
+      : {}),
+  })
 }
 
 async function performBulkAction(action) {
@@ -314,17 +305,22 @@ async function performBulkAction(action) {
 
   const selectedItems = pages.value.filter((item) => ids.includes(item.id))
   const actionLabels = {
-    publish: 'Publish',
-    unpublish: 'Unpublish',
-    archive: 'Archive',
-    delete: 'Delete',
+    publish: { label: 'Publish', done: 'published' },
+    unpublish: { label: 'Unpublish', done: 'unpublished' },
+    archive: { label: 'Archive', done: 'archived' },
+    delete: { label: 'Delete', done: 'deleted' },
   }
+  const plural = (count) => `${count} page${count > 1 ? 's' : ''}`
 
-  pushToast(
-    `${actionLabels[action]} ${selectedItems.length} page${selectedItems.length > 1 ? 's' : ''}`,
-    'Bulk action in progress.',
-    { persist: true },
-  )
+  const progressId = toast.push({
+    type: 'info',
+    title: `${actionLabels[action].label} ${plural(selectedItems.length)}`,
+    message: 'Bulk action in progress.',
+    persist: true,
+  })
+
+  let succeeded = 0
+  let firstFailure = ''
 
   for (const item of selectedItems) {
     const targetStatus =
@@ -336,18 +332,34 @@ async function performBulkAction(action) {
             ? 'archived'
             : null
 
-    if (action === 'delete') {
-      await apiFetch(`/admin/content/${item.id}`, { method: 'DELETE', token: auth.accessToken })
-      continue
+    try {
+      if (action === 'delete') {
+        await apiFetch(`/admin/content/${item.id}`, { method: 'DELETE', token: auth.accessToken })
+      } else {
+        await applyStatus(item, targetStatus)
+      }
+      succeeded += 1
+    } catch (err) {
+      if (!firstFailure) firstFailure = err?.message || ''
     }
+  }
 
-    await persistStatus(item, targetStatus)
+  toast.dismiss(progressId)
+  const failed = selectedItems.length - succeeded
+  if (succeeded) {
+    const notify = action === 'delete' ? toast.deleted : toast.updated
+    notify(`${plural(succeeded)} ${actionLabels[action].done}`)
+  }
+  if (failed) {
+    toast.error(
+      `Could not ${actionLabels[action].label.toLowerCase()} ${plural(failed)}`,
+      firstFailure || 'Please try again.',
+    )
   }
 
   selectedIds.value = []
   lastSelectedId.value = null
   await loadPages()
-  removeToast(toasts.value[toasts.value.length - 1]?.id)
 }
 
 function toggleSelection(id, event) {
@@ -404,10 +416,10 @@ async function destroyPage() {
     deleteTarget.value = null
     deleteConfirmationText.value = ''
     selectedIds.value = selectedIds.value.filter((id) => id !== targetId)
-    pushToast(`Deleted "${targetTitle || 'page'}"`, 'The page was removed from the list.')
+    toast.deleted('Page deleted', targetTitle ? `"${targetTitle}" was removed.` : 'The page was removed.')
     await loadPages()
   } catch (err) {
-    pushToast('Delete failed', err?.message || 'Please try again.', { type: 'error' })
+    toast.error('Could not delete page', err?.message || 'Please try again.')
   } finally {
     actionBusyId.value = null
   }
@@ -860,8 +872,6 @@ watch(
         </div>
       </template>
     </ConfirmDialog>
-
-    <ToastStack :toasts="toasts" @dismiss="removeToast" @action="handleToastAction" />
   </div>
 </template>
 

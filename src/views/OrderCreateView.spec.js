@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import OrderCreateView from '@/views/OrderCreateView.vue'
 import { apiFetch } from '@/services/api'
 import { fetchCustomers } from '@/services/customers'
+import { useToastStore } from '@/stores/toasts'
 
 vi.mock('@/services/api', () => ({
   apiFetch: vi.fn(),
@@ -13,8 +14,10 @@ vi.mock('@/services/api', () => ({
 
 vi.mock('@/services/customers', () => ({ fetchCustomers: vi.fn() }))
 
+const { push } = vi.hoisted(() => ({ push: vi.fn() }))
+
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({ push, back: vi.fn() }),
 }))
 
 // The pickers are the vendored shadcn Select, which renders its options
@@ -111,6 +114,46 @@ describe('OrderCreateView', () => {
     await fillRequiredFields(wrapper)
     expect(wrapper.findAll('.order-product')).toHaveLength(1)
     expect(wrapper.text()).toContain('Keyboard')
+  })
+
+  it('toasts success, then returns to the list, once the order is saved', async () => {
+    const wrapper = mount(OrderCreateView, { global: { stubs } })
+    await flushPromises()
+    await fillRequiredFields(wrapper)
+    let toastsAtRedirect
+    push.mockImplementationOnce(() => {
+      toastsAtRedirect = useToastStore().toasts.length
+    })
+
+    await submit(wrapper)
+
+    expect(push).toHaveBeenCalledWith({ name: 'orders', query: { created: 99 } })
+    expect(toastsAtRedirect).toBe(1)
+    expect(useToastStore().toasts[0]).toMatchObject({ type: 'success', title: 'Order created' })
+  })
+
+  it('toasts the failure and keeps the inline error when the save is rejected', async () => {
+    const wrapper = mount(OrderCreateView, { global: { stubs } })
+    await flushPromises()
+    await fillRequiredFields(wrapper)
+    const reference = apiFetch.getMockImplementation()
+    apiFetch.mockImplementation((path, options) =>
+      options?.method === 'POST' && path === '/admin/orders'
+        ? Promise.reject(new Error('Insufficient stock'))
+        : reference(path, options),
+    )
+
+    await submit(wrapper)
+
+    const toasts = useToastStore().toasts
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]).toMatchObject({
+      type: 'error',
+      title: 'Could not create order',
+      message: 'Insufficient stock',
+    })
+    expect(wrapper.text()).toContain('Insufficient stock')
+    expect(push).not.toHaveBeenCalled()
   })
 })
 

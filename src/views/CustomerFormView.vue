@@ -6,10 +6,12 @@ import BaseButton from '@/components/BaseButton.vue'
 import { fetchCustomer, initials as initialsOf, saveCustomer, toneFor } from '@/services/customers'
 import { ACCEPT_ATTR, uploadImage } from '@/services/media'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 // Edit when the route carries a customer id; otherwise we're creating.
 const customerId = computed(() => route.params.id || null)
@@ -89,6 +91,7 @@ async function onPhotoChange(event) {
     form.avatar = url
   } catch (err) {
     error.value = err.message || 'Could not upload the photo.'
+    toast.error('Could not upload photo', error.value)
   } finally {
     uploading.value = false
   }
@@ -108,9 +111,15 @@ async function save() {
   fieldErrors.value = {}
   try {
     await saveCustomer(customerId.value, form, auth.accessToken)
+    const notify = isEdit.value ? toast.updated : toast.success
+    notify(
+      isEdit.value ? 'Customer updated' : 'Customer created',
+      isEdit.value ? `${form.name} was saved.` : `${form.name} was added.`,
+    )
     router.push({ name: 'customers' })
   } catch (err) {
     error.value = err.message || 'Could not save the customer.'
+    toast.error(isEdit.value ? 'Could not update customer' : 'Could not create customer', error.value)
     // `errors` is Laravel's validation bag: { field: [message, ...] }.
     fieldErrors.value = Object.fromEntries(
       Object.entries(err.errors ?? {}).map(([field, messages]) => [field, messages[0]]),

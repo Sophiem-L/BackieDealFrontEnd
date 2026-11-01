@@ -16,9 +16,11 @@ import { FORM_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
 import { fetchCustomers } from '@/services/customers'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 // `productId` ties a row to a real product id; the unit price is snapshotted
 // from the selected catalog entry and the API payload remains unchanged.
@@ -457,6 +459,10 @@ async function createOrder() {
     // Back to the list, which is sorted newest-first, so the new order is the
     // top row. The id is passed along so that row can be highlighted.
     const created = response?.data
+    toast.success(
+      'Order created',
+      created?.order_number ? `Order ${created.order_number} was added.` : 'The order was added.',
+    )
     router.push({
       name: 'orders',
       query: created?.id ? { created: created.id } : undefined,
@@ -467,6 +473,7 @@ async function createOrder() {
       err.status === 422
         ? 'Please correct the highlighted fields and try again.'
         : err.message || 'Could not create this order. Please try again.'
+    toast.error('Could not create order', submitError.value)
   } finally {
     saving.value = false
   }

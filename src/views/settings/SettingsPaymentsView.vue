@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 import {
   checkPaywayConnection,
   fetchSettingsSection,
@@ -12,11 +13,11 @@ import {
 import SettingsShell from '@/views/settings/SettingsShell.vue'
 
 const auth = useAuthStore()
+const toast = useToastStore()
 const fallback = JSON.parse(JSON.stringify(FALLBACK_SETTINGS.payments))
 const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
-const toast = ref('')
 const loadError = ref('')
 const storeSettings = ref(null)
 const paymentMethods = ref(['cod'])
@@ -60,13 +61,12 @@ async function save() {
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
     storeSettings.value = { ...storeSettings.value, ...storeRemote }
     initialPaymentMethods.value = [...paymentMethods.value]
-    toast.value = 'Payment settings saved.'
+    toast.updated('Payment settings saved', 'Your payment settings were saved.')
   } catch (error) {
-    toast.value = 'Unable to save payment settings right now.'
+    toast.error('Could not save payment settings', error?.message || 'Please try again.')
     console.error(error)
   } finally {
     saving.value = false
-    setTimeout(() => (toast.value = ''), 2200)
   }
 }
 
@@ -74,8 +74,7 @@ function discard() {
   Object.assign(form, JSON.parse(JSON.stringify(initialState.value)))
   paymentMethods.value = storeSettings.value?.settings?.payment_methods || ['cod']
   initialPaymentMethods.value = [...paymentMethods.value]
-  toast.value = 'Changes discarded.'
-  setTimeout(() => (toast.value = ''), 1400)
+  toast.info('Changes discarded')
 }
 
 function togglePaymentMethod(id, enabled) {
@@ -83,7 +82,7 @@ function togglePaymentMethod(id, enabled) {
   if (enabled) methods.add(id)
   else methods.delete(id)
   if (!methods.size) {
-    toast.value = 'At least one payment method must remain enabled.'
+    toast.error('Payment method not changed', 'At least one payment method must remain enabled.')
     return
   }
   paymentMethods.value = [...methods]
@@ -98,12 +97,12 @@ async function configureProvider(id) {
   checkingPayway.value = true
   try {
     const result = await checkPaywayConnection(auth.accessToken)
-    toast.value = result?.connected ? 'ABA PayWay connection verified.' : 'ABA PayWay is not configured on the server.'
+    if (result?.connected) toast.success('ABA PayWay connection verified')
+    else toast.error('ABA PayWay not connected', 'ABA PayWay is not configured on the server.')
   } catch (error) {
-    toast.value = error.message || 'Unable to check ABA PayWay connection.'
+    toast.error('Could not check ABA PayWay', error?.message || 'Unable to check ABA PayWay connection.')
   } finally {
     checkingPayway.value = false
-    setTimeout(() => (toast.value = ''), 3000)
   }
 }
 
@@ -173,8 +172,6 @@ function providerStatusClass(id) {
         <label class="field field--wide"><span>Payment instructions</span><textarea id="payment-instructions" v-model="form.instructions" rows="3" placeholder="Please pay the total upon delivery..." /></label>
       </div>
     </section>
-
-    <div v-if="toast" class="settings-toast" role="status">{{ toast }}</div>
   </SettingsShell>
 </template>
 
@@ -368,19 +365,6 @@ function providerStatusClass(id) {
 
 .field textarea {
   resize: vertical;
-}
-
-.settings-toast {
-  position: fixed;
-  right: 1.2rem;
-  bottom: 1.2rem;
-  background: rgba(27, 31, 37, 0.95);
-  color: var(--text-strong);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  padding: 0.75rem 0.9rem;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.24);
-  font-size: 0.8rem;
 }
 
 @media (max-width: 640px) {

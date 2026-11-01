@@ -14,10 +14,12 @@ import {
 import { fetchRolePermissions, formatRoleName } from '@/services/masterData'
 import { useAuthStore } from '@/stores/auth'
 import { useMasterDataStore } from '@/stores/masterData'
+import { useToastStore } from '@/stores/toasts'
 
 // State
 const auth = useAuthStore()
 const masterData = useMasterDataStore()
+const toast = useToastStore()
 const router = useRouter()
 const search = ref('')
 const administrators = ref([])
@@ -51,7 +53,6 @@ const rolePermissionsError = ref('')
 const showResetModal = ref(false)
 const resetLoading = ref(false)
 const resetError = ref('')
-const resetMessage = ref('')
 const resetForm = reactive({
   target: null,
   password: '',
@@ -367,10 +368,14 @@ async function submitForm() {
       isActive: form.isActive,
     }
 
+    const fullName = `${data.firstName} ${data.lastName}`
+
     if (editingAdmin.value) {
       await updateAdministrator(editingAdmin.value.id, data, auth.accessToken)
+      toast.updated('Administrator updated', `${fullName} was saved.`)
     } else {
       await createAdministrator(data, auth.accessToken)
+      toast.success('Administrator created', `${fullName} was added.`)
     }
 
     const changedOwnPassword = isEditingSelf.value && Boolean(data.password)
@@ -390,6 +395,7 @@ async function submitForm() {
       err.errors?.password?.[0] ||
       err.message ||
       'Failed to save administrator'
+    toast.error(editingAdmin.value ? 'Could not update administrator' : 'Could not create administrator', formError.value)
   } finally {
     formLoading.value = false
   }
@@ -409,11 +415,14 @@ async function confirmDelete() {
   confirmAction.loading = true
   try {
     await deleteAdministrator(confirmAction.target.id, auth.accessToken)
+    toast.deleted('Administrator deleted', `${formatName(confirmAction.target)} was removed.`)
     showConfirmModal.value = false
     closeDetail()
     await loadAdministrators()
   } catch (err) {
     formError.value = err.message || 'Failed to delete administrator'
+    // formError only renders inside the edit modal, which is closed here.
+    toast.error('Could not delete administrator', formError.value)
     showConfirmModal.value = false
   } finally {
     confirmAction.loading = false
@@ -427,7 +436,6 @@ function openResetForm(admin) {
   resetForm.password = ''
   resetForm.passwordConfirm = ''
   resetError.value = ''
-  resetMessage.value = ''
   showResetModal.value = true
 }
 
@@ -440,13 +448,11 @@ async function submitReset() {
 
   try {
     await resetAdministratorPassword(resetForm.target.id, resetForm.password, auth.accessToken)
-    resetMessage.value = `Password reset for ${resetForm.target.first_name} ${resetForm.target.last_name}.`
+    toast.updated('Password reset', `The password for ${formatName(resetForm.target)} was changed.`)
     showResetModal.value = false
-    setTimeout(() => {
-      resetMessage.value = ''
-    }, 5000)
   } catch (err) {
     resetError.value = err.errors?.password?.[0] || err.message || 'Failed to reset password'
+    toast.error('Could not reset password', resetError.value)
   } finally {
     resetLoading.value = false
   }
@@ -488,11 +494,6 @@ onMounted(async () => {
     <AppHeader title="Manage Administrators" />
 
     <div id="administrator-page-body" class="page__body" :class="{ 'page__body--editing': Boolean(editingAdmin) }">
-      <!-- Success message -->
-      <p v-if="resetMessage" class="alert alert--success" role="status">
-        {{ resetMessage }}
-      </p>
-
       <!-- Error message -->
       <p v-if="error" class="alert alert--error" role="alert">
         {{ error }}

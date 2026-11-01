@@ -273,9 +273,11 @@ import {
 import { TOOLBAR_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const PER_PAGE = 10
 const roles = ref([])
@@ -358,15 +360,16 @@ function nextPage() { if (page.value < lastPage.value) page.value += 1 }
 
 async function deleteRole(roleItem) {
   if (['admin', 'manager', 'staff'].includes(roleItem.name)) {
-    window.alert(`The "${roleItem.name}" role is a platform role and cannot be deleted.`)
+    toast.error('Could not delete role', `The "${roleItem.name}" role is a platform role and cannot be deleted.`)
     return
   }
   if (!window.confirm(`Delete role "${roleItem.name}"?`)) return
   try {
     await apiFetch(`/admin/roles/${roleItem.id}`, { method: 'DELETE', token: auth.accessToken })
+    toast.deleted('Role deleted', `"${roleItem.name}" was removed.`)
     await loadRoles()
   } catch (err) {
-    window.alert(err.message || 'Failed to delete role.')
+    toast.error('Could not delete role', err?.message || 'Please try again.')
   }
 }
 
@@ -464,9 +467,10 @@ async function savePermissions() {
       body: { permissions: ids },
     })
     dialog.value = false
+    toast.updated('Permissions updated', `Permissions for "${activeRole.value.name}" were saved.`)
     await loadRoles()
   } catch (err) {
-    window.alert(err.message || 'Failed to save permissions.')
+    toast.error('Could not save permissions', err?.message || 'Please try again.')
   } finally {
     savingPermissions.value = false
   }

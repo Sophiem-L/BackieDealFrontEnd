@@ -14,10 +14,12 @@ import { FORM_SELECT } from '@/lib/selectPresets'
 import { ACCEPT_ATTR, VIDEO_ACCEPT_ATTR, uploadImage, uploadVideo } from '@/services/media'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 const imageFileInput = ref(null)
 const videoFileInput = ref(null)
 const mediaType = ref('image')
@@ -161,10 +163,16 @@ async function save() {
       token: auth.accessToken,
       body,
     })
+    const notify = isEdit.value ? toast.updated : toast.success
+    notify(
+      isEdit.value ? 'Article updated' : 'Article created',
+      `"${body.title}" was ${isEdit.value ? 'saved' : 'added'}.`,
+    )
     router.push({ name: 'news' })
   } catch (err) {
     fieldErrors.value = err.errors || {}
     error.value = err.message || 'Unable to save this article. Please try again.'
+    toast.error(`Could not ${isEdit.value ? 'update' : 'create'} article`, error.value)
   } finally {
     saving.value = false
   }

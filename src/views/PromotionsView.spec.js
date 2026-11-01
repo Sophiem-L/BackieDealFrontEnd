@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import PromotionsView from '@/views/PromotionsView.vue'
-import { fetchPromotions } from '@/services/promotions'
+import { deletePromotion, fetchPromotions } from '@/services/promotions'
+import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 vi.mock('@/services/promotions', async () => {
   const actual = await vi.importActual('@/services/promotions')
@@ -82,5 +84,43 @@ describe('PromotionsView — flash sales', () => {
     const wrapper = await mountList([promotion({ expiresAt: hoursFromNow(2) })])
 
     expect(wrapper.find('.promo__status').text()).toBe('Active')
+  })
+})
+
+describe('PromotionsView — delete feedback', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore().user = { permissions: ['promotions.delete'] }
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+  })
+
+  async function clickDelete(wrapper) {
+    await wrapper.find('[aria-label="Delete promotion"]').trigger('click')
+    await flushPromises()
+  }
+
+  it('toasts a success once the promotion is deleted', async () => {
+    deletePromotion.mockResolvedValueOnce(undefined)
+    const wrapper = await mountList([promotion()])
+
+    await clickDelete(wrapper)
+
+    expect(wrapper.find('.promo').exists()).toBe(false)
+    expect(useToastStore().toasts).toMatchObject([
+      { type: 'delete', title: 'Promotion deleted', message: '"Three Hour Frenzy" was removed.' },
+    ])
+  })
+
+  it('toasts the server message when the delete fails', async () => {
+    deletePromotion.mockRejectedValueOnce(new Error('Promotion is in use.'))
+    const wrapper = await mountList([promotion()])
+
+    await clickDelete(wrapper)
+
+    expect(useToastStore().toasts).toMatchObject([
+      { type: 'error', title: 'Could not delete promotion', message: 'Promotion is in use.' },
+    ])
+    expect(wrapper.find('.load-error').text()).toContain('Promotion is in use.')
   })
 })

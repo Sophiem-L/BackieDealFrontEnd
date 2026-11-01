@@ -5,9 +5,11 @@ import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 // News articles are `content_items` rows of type `news`; the Pages screen is the
 // same table with type `page`. Every request here carries the filter, so the two
@@ -180,6 +182,10 @@ async function setStatus(article, action) {
       method: 'POST',
       token: auth.accessToken,
     })
+    toast.updated(
+      action === 'publish' ? 'Article published' : 'Article archived',
+      `"${article.title}" ${action === 'publish' ? 'is now live' : 'was archived'}.`,
+    )
     const updated = response?.data
     // A status change can move the row out of the active filter, so when one is
     // set the list is refetched rather than patched in place.
@@ -192,6 +198,7 @@ async function setStatus(article, action) {
     }
   } catch (err) {
     actionError.value = err.message || `Unable to ${action} "${article.title}".`
+    toast.error(`Could not ${action} article`, actionError.value)
   } finally {
     busyId.value = null
   }
@@ -203,11 +210,13 @@ async function deleteArticle(article) {
   busyId.value = article.id
   try {
     await apiFetch(`/admin/content/${article.id}`, { method: 'DELETE', token: auth.accessToken })
+    toast.deleted('Article deleted', `"${article.title}" was removed.`)
     // Refetch so the row that slides up from the next page fills the gap and the
     // total/'`last_page`' stay honest.
     await loadArticles()
   } catch (err) {
     actionError.value = err.message || `Unable to delete "${article.title}".`
+    toast.error('Could not delete article', actionError.value)
   } finally {
     busyId.value = null
   }

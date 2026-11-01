@@ -32,8 +32,10 @@ import {
   updateSerial,
 } from '@/services/serials'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const auth = useAuthStore()
+const toast = useToastStore()
 const receiveSection = ref(null)
 const lookupInput = ref(null)
 const rows = ref([])
@@ -44,7 +46,6 @@ const saving = ref(false)
 const exporting = ref(false)
 const error = ref('')
 const notice = ref('')
-const noticeUndoIds = ref([])
 const lookup = ref('')
 const lookupState = ref('idle')
 const lookupResult = ref(null)
@@ -153,9 +154,9 @@ function warrantyHint(value) {
   return ''
 }
 
-function setNotice(message, undoIds = []) {
+// For outcomes that are not saves (copy, export); saves report through the shared toast.
+function setNotice(message) {
   notice.value = message
-  noticeUndoIds.value = undoIds
   window.clearTimeout(noticeTimer)
   noticeTimer = window.setTimeout(() => { notice.value = '' }, 9000)
 }
@@ -258,6 +259,7 @@ async function receive() {
   error.value = ''
   notice.value = ''
   const receivedCount = availableBatch.value.length
+  const productName = selectedProduct.value?.name
   try {
     const response = await receiveSerials({
       product_id: form.value.product_id,
@@ -271,10 +273,17 @@ async function receive() {
     form.value.serial_numbers = ''
     form.value.receiving_reference = ''
     batchExisting.value = []
-    setNotice(`${receivedCount} serial${receivedCount === 1 ? '' : 's'} received successfully.`, undoIds)
+    toast.push({
+      type: 'success',
+      title: `${receivedCount} serial${receivedCount === 1 ? '' : 's'} received`,
+      message: productName ? `Added to "${productName}".` : '',
+      actionLabel: undoIds.length ? 'Undo' : '',
+      onAction: undoIds.length ? () => undoReceive(undoIds) : null,
+    })
     await Promise.all([load(1), loadSummary()])
   } catch (err) {
     error.value = err.message || 'Unable to receive serial numbers.'
+    toast.error('Could not receive serials', error.value)
   } finally {
     saving.value = false
   }
@@ -285,15 +294,15 @@ const canReceive = computed(() => Boolean(
   && !duplicateSerials.value.length && !invalidSerials.value.length && !batchExisting.value.length,
 ))
 
-async function undoReceive() {
-  if (!noticeUndoIds.value.length) return
+async function undoReceive(ids) {
+  if (!ids.length) return
   try {
-    await bulkUpdateStatus(noticeUndoIds.value, 'cancelled', auth.accessToken)
-    noticeUndoIds.value = []
-    setNotice('Received serials were cancelled.')
+    await bulkUpdateStatus(ids, 'cancelled', auth.accessToken)
+    toast.deleted(`${ids.length} serial${ids.length === 1 ? '' : 's'} cancelled`, 'The received serials were cancelled.')
     await Promise.all([load(1), loadSummary()])
   } catch (err) {
     error.value = err.message || 'Unable to undo receiving.'
+    toast.error('Could not undo receiving', error.value)
   }
 }
 
@@ -323,10 +332,13 @@ async function saveStatus() {
   if (!selectedSerial.value || selectedStatus.value === selectedSerial.value.status) return
   try {
     selectedSerial.value = await updateSerial(selectedSerial.value.id, { status: selectedStatus.value }, auth.accessToken)
+    toast.updated('Serial status updated', `${selectedSerial.value.serial_number} is now ${formatStatus(selectedSerial.value.status)}.`)
     history.value = await fetchSerialHistory(selectedSerial.value.id, auth.accessToken)
     await Promise.all([load(), loadSummary()])
-    setNotice('Serial status updated.')
-  } catch (err) { error.value = err.message || 'Unable to update serial status.' }
+  } catch (err) {
+    error.value = err.message || 'Unable to update serial status.'
+    toast.error('Could not update serial status', error.value)
+  }
 }
 
 // A cancelled serial is a void record, so its number is not editable.
@@ -340,14 +352,16 @@ async function saveVariant() {
 
   savingVariant.value = true
   error.value = ''
+  const serialNumber = selectedSerial.value.serial_number
   try {
     selectedSerial.value = await updateSerial(selectedSerial.value.id, {
       product_variant_id: selectedVariantId.value ? Number(selectedVariantId.value) : null,
     }, auth.accessToken)
+    toast.updated('Serial variant updated', `The variant of ${serialNumber} was changed.`)
     await load()
-    setNotice('Serial variant updated.')
   } catch (err) {
     error.value = Object.values(err?.errors ?? {}).flat()[0] || err.message || 'Unable to update the serial variant.'
+    toast.error('Could not update serial variant', error.value)
   } finally { savingVariant.value = false }
 }
 
@@ -372,23 +386,28 @@ async function saveNumber() {
 
   savingNumber.value = true
   numberError.value = ''
+  const previous = selectedSerial.value.serial_number
   try {
     selectedSerial.value = await updateSerial(selectedSerial.value.id, { serial_number: next }, auth.accessToken)
     editingNumber.value = false
+    toast.updated('Serial number updated', `${previous} is now ${selectedSerial.value.serial_number}.`)
     history.value = await fetchSerialHistory(selectedSerial.value.id, auth.accessToken)
     await Promise.all([load(), loadSummary()])
-    setNotice('Serial number updated.')
   } catch (err) {
     numberError.value = Object.values(err?.errors ?? {}).flat()[0] || err.message || 'Unable to update the serial number.'
+    toast.error('Could not update serial number', numberError.value)
   } finally { savingNumber.value = false }
 }
 
 async function markDamaged(row) {
   try {
     await updateSerial(row.id, { status: 'damaged' }, auth.accessToken)
+    toast.updated('Serial marked as damaged', `${row.serial_number} was marked as damaged.`)
     await Promise.all([load(), loadSummary()])
-    setNotice(`${row.serial_number} marked as damaged.`)
-  } catch (err) { error.value = err.message || 'Unable to update serial status.' }
+  } catch (err) {
+    error.value = err.message || 'Unable to update serial status.'
+    toast.error('Could not update serial status', error.value)
+  }
 }
 
 async function scanLookup() {
@@ -434,13 +453,24 @@ function togglePageSelection() {
 async function bulkStatus(event) {
   const nextStatus = event.target.value
   if (!nextStatus || !selectedIds.value.length) return
+  const requested = selectedIds.value.length
   try {
-    await bulkUpdateStatus(selectedIds.value, nextStatus, auth.accessToken)
+    const result = await bulkUpdateStatus(selectedIds.value, nextStatus, auth.accessToken)
     selectedIds.value = []
     event.target.value = ''
+    // The API skips serials whose current status cannot move to the new one.
+    const updated = result?.updated_count ?? requested
+    if (updated < requested) {
+      const rest = `Not every serial can change to ${formatStatus(nextStatus)}.`
+      toast.error(`Could not update ${requested - updated} of ${requested} serials`, updated ? `${updated} updated. ${rest}` : rest)
+    } else {
+      toast.updated(`${updated} serial${updated === 1 ? '' : 's'} updated`, `Status set to ${formatStatus(nextStatus)}.`)
+    }
     await Promise.all([load(), loadSummary()])
-    setNotice('Selected serial statuses updated.')
-  } catch (err) { error.value = err.message || 'Unable to update selected serials.' }
+  } catch (err) {
+    error.value = err.message || 'Unable to update selected serials.'
+    toast.error('Could not update serials', error.value)
+  }
 }
 
 async function moveSelected(event) {
@@ -448,12 +478,21 @@ async function moveSelected(event) {
   if (!warehouse || !selectedIds.value.length) return
   try {
     const selectedRows = rows.value.filter((row) => selectedIds.value.includes(row.id))
-    await Promise.all(selectedRows.map((row) => updateSerial(row.id, { warehouse }, auth.accessToken)))
+    const results = await Promise.allSettled(selectedRows.map((row) => updateSerial(row.id, { warehouse }, auth.accessToken)))
+    const failed = results.filter((result) => result.status === 'rejected')
     selectedIds.value = []
     event.target.value = ''
+    if (failed.length) {
+      error.value = failed[0].reason?.message || 'Unable to move selected serials.'
+      toast.error(`Could not move ${failed.length} of ${results.length} serials`, error.value)
+    } else {
+      toast.updated(`${results.length} serial${results.length === 1 ? '' : 's'} moved`, `Warehouse set to ${warehouse}.`)
+    }
     await load()
-    setNotice('Selected serials moved to the new warehouse.')
-  } catch (err) { error.value = err.message || 'Unable to move selected serials.' }
+  } catch (err) {
+    error.value = err.message || 'Unable to move selected serials.'
+    toast.error('Could not move serials', error.value)
+  }
 }
 
 async function exportInventory() {
@@ -631,7 +670,7 @@ onBeforeUnmount(() => {
       </section>
 
       <p v-if="error" class="toast toast--error" role="alert"><AlertTriangle />{{ error }}<button type="button" aria-label="Dismiss error" @click="error = ''"><X /></button></p>
-      <p v-if="notice" class="toast toast--success" role="status"><Check />{{ notice }}<button v-if="noticeUndoIds.length" type="button" class="undo-button" @click="undoReceive">Undo</button><button type="button" aria-label="Dismiss notification" @click="notice = ''"><X /></button></p>
+      <p v-if="notice" class="toast toast--success" role="status"><Check />{{ notice }}<button type="button" aria-label="Dismiss notification" @click="notice = ''"><X /></button></p>
 
       <section class="panel inventory-panel" aria-labelledby="inventory-title">
         <div class="inventory-heading">
@@ -766,8 +805,8 @@ onBeforeUnmount(() => {
 .page-heading h1{margin:2px 0 0;font-size:24px;font-weight:600;line-height:1.2}.eyebrow,.section-kicker{display:block;margin:0;color:var(--serial-muted);font-size:12px;font-weight:500}.page-subtitle{margin:7px 0 0;color:var(--text-body);font-size:14px}
 .scanner-bar{display:flex;align-items:center;gap:12px;min-height:58px;padding:8px 10px 8px 16px;border:1px solid var(--border);border-radius:12px;background:var(--serial-surface);box-shadow:0 8px 28px rgb(0 0 0 / .12)}.scanner-icon{width:20px;height:20px;color:var(--serial-muted)}.scanner-bar input{flex:1;min-width:0;height:40px;border:0;outline:0;background:transparent;color:var(--text-strong);font:400 15px inherit}.scanner-bar input::placeholder{color:var(--text-subtle)}.scanner-bar kbd{padding:3px 7px;border:1px solid var(--border);border-radius:5px;color:var(--text-muted);font:12px inherit}.scanner-bar :deep(.btn){min-height:40px}
 .stats-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.stat-card{position:relative;display:grid;grid-template-columns:36px 1fr;grid-template-rows:auto auto auto;column-gap:12px;align-items:center;min-height:116px;padding:16px;text-align:left;background:var(--serial-surface);border:1px solid var(--border);border-radius:12px;color:var(--text-strong);cursor:pointer;transition:border-color .16s ease,background-color .16s ease,transform .16s ease}.stat-card:hover{background:var(--surface-alt);transform:translateY(-1px)}.stat-card.is-selected{border-color:var(--serial-accent);box-shadow:0 0 0 1px var(--serial-accent)}.stat-card__icon{grid-row:1 / 4;display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--surface-hover);color:var(--text-muted)}.stat-card__icon :deep(svg){width:18px;height:18px}.stat-card--success .stat-card__icon{background:var(--success-bg);color:var(--success)}.stat-card--info .stat-card__icon{background:var(--info-bg);color:var(--info)}.stat-card--danger .stat-card__icon{background:var(--danger-bg);color:var(--danger)}.stat-card__label{color:var(--text-body);font-size:13px;font-weight:500}.stat-card strong{margin-top:2px;font-size:24px;font-weight:600;line-height:1.1}.stat-card__note{margin-top:2px;color:var(--serial-muted);font-size:12px}
-.panel{min-width:0;border:1px solid var(--border);border-radius:12px;background:var(--serial-surface)}.receive-panel{padding:20px}.section-heading{margin-bottom:20px}.section-heading h2,.inventory-heading h2,.drawer-heading h2{margin:3px 0 0;font-size:16px;font-weight:600}.section-step{color:var(--text-subtle);font-size:12px;font-variant-numeric:tabular-nums}.receive-layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(240px,.75fr);gap:24px}.receive-form{display:grid;gap:16px;min-width:0}.field-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:12px}.field{display:grid;gap:7px;min-width:0;color:var(--text-body);font-size:13px;font-weight:500}.field>span{display:flex;justify-content:space-between;gap:8px}.field i{color:var(--text-muted);font-size:11px;font-style:normal;font-weight:400}.field input,.field select,.field textarea,.filter-grid input,.filter-grid select,.bulk-bar select,.table-footer select{width:100%;min-width:0;height:38px;padding:0 11px;border:1px solid var(--border-strong);border-radius:8px;background:var(--serial-raised);color:var(--text-strong);font:400 13px inherit}.field textarea{height:auto;min-height:104px;padding:10px 11px;resize:vertical;line-height:1.5}.field input::placeholder,.field textarea::placeholder,.filter-grid input::placeholder{color:var(--text-subtle);opacity:1}.field input:focus,.field select:focus,.field textarea:focus,.filter-grid input:focus,.filter-grid select:focus,.bulk-bar select:focus,.table-footer select:focus{outline:2px solid var(--serial-accent);outline-offset:1px}.serial-field{gap:8px}.batch-status{display:grid;gap:10px}.batch-summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:var(--text-body);font-size:12px}.validation{display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)}.validation svg{width:13px;height:13px}.validation--warning{color:#e3aa37}.validation--danger{color:var(--danger)}.validation--success{color:var(--success)}.serial-chips{display:flex;flex-wrap:wrap;gap:6px}.serial-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 5px 3px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface-alt)}.serial-chip code{overflow:hidden;color:var(--text-body);font:12px ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis}.serial-chip--error,.serial-chip--exists{border-color:var(--danger-border);background:var(--danger-bg)}.serial-chip button,.toast>button:not(.undo-button){display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--text-muted);cursor:pointer}.serial-chip button:hover,.toast>button:hover{background:var(--surface-hover);color:var(--text-strong)}.serial-chip button svg,.toast svg{width:14px;height:14px}.field-error{color:var(--danger);font-size:12px}.form-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding-top:2px}.text-button{padding:8px 10px;border:0;border-radius:7px;background:transparent;color:var(--text-body);font:500 13px inherit;cursor:pointer}.text-button:hover{background:var(--surface-hover);color:var(--text-strong)}.text-button:disabled{opacity:.5;cursor:not-allowed}.form-actions :deep(.btn){min-height:40px}.batch-preview{align-self:stretch;padding:18px;border:1px solid var(--border);border-radius:10px;background:var(--serial-raised)}.preview-head{display:flex;align-items:center;gap:9px;color:var(--text-body);font-size:13px;font-weight:500}.preview-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:var(--surface-hover);color:var(--text-secondary)}.preview-icon svg{width:16px;height:16px}.batch-preview>strong{display:block;margin-top:24px;font-size:36px;font-weight:600;line-height:1}.preview-caption{display:block;margin-top:5px;color:var(--text-muted);font-size:13px}.preview-divider{height:1px;margin:18px 0 14px;background:var(--border)}.batch-preview dl,.detail-grid{display:grid;gap:12px;margin:0}.batch-preview dl div,.detail-grid div{display:flex;justify-content:space-between;gap:12px}.batch-preview dt,.detail-grid dt{color:var(--text-muted);font-size:12px}.batch-preview dd,.detail-grid dd{max-width:60%;margin:0;color:var(--text-strong);font-size:12px;text-align:right;overflow-wrap:anywhere}.preview-note{margin:18px 0 0;color:var(--text-muted);font-size:11px;line-height:1.5}
-.toast{display:flex;align-items:center;gap:10px;margin:0;padding:11px 14px;border-radius:9px;font-size:13px}.toast--error{background:var(--danger-bg);color:var(--danger)}.toast--success{background:var(--success-bg);color:var(--success)}.toast>svg{flex:none}.toast>button:last-child{margin-left:auto}.undo-button{padding:5px 9px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;font:600 12px inherit;cursor:pointer}
+.panel{min-width:0;border:1px solid var(--border);border-radius:12px;background:var(--serial-surface)}.receive-panel{padding:20px}.section-heading{margin-bottom:20px}.section-heading h2,.inventory-heading h2,.drawer-heading h2{margin:3px 0 0;font-size:16px;font-weight:600}.section-step{color:var(--text-subtle);font-size:12px;font-variant-numeric:tabular-nums}.receive-layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(240px,.75fr);gap:24px}.receive-form{display:grid;gap:16px;min-width:0}.field-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:12px}.field{display:grid;gap:7px;min-width:0;color:var(--text-body);font-size:13px;font-weight:500}.field>span{display:flex;justify-content:space-between;gap:8px}.field i{color:var(--text-muted);font-size:11px;font-style:normal;font-weight:400}.field input,.field select,.field textarea,.filter-grid input,.filter-grid select,.bulk-bar select,.table-footer select{width:100%;min-width:0;height:38px;padding:0 11px;border:1px solid var(--border-strong);border-radius:8px;background:var(--serial-raised);color:var(--text-strong);font:400 13px inherit}.field textarea{height:auto;min-height:104px;padding:10px 11px;resize:vertical;line-height:1.5}.field input::placeholder,.field textarea::placeholder,.filter-grid input::placeholder{color:var(--text-subtle);opacity:1}.field input:focus,.field select:focus,.field textarea:focus,.filter-grid input:focus,.filter-grid select:focus,.bulk-bar select:focus,.table-footer select:focus{outline:2px solid var(--serial-accent);outline-offset:1px}.serial-field{gap:8px}.batch-status{display:grid;gap:10px}.batch-summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:var(--text-body);font-size:12px}.validation{display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)}.validation svg{width:13px;height:13px}.validation--warning{color:#e3aa37}.validation--danger{color:var(--danger)}.validation--success{color:var(--success)}.serial-chips{display:flex;flex-wrap:wrap;gap:6px}.serial-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 5px 3px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface-alt)}.serial-chip code{overflow:hidden;color:var(--text-body);font:12px ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis}.serial-chip--error,.serial-chip--exists{border-color:var(--danger-border);background:var(--danger-bg)}.serial-chip button,.toast>button{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--text-muted);cursor:pointer}.serial-chip button:hover,.toast>button:hover{background:var(--surface-hover);color:var(--text-strong)}.serial-chip button svg,.toast svg{width:14px;height:14px}.field-error{color:var(--danger);font-size:12px}.form-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding-top:2px}.text-button{padding:8px 10px;border:0;border-radius:7px;background:transparent;color:var(--text-body);font:500 13px inherit;cursor:pointer}.text-button:hover{background:var(--surface-hover);color:var(--text-strong)}.text-button:disabled{opacity:.5;cursor:not-allowed}.form-actions :deep(.btn){min-height:40px}.batch-preview{align-self:stretch;padding:18px;border:1px solid var(--border);border-radius:10px;background:var(--serial-raised)}.preview-head{display:flex;align-items:center;gap:9px;color:var(--text-body);font-size:13px;font-weight:500}.preview-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:var(--surface-hover);color:var(--text-secondary)}.preview-icon svg{width:16px;height:16px}.batch-preview>strong{display:block;margin-top:24px;font-size:36px;font-weight:600;line-height:1}.preview-caption{display:block;margin-top:5px;color:var(--text-muted);font-size:13px}.preview-divider{height:1px;margin:18px 0 14px;background:var(--border)}.batch-preview dl,.detail-grid{display:grid;gap:12px;margin:0}.batch-preview dl div,.detail-grid div{display:flex;justify-content:space-between;gap:12px}.batch-preview dt,.detail-grid dt{color:var(--text-muted);font-size:12px}.batch-preview dd,.detail-grid dd{max-width:60%;margin:0;color:var(--text-strong);font-size:12px;text-align:right;overflow-wrap:anywhere}.preview-note{margin:18px 0 0;color:var(--text-muted);font-size:11px;line-height:1.5}
+.toast{display:flex;align-items:center;gap:10px;margin:0;padding:11px 14px;border-radius:9px;font-size:13px}.toast--error{background:var(--danger-bg);color:var(--danger)}.toast--success{background:var(--success-bg);color:var(--success)}.toast>svg{flex:none}.toast>button:last-child{margin-left:auto}
 .inventory-panel{padding:20px}.inventory-heading{margin-bottom:18px}.inventory-heading h2{display:flex;align-items:center;gap:9px}.inventory-heading h2 span{padding:2px 7px;border-radius:999px;background:var(--surface-hover);color:var(--text-muted);font-size:11px;font-weight:500}.export-link{display:inline-flex;align-items:center;gap:7px;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:var(--text-body);font:500 13px inherit;cursor:pointer}.export-link:hover{background:var(--surface-hover)}.export-link svg{width:15px;height:15px}.filter-grid{display:grid;grid-template-columns:minmax(170px,1.35fr) repeat(3,minmax(130px,1fr)) minmax(145px, .8fr) minmax(145px,.8fr) auto;gap:8px;align-items:center}.filter-grid>select,.filter-grid>button{height:38px}.filter-grid :deep(.btn){height:38px;padding:0 14px}.search-filter{position:relative;display:flex;align-items:center}.search-filter>svg{position:absolute;left:10px;width:15px;height:15px;color:var(--text-muted);pointer-events:none}.search-filter input{padding-left:32px}.date-filter{display:flex;align-items:center;gap:5px;height:38px;padding:0 8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--serial-raised);color:var(--text-muted);font-size:11px}.date-filter input{height:34px;padding:0;border:0;background:transparent;font-size:12px}.date-filter input:focus{outline:0}.active-filters{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:12px;color:var(--text-muted);font-size:12px}.filter-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface-alt);color:var(--text-body);font:400 11px inherit;cursor:pointer}.filter-chip svg{width:12px;height:12px}.clear-filters{padding:4px 6px;font-size:12px}.bulk-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:14px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-alt)}.bulk-bar strong{margin-right:auto;font-size:12px}.bulk-bar select{width:auto;height:34px;font-size:12px}.bulk-bar>button{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 9px;border:0;border-radius:6px;background:transparent;color:var(--text-body);font:500 12px inherit;cursor:pointer}.bulk-bar>button:hover{background:var(--surface-hover)}.bulk-bar>button svg{width:14px;height:14px}.bulk-bar .bulk-clear{color:var(--text-muted)}
 .table-wrap{width:100%;overflow-x:auto}.serial-table{width:100%;border-collapse:separate;border-spacing:0;text-align:left}.serial-table thead{position:sticky;top:0;z-index:1;background:var(--serial-surface)}.serial-table th{height:42px;padding:0 9px;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:11px;font-weight:500;white-space:nowrap}.serial-table td{height:58px;padding:8px 9px;border-bottom:1px solid var(--border);color:var(--text-body);font-size:12px;white-space:nowrap}.serial-table tbody tr{cursor:pointer;transition:background .12s ease}.serial-table tbody tr:hover,.serial-table tbody tr.is-selected{background:var(--surface-alt)}.check-col{width:34px;padding-left:4px!important;padding-right:4px!important}.check-col input,.mobile-row>input{width:15px;height:15px;margin:0;accent-color:var(--serial-accent);cursor:pointer}.sort-button{display:inline-flex;align-items:center;gap:4px;padding:4px 0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}.sort-button svg{width:12px;height:12px}.serial-cell{display:flex;align-items:center;gap:6px}.serial-cell code,.mobile-row code{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text-strong)}.serial-cell button{display:grid;place-items:center;width:25px;height:25px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--text-muted);cursor:pointer;opacity:0}.serial-table tr:hover .serial-cell button,.serial-cell button:focus-visible{opacity:1}.serial-cell button:hover{background:var(--surface-hover);color:var(--text-strong)}.serial-cell button svg{width:13px;height:13px}.product-cell{display:flex;align-items:center;gap:8px;max-width:210px;white-space:normal}.product-cell>span:last-child{overflow:hidden;text-overflow:ellipsis}.product-thumb{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:7px;background:var(--surface-hover);color:var(--text-body);font-size:12px;font-weight:600}.product-cell small,.serial-table td>small{display:block;margin-top:2px;color:var(--text-muted);font-size:11px}.status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;background:var(--surface-hover);color:var(--text-body);font-size:11px;font-weight:500}.status-badge>span{width:6px;height:6px;border-radius:50%;background:currentColor}.status-badge--available{background:var(--success-bg);color:var(--success)}.status-badge--reserved{background:var(--info-bg);color:var(--info)}.status-badge--sold{background:var(--surface-hover);color:var(--text-body)}.status-badge--damaged,.status-badge--lost{background:var(--danger-bg);color:var(--danger)}.status-badge--returned,.status-badge--repaired{background:var(--success-bg);color:var(--success)}.warranty-warning{display:block;margin-top:3px;color:var(--danger);font-size:11px}.row-actions{width:36px}.row-actions details{position:relative}.row-actions summary{display:grid;place-items:center;width:28px;height:28px;border-radius:6px;color:var(--text-muted);list-style:none;cursor:pointer}.row-actions summary::-webkit-details-marker{display:none}.row-actions summary:hover{background:var(--surface-hover);color:var(--text-strong)}.row-actions summary svg{width:15px;height:15px}.row-menu{position:absolute;right:0;z-index:4;display:grid;min-width:155px;padding:5px;border:1px solid var(--border);border-radius:8px;background:var(--serial-surface);box-shadow:var(--shadow-md)}.row-menu button{padding:8px 9px;border:0;border-radius:5px;background:transparent;color:var(--text-body);font:400 12px inherit;text-align:left;cursor:pointer}.row-menu button:hover{background:var(--surface-hover)}.row-menu button:disabled{opacity:.5;cursor:not-allowed}.mobile-rows{display:none}.table-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:14px;color:var(--text-muted);font-size:12px}.table-footer>label{display:flex;align-items:center;gap:7px}.table-footer select{width:70px;height:32px;padding:0 7px}.pagination{display:flex;align-items:center;gap:9px}.pagination button,.icon-button{display:grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid var(--border);border-radius:7px;background:var(--serial-surface);color:var(--text-body);cursor:pointer}.pagination button:hover,.icon-button:hover{background:var(--surface-hover)}.pagination button:disabled{opacity:.4;cursor:not-allowed}.pagination svg{width:15px;height:15px}
 .empty-state{display:grid;justify-items:center;gap:9px;padding:52px 20px;text-align:center}.empty-icon{display:grid;place-items:center;width:52px;height:52px;border:1px solid var(--border);border-radius:14px;background:var(--surface-alt);color:var(--text-muted)}.empty-icon svg{width:23px;height:23px}.empty-state h3{margin:7px 0 0;color:var(--text-strong);font-size:16px;font-weight:600}.empty-state p,.not-found p{max-width:420px;margin:0 0 8px;color:var(--text-muted);font-size:13px;line-height:1.5}.empty-state--compact{padding:38px 20px}.empty-state--compact .empty-icon{width:42px;height:42px}.skeleton-head,.skeleton-row{display:grid;grid-template-columns:24px 1.1fr 1.6fr .8fr 1fr 1fr 1fr;gap:20px;align-items:center;min-width:850px}.skeleton-head{height:42px;border-bottom:1px solid var(--border)}.skeleton-row{height:58px;border-bottom:1px solid var(--border)}.skeleton-head span,.skeleton-row span{height:12px;border-radius:4px;background:linear-gradient(90deg,var(--surface-hover),var(--surface-alt),var(--surface-hover));background-size:200% 100%;animation:skeleton 1.4s ease infinite}.skeleton-row span:first-child{width:16px}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

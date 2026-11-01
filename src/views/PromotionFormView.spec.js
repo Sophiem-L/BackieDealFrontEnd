@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import PromotionFormView from '@/views/PromotionFormView.vue'
+import { useToastStore } from '@/stores/toasts'
 import {
   fetchPromotion,
   fetchPromotionCategories,
@@ -449,5 +450,41 @@ describe('PromotionFormView — targeting', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('more than one kind of target')
+  })
+})
+
+describe('PromotionFormView — save feedback', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    route.params = {}
+    stubTargetApis()
+  })
+
+  async function submitNamedPromotion(wrapper) {
+    await wrapper.find('#name').setValue('Launch week')
+    await selectFirstProduct(wrapper)
+    await createButton(wrapper).trigger('click')
+    await flushPromises()
+  }
+
+  it('toasts a success once the promotion is created', async () => {
+    savePromotion.mockResolvedValueOnce({})
+    await submitNamedPromotion(mountForm())
+
+    expect(useToastStore().toasts).toMatchObject([
+      { type: 'success', title: 'Promotion created', message: '"Launch week" was added.' },
+    ])
+  })
+
+  it('toasts the server message when the save fails, and keeps the inline error', async () => {
+    savePromotion.mockRejectedValueOnce({ status: 500, message: 'Database is unavailable.' })
+    const wrapper = mountForm()
+    await submitNamedPromotion(wrapper)
+
+    expect(useToastStore().toasts).toMatchObject([
+      { type: 'error', title: 'Could not create promotion', message: 'Database is unavailable.' },
+    ])
+    expect(wrapper.find('.submit-error').text()).toBe('Database is unavailable.')
   })
 })

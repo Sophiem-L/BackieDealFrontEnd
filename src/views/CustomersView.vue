@@ -10,9 +10,11 @@ import {
   statusLabels,
 } from '@/services/customers'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const customers = ref([])
 const search = ref('')
@@ -66,8 +68,10 @@ async function deleteCustomer(customer) {
   try {
     await removeCustomer(customer.id, auth.accessToken)
     customers.value = customers.value.filter((item) => item.id !== customer.id)
+    toast.deleted('Customer deleted', `${customer.name} was removed.`)
   } catch (err) {
     error.value = err.message || 'Could not delete the customer.'
+    toast.error('Could not delete customer', error.value)
   } finally {
     deletingId.value = null
   }

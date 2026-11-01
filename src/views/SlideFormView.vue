@@ -7,10 +7,12 @@ import SlideImagesField from '@/components/slides/SlideImagesField.vue'
 import SlideSequence from '@/components/slides/SlideSequence.vue'
 import { DEFAULT_GRADIENT, fetchSlide, saveSlide } from '@/services/slides'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const isEdit = computed(() => Boolean(route.params.id))
 
@@ -84,9 +86,15 @@ async function save() {
   error.value = ''
   try {
     await saveSlide(isEdit.value ? route.params.id : null, form, auth.accessToken)
+    const notify = isEdit.value ? toast.updated : toast.success
+    notify(
+      isEdit.value ? 'Slide updated' : 'Slide created',
+      form.title ? `"${form.title}" was ${isEdit.value ? 'saved' : 'added'}.` : '',
+    )
     router.push('/slides')
   } catch (err) {
     error.value = err.message || 'Could not save the slide.'
+    toast.error(`Could not ${isEdit.value ? 'update' : 'create'} slide`, error.value)
   } finally {
     saving.value = false
   }

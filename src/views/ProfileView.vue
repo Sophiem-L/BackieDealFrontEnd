@@ -3,8 +3,10 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const profile = reactive({
   firstName: '',
@@ -35,7 +37,6 @@ function openPasswordModal() {
   passwords.next = ''
   passwords.confirm = ''
   passwordError.value = ''
-  passwordMessage.value = ''
   showCurrent.value = false
   showPasswordModal.value = true
 }
@@ -60,11 +61,9 @@ watch(showPasswordModal, (open) => {
 const loadingProfile = ref(false)
 const savingProfile = ref(false)
 const profileError = ref('')
-const profileMessage = ref('')
 
 const savingPassword = ref(false)
 const passwordError = ref('')
-const passwordMessage = ref('')
 
 const displayName = computed(
   () => `${profile.firstName} ${profile.lastName}`.trim() || auth.user?.name || 'Admin',
@@ -116,7 +115,6 @@ async function loadProfile() {
 async function saveProfile() {
   savingProfile.value = true
   profileError.value = ''
-  profileMessage.value = ''
   try {
     const response = await apiFetch('/admin/auth/profile', {
       method: 'PATCH',
@@ -131,9 +129,10 @@ async function saveProfile() {
     const data = response?.data ?? {}
     applyProfile(data)
     auth.setUser({ ...(auth.user ?? {}), ...data })
-    profileMessage.value = 'Profile saved successfully.'
+    toast.updated('Profile updated', 'Your profile changes were saved.')
   } catch (err) {
     profileError.value = err.message || 'Failed to save your profile.'
+    toast.error('Could not update profile', err?.message || 'Please try again.')
   } finally {
     savingProfile.value = false
   }
@@ -142,7 +141,6 @@ async function saveProfile() {
 // POST /admin/auth/change-password
 async function updatePassword() {
   passwordError.value = ''
-  passwordMessage.value = ''
 
   if (passwords.next !== passwords.confirm) {
     passwordError.value = 'New password and confirmation do not match.'
@@ -163,10 +161,11 @@ async function updatePassword() {
     passwords.current = ''
     passwords.next = ''
     passwords.confirm = ''
-    passwordMessage.value = 'Password changed successfully.'
     showPasswordModal.value = false
+    toast.updated('Password changed', 'Use your new password the next time you sign in.')
   } catch (err) {
     passwordError.value = err.message || 'Failed to change your password.'
+    toast.error('Could not change password', err?.message || 'Please try again.')
   } finally {
     savingPassword.value = false
   }
@@ -195,7 +194,6 @@ onMounted(loadProfile)
       <section class="card">
         <h3 class="card__title">Personal Information</h3>
 
-        <p v-if="profileMessage" class="alert alert--success" role="status">{{ profileMessage }}</p>
         <p v-if="profileError" class="alert alert--error" role="alert">{{ profileError }}</p>
 
         <div class="grid">
@@ -227,8 +225,6 @@ onMounted(loadProfile)
           </svg>
           Security &amp; Password
         </h3>
-
-        <p v-if="passwordMessage" class="alert alert--success" role="status">{{ passwordMessage }}</p>
 
         <div class="security">
           <div class="security__meta">
@@ -427,12 +423,6 @@ onMounted(loadProfile)
   font-size: 0.82rem;
   border-radius: 10px;
   border: 1px solid transparent;
-
-  &--success {
-    color: var(--success-ink);
-    background: var(--success-bg);
-    border-color: var(--success-border);
-  }
 
   &--error {
     color: var(--danger);

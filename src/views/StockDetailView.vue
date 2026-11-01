@@ -26,8 +26,6 @@ const history = ref([])
 const filterType = ref('all')
 const filterFromDate = ref('')
 const filterToDate = ref('')
-const showSuccessNotice = ref(false)
-const successMessage = ref('')
 
 // The detail endpoint labels a healthy product 'healthy'; the list labels the
 // same state 'in-stock'. Both read the same here.
@@ -150,15 +148,6 @@ async function loadDetail() {
     } else {
       history.value = []
     }
-
-    // Show success message if coming from adjustment form
-    if (route.query.refresh) {
-      showSuccessNotice.value = true
-      successMessage.value = 'Stock adjustment added successfully!'
-      setTimeout(() => {
-        showSuccessNotice.value = false
-      }, 3000)
-    }
   } catch (err) {
     error.value = err.message || 'Unable to load stock details. Please try again.'
     history.value = []
@@ -202,13 +191,6 @@ watch(
         <span v-if="item" class="badge" :class="`badge--${item.availability}`">
           {{ availabilityLabels[item.availability] }}
         </span>
-      </div>
-
-      <div v-if="showSuccessNotice" class="notice notice--success" role="status">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="m5 12.5 4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>{{ successMessage }}</span>
       </div>
 
       <section v-if="loading" class="empty">
@@ -686,25 +668,6 @@ watch(
   &--in-stock { background: var(--success-bg); color: var(--success); }
   &--low-stock { background: rgb(var(--accent-rgb) / 0.2); color: var(--accent-ink); }
   &--out-of-stock { background: var(--danger-bg); color: var(--danger); }
-}
-
-.notice {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.75rem 1rem;
-  font-size: 0.86rem;
-  font-weight: 500;
-  border-radius: 10px;
-  border: 1px solid;
-
-  svg { width: 18px; height: 18px; flex-shrink: 0; stroke: currentColor; stroke-width: 2; }
-
-  &--success {
-    background: var(--success-bg);
-    color: var(--success);
-    border-color: var(--success-border);
-  }
 }
 
 /* Loading / error */

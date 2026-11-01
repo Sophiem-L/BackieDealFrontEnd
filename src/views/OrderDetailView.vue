@@ -5,11 +5,13 @@ import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 const unviewedOrders = useUnviewedOrdersStore()
 
 // The list links here with the order uuid (routes bind on it server-side).
@@ -271,7 +273,8 @@ const canMarkPaid = computed(
 
 async function markAsPaid() {
   if (!canMarkPaid.value || markingPaid.value) return
-  if (!window.confirm(`Mark ${order.value.id} as paid?`)) return
+  const reference = order.value.id
+  if (!window.confirm(`Mark ${reference} as paid?`)) return
 
   markingPaid.value = true
   try {
@@ -281,8 +284,9 @@ async function markAsPaid() {
       token: auth.accessToken,
     })
     applyOrder(response?.data ?? {})
+    toast.updated('Payment recorded', `Order ${reference} was marked as paid.`)
   } catch (err) {
-    window.alert(err.message || 'Could not record the payment. Please try again.')
+    toast.error('Could not record payment', err?.message || 'Please try again.')
   } finally {
     markingPaid.value = false
   }
@@ -308,6 +312,8 @@ async function printOrder() {
 async function editOrder() {
   if (!isDirty.value || saving.value) return
 
+  const reference = order.value.id
+  const statusText = orderStatusLabel.value.toLowerCase()
   saving.value = true
   try {
     const response = await apiFetch(`/admin/orders/${orderUuid}`, {
@@ -316,9 +322,10 @@ async function editOrder() {
       token: auth.accessToken,
     })
     applyOrder(response?.data ?? {})
+    toast.updated('Order updated', `Order ${reference} is now ${statusText}.`)
     router.push({ name: 'orders' })
   } catch (err) {
-    window.alert(err.message || 'Could not update this order. Please try again.')
+    toast.error('Could not update order', err?.message || 'Please try again.')
   } finally {
     saving.value = false
   }

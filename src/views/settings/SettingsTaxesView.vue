@@ -1,15 +1,16 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 import { fetchSettingsSection, saveSettingsSection, FALLBACK_SETTINGS } from '@/services/settingsApi.js'
 import SettingsShell from '@/views/settings/SettingsShell.vue'
 
 const auth = useAuthStore()
+const toast = useToastStore()
 const fallback = JSON.parse(JSON.stringify(FALLBACK_SETTINGS.taxes))
 const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
-const toast = ref('')
 const loadError = ref('')
 const currency = ref('USD')
 const previewAmount = ref(150)
@@ -48,20 +49,18 @@ async function save() {
     const remote = await saveSettingsSection('taxes', form, auth.accessToken)
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
-    toast.value = 'Tax settings saved.'
+    toast.updated('Tax settings saved', 'Your tax settings were saved.')
   } catch (error) {
-    toast.value = 'Unable to save tax settings right now.'
+    toast.error('Could not save tax settings', error?.message || 'Please try again.')
     console.error(error)
   } finally {
     saving.value = false
-    setTimeout(() => (toast.value = ''), 2200)
   }
 }
 
 function discard() {
   Object.assign(form, JSON.parse(JSON.stringify(initialState.value)))
-  toast.value = 'Changes discarded.'
-  setTimeout(() => (toast.value = ''), 1400)
+  toast.info('Changes discarded')
 }
 
 function addRate() {
@@ -166,8 +165,6 @@ function formatMoney(amount) {
         </div>
       </div>
     </section>
-
-    <div v-if="toast" class="settings-toast" role="status">{{ toast }}</div>
   </SettingsShell>
 </template>
 
@@ -348,18 +345,5 @@ th {
   border-top: 1px solid var(--border-subtle);
   color: var(--text-strong);
   font-weight: 700;
-}
-
-.settings-toast {
-  position: fixed;
-  right: 1.2rem;
-  bottom: 1.2rem;
-  background: rgba(27, 31, 37, 0.95);
-  color: var(--text-strong);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  padding: 0.75rem 0.9rem;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.24);
-  font-size: 0.8rem;
 }
 </style>

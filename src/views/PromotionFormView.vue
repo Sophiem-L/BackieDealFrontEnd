@@ -36,10 +36,12 @@ import {
   toDateTimeLocal,
 } from '@/services/promotions'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const isEdit = computed(() => Boolean(route.params.id))
 
@@ -314,12 +316,15 @@ async function save() {
       form.bannerImage = (await uploadImage(bannerFile.value, { token: auth.accessToken, folder: 'promotions' })).url
     }
     await savePromotion(isEdit.value ? route.params.id : null, form, auth.accessToken)
+    if (isEdit.value) toast.updated('Promotion updated', `"${form.name}" was saved.`)
+    else toast.success('Promotion created', `"${form.name}" was added.`)
     router.push({ name: 'promotions' })
   } catch (err) {
     fieldErrors.value = err.errors ?? {}
     submitError.value = err.status === 422
       ? 'Please correct the highlighted fields and try again.'
       : err.message || 'Could not save the promotion.'
+    toast.error(isEdit.value ? 'Could not update promotion' : 'Could not create promotion', submitError.value)
   } finally {
     saving.value = false
   }

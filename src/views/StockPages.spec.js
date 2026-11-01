@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { useToastStore } from '@/stores/toasts'
 import StockManagementView from '@/views/StockManagementView.vue'
 import StockDetailView from '@/views/StockDetailView.vue'
 import StockAdjustmentFormView from '@/views/StockAdjustmentFormView.vue'
@@ -67,6 +69,7 @@ const stubs = { ...baseStubs, ...selectStubs }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  setActivePinia(createPinia())
   routeStub.params = { id: '1' }
   routeStub.query = {}
   authStub.hasPermission.mockImplementation(() => true)
@@ -325,12 +328,15 @@ describe('StockDetailView', () => {
     expect(wrapper.find('.subhead__title').text()).toBe('Alpha Keyboard')
   })
 
-  it('confirms a just-saved adjustment', async () => {
+  it('reloads after a save without repeating the form\'s confirmation', async () => {
     routeStub.query = { refresh: '1' }
     fetchStockDetail.mockResolvedValue(DETAIL)
     const wrapper = await mountDetail()
 
-    expect(wrapper.find('.notice--success').text()).toContain('Stock adjustment added successfully!')
+    // The form's shared toast says the adjustment was saved; the page just reloads.
+    expect(fetchStockDetail).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.notice').exists()).toBe(false)
+    expect(useToastStore().toasts).toHaveLength(0)
   })
 })
 
@@ -622,6 +628,11 @@ describe('StockAdjustmentFormView variant serials', () => {
         serial_numbers: ['SN-NEW'],
       }),
     )
+    // The toast lives in the shared store, so it outlasts the redirect to the detail page.
+    expect(useToastStore().toasts).toEqual([
+      expect.objectContaining({ type: 'success', title: 'Stock adjustment saved', message: '"Laptop" inventory was updated.' }),
+    ])
+    expect(routerStub.push).toHaveBeenCalledWith(expect.objectContaining({ name: 'stock-detail' }))
 
     wrapper.unmount()
   })
@@ -679,6 +690,14 @@ describe('StockAdjustmentFormView variant serials', () => {
     expect(wrapper.find('.alert--error').text()).toBe(
       'Serial number count must match the required quantity for this adjustment.',
     )
+    expect(useToastStore().toasts).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        title: 'Could not save stock adjustment',
+        message: 'Serial number count must match the required quantity for this adjustment.',
+      }),
+    ])
+    expect(routerStub.push).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })

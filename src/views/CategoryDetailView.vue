@@ -7,10 +7,12 @@ import ToggleSwitch from '@/components/ToggleSwitch.vue'
 import { apiFetch } from '@/services/api'
 import { ACCEPT_ATTR, uploadImage, validateImageFile } from '@/services/media'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 
@@ -90,10 +92,12 @@ async function saveCategory() {
       token: auth.accessToken,
     })
     if (response?.data?.name) categoryName.value = response.data.name
+    toast.updated('Category updated', `"${categoryName.value}" was saved.`)
     router.push({ name: 'categories' })
   } catch (err) {
     const fieldError = Object.values(err.errors ?? {})[0]
     categorySaveError.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to save this category.'
+    toast.error('Could not update category', categorySaveError.value)
   } finally {
     savingCategory.value = false
   }
@@ -359,6 +363,12 @@ function closePicker() {
   pickerSearch.value = ''
 }
 
+function describeProductChanges(added, removed) {
+  const noun = (count) => `${count} product${count === 1 ? '' : 's'}`
+  if (added && removed) return `${noun(added)} added, ${removed} removed.`
+  return added ? `${noun(added)} added.` : `${noun(removed)} removed.`
+}
+
 async function addSelectedProducts() {
   // Diff against the snapshot taken when the picker opened: newly-checked
   // rows get added to this category, newly-unchecked rows that used to be
@@ -390,6 +400,7 @@ async function addSelectedProducts() {
     await loadProducts()
 
     if (failedOps.length === 0) {
+      toast.updated('Category products updated', describeProductChanges(toAdd.length, toRemove.length))
       closePicker()
       return
     }
@@ -408,6 +419,10 @@ async function addSelectedProducts() {
     const reason = results.find((r) => r.status === 'rejected')?.reason?.message
     const names = failedOps.map((op) => op.product.name).join(', ')
     submitError.value = reason ? `Couldn't update ${names} — ${reason}` : `Couldn't update: ${names}`
+    toast.error(
+      'Could not update some products',
+      `${failedOps.length} of ${ops.length} failed. ${reason || 'Please try again.'}`,
+    )
     await loadPickerProducts()
   } finally {
     submitting.value = false

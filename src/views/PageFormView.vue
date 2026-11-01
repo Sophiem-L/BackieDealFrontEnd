@@ -14,10 +14,12 @@ import {
 import { FORM_SELECT } from '@/lib/selectPresets'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 // One component serves both routes: /pages/new has no :id, /pages/:id/edit does.
 const pageId = computed(() => route.params.id ?? null)
@@ -226,10 +228,16 @@ async function save() {
       token: auth.accessToken,
       body,
     })
+    const notify = isEdit.value ? toast.updated : toast.success
+    notify(
+      isEdit.value ? 'Page updated' : 'Page created',
+      `"${body.title}" was ${isEdit.value ? 'saved' : 'added'}.`,
+    )
     router.push({ name: 'pages' })
   } catch (err) {
     fieldErrors.value = err.errors || {}
     error.value = err.message || 'Unable to save this page. Please try again.'
+    toast.error(`Could not ${isEdit.value ? 'update' : 'create'} page`, error.value)
   } finally {
     saving.value = false
   }

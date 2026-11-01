@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -11,6 +12,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'save'])
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const isOpen = computed({
   get: () => props.modelValue,
@@ -137,10 +139,11 @@ async function handleSave() {
       body: { permissions: selectedPermissionIds },
     })
 
+    toast.updated('Permissions updated', `Permissions for "${props.role.name}" were saved.`)
     emit('save', { roleId: props.role.id, permissionIds: selectedPermissionIds })
     isOpen.value = false
   } catch (err) {
-    alert(err.message || 'Failed to update role permissions.')
+    toast.error('Could not save permissions', err?.message || 'Please try again.')
   } finally {
     loading.value = false
   }

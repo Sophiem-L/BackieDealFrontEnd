@@ -2,13 +2,16 @@
 import { computed, onMounted, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppSidebar from '@/components/AppSidebar.vue'
+import ToastStack from '@/components/ToastStack.vue'
 import { useUiStore } from '@/stores/ui'
+import { useToastStore } from '@/stores/toasts'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
 
 const route = useRoute()
 const ui = useUiStore()
+const toast = useToastStore()
 const auth = useAuthStore()
 const notifications = useNotificationsStore()
 const unviewedOrders = useUnviewedOrdersStore()
@@ -63,6 +66,9 @@ const isBlank = computed(() => route.meta.layout === 'blank')
       <RouterView />
     </main>
   </div>
+
+  <!-- Outside the layout switch so feedback also shows on blank-layout routes. -->
+  <ToastStack :toasts="toast.toasts" @dismiss="toast.dismiss" @action="toast.runAction" />
 </template>
 
 <style scoped lang="scss">

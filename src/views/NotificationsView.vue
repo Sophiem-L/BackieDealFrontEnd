@@ -5,10 +5,12 @@ import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
 const notifications = useNotificationsStore()
+const toast = useToastStore()
 const activeTab = ref('all')
 
 const tabs = [
@@ -51,8 +53,23 @@ function iconPaths(category) {
   return ICON_PATHS[category] || FALLBACK_ICON
 }
 
+async function markAllRead() {
+  const count = notifications.unreadCount
+  try {
+    await notifications.markAllRead(auth.accessToken)
+    toast.updated('Notifications marked as read', `${count} ${count === 1 ? 'notification was' : 'notifications were'} marked as read.`)
+  } catch (err) {
+    toast.error('Could not mark notifications as read', err?.message || 'Please try again.')
+  }
+}
+
 async function openNotification(item) {
-  await notifications.markRead(item, auth.accessToken)
+  try {
+    await notifications.markRead(item, auth.accessToken)
+  } catch (err) {
+    toast.error('Could not mark notification as read', err?.message || 'Please try again.')
+    return
+  }
   const data = item.data || {}
   if (item.category === 'orders' && data.order_id) router.push({ name: 'order-detail', params: { id: data.order_id } })
   if (item.category.includes('stock') && data.product_id) router.push({ name: 'stock-detail', params: { id: data.product_id } })
@@ -89,7 +106,7 @@ onMounted(() => notifications.initialize(auth.accessToken, auth.user?.id))
               variant="ghost"
               size="sm"
               :disabled="!notifications.unreadCount"
-              @click="notifications.markAllRead(auth.accessToken)"
+              @click="markAllRead"
             >
               <template #icon>
                 <svg viewBox="0 0 24 24" fill="none">

@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { Save, Trash2 } from '@lucide/vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 import {
   createShippingMethod,
   deleteShippingMethod,
@@ -15,11 +16,11 @@ import {
 import SettingsShell from '@/views/settings/SettingsShell.vue'
 
 const auth = useAuthStore()
+const toast = useToastStore()
 const fallback = JSON.parse(JSON.stringify(FALLBACK_SETTINGS.shipping))
 const initialState = ref(JSON.parse(JSON.stringify(fallback)))
 const form = reactive(JSON.parse(JSON.stringify(fallback)))
 const saving = ref(false)
-const toast = ref('')
 const loadError = ref('')
 const methods = ref([])
 const methodsLoading = ref(true)
@@ -62,20 +63,18 @@ async function save() {
     const remote = await saveSettingsSection('shipping', form, auth.accessToken)
     Object.assign(form, JSON.parse(JSON.stringify(remote)))
     Object.assign(initialState.value, JSON.parse(JSON.stringify(remote)))
-    toast.value = 'Shipping settings saved.'
+    toast.updated('Shipping settings saved', 'Your shipping settings were saved.')
   } catch (error) {
-    toast.value = 'Unable to save shipping settings right now.'
+    toast.error('Could not save shipping settings', error?.message || 'Please try again.')
     console.error(error)
   } finally {
     saving.value = false
-    setTimeout(() => (toast.value = ''), 2200)
   }
 }
 
 function discard() {
   Object.assign(form, JSON.parse(JSON.stringify(initialState.value)))
-  toast.value = 'Changes discarded.'
-  setTimeout(() => (toast.value = ''), 1400)
+  toast.info('Changes discarded')
 }
 
 function addZone() {
@@ -125,14 +124,14 @@ async function saveMethod(method) {
     const saved = await updateShippingMethod(method.id, method, auth.accessToken)
     const index = methods.value.findIndex((item) => item.id === method.id)
     if (index >= 0) methods.value[index] = saved
-    toast.value = 'Checkout shipping method saved.'
+    toast.updated('Shipping method saved', `"${method.name}" was updated.`)
   } catch (error) {
     const errors = validationMessages(error)
     if (Object.keys(errors).length) methodErrors.value = { ...methodErrors.value, [method.id]: errors }
     else methodsError.value = error.message || 'Unable to save shipping method.'
+    toast.error('Could not save shipping method', error?.message || 'Please try again.')
   } finally {
     savingMethodId.value = null
-    setTimeout(() => (toast.value = ''), 2500)
   }
 }
 
@@ -142,6 +141,7 @@ async function addMethod() {
   createError.value = ''
   try {
     const created = await createShippingMethod({ ...newMethod, code }, auth.accessToken)
+    const createdName = newMethod.name
     methods.value.push(created)
     Object.assign(newMethod, {
       name: '', code: '', description: '', base_price: 0, price_per_kg: null,
@@ -149,11 +149,12 @@ async function addMethod() {
       max_delivery_days: null, is_active: true, type: 'courier', sort_order: methods.value.length,
     })
     showMethodForm.value = false
-    toast.value = 'Checkout shipping method added.'
+    toast.success('Shipping method added', `"${createdName}" is now available at checkout.`)
   } catch (error) {
     const errors = validationMessages(error)
     if (Object.keys(errors).length) createErrors.value = errors
     else createError.value = error.message || 'Unable to add shipping method.'
+    toast.error('Could not add shipping method', error?.message || 'Please try again.')
   }
 }
 
@@ -162,9 +163,10 @@ async function removeMethod(method) {
   try {
     await deleteShippingMethod(method.id, auth.accessToken)
     methods.value = methods.value.filter((item) => item.id !== method.id)
-    toast.value = 'Shipping method removed from checkout.'
+    toast.deleted('Shipping method removed', `"${method.name}" was removed from checkout.`)
   } catch (error) {
     methodsError.value = error.message || 'Unable to remove shipping method.'
+    toast.error('Could not remove shipping method', error?.message || 'Please try again.')
   }
 }
 </script>
@@ -227,8 +229,6 @@ async function removeMethod(method) {
         <div class="method-form__actions"><BaseButton type="submit" variant="primary">Create method</BaseButton></div>
       </form>
     </section>
-
-    <div v-if="toast" class="settings-toast" role="status">{{ toast }}</div>
   </SettingsShell>
 </template>
 
@@ -539,7 +539,6 @@ th {
 .settings-shipping .spinner { width: 15px; height: 15px; border: 2px solid var(--border-strong); border-top-color: rgb(var(--accent-rgb)); border-radius: 50%; animation: shipping-spin 700ms linear infinite; }
 .settings-shipping .settings-error { margin: 0 0 0.75rem; padding: 0.7rem 0.8rem; border: 1px solid var(--danger-border); border-radius: 8px; background: var(--danger-bg); color: var(--danger); font-size: 0.78rem; }
 .settings-shipping .example-box { background: rgb(var(--accent-rgb) / 0.06); border-color: var(--border); }
-.settings-shipping .settings-toast { z-index: 30; }
 .settings-shipping .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @keyframes shipping-spin { to { transform: rotate(360deg); } }
@@ -601,19 +600,6 @@ th {
   .settings-shipping .row-actions { justify-content: flex-start; }
   .settings-shipping .field-grid { grid-template-columns: minmax(0, 1fr); }
   .settings-shipping .field--wide { grid-column: auto; }
-}
-
-.settings-toast {
-  position: fixed;
-  right: 1.2rem;
-  bottom: 1.2rem;
-  background: rgba(27, 31, 37, 0.95);
-  color: var(--text-strong);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  padding: 0.75rem 0.9rem;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.24);
-  font-size: 0.8rem;
 }
 
 @media (max-width: 640px) {

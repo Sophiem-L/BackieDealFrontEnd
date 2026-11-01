@@ -15,11 +15,13 @@ import { apiFetch } from '@/services/api'
 import { downloadCsv, downloadJson } from '@/services/tableExport'
 import { initialsFrom } from '@/lib/identity'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 import { useUnviewedOrdersStore } from '@/stores/unviewedOrders'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const toast = useToastStore()
 const unviewedOrders = useUnviewedOrdersStore()
 
 /* ---------------------------------------------------------------------------
@@ -491,8 +493,14 @@ async function deleteSelected() {
 
     if (failed.length) {
       const reason = failed[0].reason?.message || 'Unknown error'
-      window.alert(
-        `${failed.length} of ${ids.length} orders could not be deleted.\nFirst error: ${reason}`,
+      toast.error(
+        'Could not delete some orders',
+        `${failed.length} of ${ids.length} orders were not deleted. First error: ${reason}`,
+      )
+    } else {
+      toast.deleted(
+        ids.length === 1 ? 'Order deleted' : `${ids.length} orders deleted`,
+        ids.length === 1 ? 'The order was removed.' : 'The selected orders were removed.',
       )
     }
   } finally {
@@ -511,10 +519,11 @@ async function deleteOrder(order) {
       method: 'DELETE',
       token: auth.accessToken,
     })
+    toast.deleted('Order deleted', `Order ${order.reference} was removed.`)
     // Refetch so the page backfills from the server and the counts stay right.
     await loadOrders()
   } catch (err) {
-    window.alert(err.message || 'Could not delete this order. Please try again.')
+    toast.error('Could not delete order', err?.message || 'Please try again.')
   } finally {
     deleting.value = ''
   }

@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import ToastStack from '@/components/ToastStack.vue'
 import {
   Select,
   SelectContent,
@@ -15,10 +14,12 @@ import { FORM_SELECT } from '@/lib/selectPresets'
 import { fetchStockCatalog, createBulkStockMovement } from '@/services/stock'
 import { fetchSerials, lookupSerial } from '@/services/serials'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 // `tone` picks the dot colour from the theme tokens (see .type-dot in the
 // styles); the same value-to-tone mapping drives the badges on the detail page.
@@ -34,7 +35,6 @@ const adjustmentTypes = [
 const product = ref(null)
 const submitting = ref(false)
 const submitError = ref('')
-const toasts = ref([])
 const drawer = reactive({
   open: false,
   variantId: null,
@@ -192,14 +192,6 @@ const quantityIsValid = computed(() => {
     return getFilledSerialCount(item) === getRequiredSerials(item)
   })
 })
-
-function pushToast(title, message = '', type = 'success') {
-  const toast = { id: Date.now() + Math.random(), title, message, type }
-  toasts.value.push(toast)
-  setTimeout(() => {
-    toasts.value = toasts.value.filter((item) => item.id !== toast.id)
-  }, 5000)
-}
 
 function selectAdjustmentType(type) {
   const nextIsIncrease = isIncreaseAdjustment(type.value)
@@ -600,7 +592,7 @@ async function complete() {
     })
 
     await createBulkStockMovement({ items: payload }, auth.accessToken)
-    pushToast('Stock adjustment saved', 'Inventory updated successfully.', 'success')
+    toast.success('Stock adjustment saved', `"${product.value.name}" inventory was updated.`)
     router.push({ name: 'stock-detail', params: { id: product.value.id }, query: { refresh: Date.now() } })
   } catch (err) {
     // Laravel keys row errors as `items.0.serial_numbers`, so take the first
@@ -608,7 +600,7 @@ async function complete() {
     const fieldError = Object.values(err?.errors ?? {}).flat()[0]
     const message = fieldError || err?.message || 'Unable to save stock adjustment. Please try again.'
     submitError.value = message
-    pushToast('Stock adjustment failed', message, 'error')
+    toast.error('Could not save stock adjustment', message)
   } finally {
     submitting.value = false
   }
@@ -1063,8 +1055,6 @@ watch(
           </footer>
         </div>
       </aside>
-
-      <ToastStack :toasts="toasts" @dismiss="toasts = toasts.filter((toast) => toast.id !== $event)" />
     </div>
   </div>
 </template>

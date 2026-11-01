@@ -7,9 +7,11 @@ import ToggleSwitch from '@/components/ToggleSwitch.vue'
 import { apiFetch } from '@/services/api'
 import { ACCEPT_ATTR, uploadImage, validateImageFile } from '@/services/media'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const form = reactive({
   name: '',
@@ -64,10 +66,12 @@ async function save() {
       },
       token: auth.accessToken,
     })
+    toast.success('Category created', `"${form.name}" was added.`)
     router.push({ name: 'categories' })
   } catch (err) {
     const fieldError = Object.values(err.errors ?? {})[0]
     saveError.value = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to create this category.'
+    toast.error('Could not create category', saveError.value)
   } finally {
     saving.value = false
   }

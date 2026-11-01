@@ -15,9 +15,11 @@ import { apiFetch } from '@/services/api'
 import { deriveStockStatus, fetchStockSummary } from '@/services/stock'
 import { downloadCsv, downloadJson } from '@/services/tableExport'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const PER_PAGE = 10
 // `per_page` is capped at 200 by IndexProductsRequest; export walks pages at
@@ -416,6 +418,7 @@ async function duplicateProduct(product) {
           token: auth.accessToken,
           body: buildCopyBody(detail, attempt),
         })
+        toast.success('Product duplicated', `A copy of "${product.name}" was added.`)
         invalidateStatusCache()
         await Promise.all([loadProducts(), loadSummary()])
         return
@@ -426,7 +429,7 @@ async function duplicateProduct(product) {
     }
     throw lastError ?? new Error('Unable to duplicate this product.')
   } catch (err) {
-    window.alert(err.message || 'Unable to duplicate this product.')
+    toast.error('Could not duplicate product', err?.message || 'Please try again.')
   } finally {
     duplicatingId.value = null
   }
@@ -439,6 +442,7 @@ async function deleteProduct(product) {
       method: 'DELETE',
       token: auth.accessToken,
     })
+    toast.deleted('Product deleted', `"${product.name}" was removed.`)
     invalidateStatusCache()
     // If we just removed the last row on a page past the first, step back.
     if (products.value.length === 1 && page.value > 1) {
@@ -448,7 +452,7 @@ async function deleteProduct(product) {
     }
     loadSummary()
   } catch (err) {
-    window.alert(err.message || 'Unable to delete this product.')
+    toast.error('Could not delete product', err?.message || 'Please try again.')
   }
 }
 

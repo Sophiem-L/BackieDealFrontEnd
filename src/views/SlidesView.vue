@@ -5,9 +5,11 @@ import AppHeader from '@/components/AppHeader.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { deleteSlide as removeSlide, fetchSlides, saveSlideOrder } from '@/services/slides'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const slides = ref([])
 const loading = ref(false)
@@ -83,9 +85,11 @@ async function onDrop(index) {
   error.value = ''
   try {
     slides.value = await saveSlideOrder(next, auth.accessToken)
+    toast.updated('Slide order saved')
   } catch (err) {
     slides.value = previous
     error.value = err.message || 'Could not save the new order.'
+    toast.error('Could not save slide order', error.value)
   } finally {
     savingOrder.value = false
   }
@@ -111,8 +115,10 @@ async function deleteSlide(slide) {
   try {
     await removeSlide(slide.id, auth.accessToken)
     slides.value = slides.value.filter((item) => item.id !== slide.id)
+    toast.deleted('Slide deleted', `"${slide.title}" was removed.`)
   } catch (err) {
     error.value = err.message || 'Could not delete the slide.'
+    toast.error('Could not delete slide', error.value)
   } finally {
     deletingId.value = null
   }

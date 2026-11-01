@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import OrderDetailView from '@/views/OrderDetailView.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 vi.mock('@/services/api', () => ({
   apiFetch: vi.fn(),
@@ -158,6 +159,83 @@ describe('OrderDetailView coupon', () => {
 
     expect(wrapper.find('.product__promo').text()).toContain('VIP')
     expect(wrapper.find('.product__promo').text()).toContain('$1.70')
+  })
+})
+
+describe('OrderDetailView toasts', () => {
+  let confirmSpy
+
+  // GET loads the order; the PATCH is whatever the test passes in.
+  async function mountLoaded(patch) {
+    apiFetch.mockImplementation((path, options) =>
+      options?.method === 'PATCH' ? patch() : Promise.resolve({ data: order({ status: 'pending' }) }),
+    )
+    const wrapper = mount(OrderDetailView, { global: { stubs } })
+    await flushPromises()
+    return wrapper
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore().accessToken = 'test-token'
+    confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  })
+
+  afterEach(() => confirmSpy.mockRestore())
+
+  it('toasts success after a status change is saved, before returning to the list', async () => {
+    const wrapper = await mountLoaded(() =>
+      Promise.resolve({ data: { ...order({ status: 'pending' }), status: 'completed' } }),
+    )
+    wrapper.vm.selectStatus('completed')
+    let toastsAtRedirect
+    push.mockImplementationOnce(() => {
+      toastsAtRedirect = useToastStore().toasts.length
+    })
+
+    await wrapper.vm.editOrder()
+
+    expect(push).toHaveBeenCalledWith({ name: 'orders' })
+    expect(toastsAtRedirect).toBe(1)
+    expect(useToastStore().toasts[0]).toMatchObject({ type: 'update', title: 'Order updated' })
+  })
+
+  it('toasts the failure and stays on the page when the status change is rejected', async () => {
+    const wrapper = await mountLoaded(() => Promise.reject(new Error('Order is locked')))
+    wrapper.vm.selectStatus('completed')
+
+    await wrapper.vm.editOrder()
+
+    expect(push).not.toHaveBeenCalled()
+    expect(useToastStore().toasts[0]).toMatchObject({
+      type: 'error',
+      title: 'Could not update order',
+      message: 'Order is locked',
+    })
+  })
+
+  it('toasts success after the order is marked as paid', async () => {
+    const wrapper = await mountLoaded(() =>
+      Promise.resolve({ data: { ...order({ status: 'pending' }), payment: { method: 'cod', status: 'paid' } } }),
+    )
+
+    await wrapper.vm.markAsPaid()
+
+    expect(useToastStore().toasts).toHaveLength(1)
+    expect(useToastStore().toasts[0]).toMatchObject({ type: 'update', title: 'Payment recorded' })
+  })
+
+  it('toasts the failure when recording the payment is rejected', async () => {
+    const wrapper = await mountLoaded(() => Promise.reject(new Error('Gateway unavailable')))
+
+    await wrapper.vm.markAsPaid()
+
+    expect(useToastStore().toasts[0]).toMatchObject({
+      type: 'error',
+      title: 'Could not record payment',
+      message: 'Gateway unavailable',
+    })
   })
 })
 

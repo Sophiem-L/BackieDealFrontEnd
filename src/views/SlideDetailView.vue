@@ -6,10 +6,12 @@ import BaseButton from '@/components/BaseButton.vue'
 import SlideSequence from '@/components/slides/SlideSequence.vue'
 import { deleteSlide as removeSlide, fetchSlide, transitionLabel } from '@/services/slides'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const slide = ref(null)
 const loading = ref(true)
@@ -63,9 +65,11 @@ async function deleteSlide() {
   error.value = ''
   try {
     await removeSlide(route.params.id, auth.accessToken)
+    toast.deleted('Slide deleted', `"${slide.value.title}" was removed.`)
     router.push('/slides')
   } catch (err) {
     error.value = err.message || 'Could not delete the slide.'
+    toast.error('Could not delete slide', error.value)
   }
 }
 

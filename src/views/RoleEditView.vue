@@ -119,10 +119,12 @@ import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const roleId = route.params.id
 
@@ -242,10 +244,12 @@ async function handleUpdate() {
         permissions: selectedPermissionIds,
       },
     })
+    toast.updated('Role updated', `"${form.value.name.trim()}" was saved.`)
     router.push('/roles')
   } catch (err) {
     const fieldError = Object.values(err.errors ?? {})[0]
     errors.value.general = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to update role.'
+    toast.error('Could not update role', errors.value.general)
   } finally {
     loading.value = false
   }

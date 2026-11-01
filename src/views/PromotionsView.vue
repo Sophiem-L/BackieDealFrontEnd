@@ -7,11 +7,13 @@ import PromotionCountdown from '@/components/promotions/PromotionCountdown.vue'
 import { useNow } from '@/lib/countdown'
 import { deletePromotion as removePromotion, fetchPromotions, liveStatus } from '@/services/promotions'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 // This screen still reads mock data, but its create/edit/delete controls
 // are gated on the real permissions the API reports.
 const auth = useAuthStore()
+const toast = useToastStore()
 const promotions = ref([])
 const loading = ref(false)
 const error = ref('')
@@ -95,8 +97,10 @@ async function deletePromotion(promo) {
   try {
     await removePromotion(promo.id, auth.accessToken)
     promotions.value = promotions.value.filter((item) => item.id !== promo.id)
+    toast.deleted('Promotion deleted', `"${promo.name}" was removed.`)
   } catch (err) {
     error.value = err.message || 'Could not delete the promotion.'
+    toast.error('Could not delete promotion', error.value)
   } finally {
     deletingId.value = null
   }

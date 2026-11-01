@@ -112,9 +112,11 @@ import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import { apiFetch } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toasts'
 
 const router = useRouter()
 const auth = useAuthStore()
+const toast = useToastStore()
 
 const form = ref({
   name: '',
@@ -218,10 +220,13 @@ async function handleSave() {
         permissions: selectedPermissionIds,
       },
     })
-    router.push('/security/roles')
+    toast.success('Role created', `"${form.value.name.trim()}" was added.`)
+    // There is no /security/roles route, so the old target landed on a blank page.
+    router.push('/roles')
   } catch (err) {
     const fieldError = Object.values(err.errors ?? {})[0]
     errors.value.general = (Array.isArray(fieldError) ? fieldError[0] : fieldError) || err.message || 'Unable to create role.'
+    toast.error('Could not create role', errors.value.general)
   } finally {
     loading.value = false
   }
