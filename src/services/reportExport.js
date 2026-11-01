@@ -50,24 +50,9 @@ function toCell(column, raw, base) {
   return { ...cell, type: String, value: String(raw) }
 }
 
-/**
- * Write the given rows to a styled .xlsx file and trigger the browser download.
- *
- * @param {Object} options
- * @param {string} options.sheet    Worksheet name.
- * @param {ReportColumn[]} options.columns
- * @param {any[]}  options.rows
- * @param {string} options.filename Including the .xlsx extension.
- */
-export async function exportReport({ sheet, columns, rows, filename }) {
-  if (!rows || rows.length === 0) {
-    window.alert('There is nothing to export for the current filters.')
-    return
-  }
-
-  // Loaded on demand so the sheet writer stays out of the main bundle.
-  const { default: writeXlsxFile } = await import('write-excel-file/browser')
-
+// One sheet's cells: a styled header, zebra-striped rows and, when a column asked
+// for one, a bold totals row.
+function buildSheetData(columns, rows) {
   const header = columns.map((column) => ({
     value: column.label,
     type: String,
@@ -121,15 +106,50 @@ export async function exportReport({ sheet, columns, rows, filename }) {
     )
   }
 
+  return data
+}
+
+/**
+ * Write the given rows to a styled .xlsx file and trigger the browser download.
+ *
+ * @param {Object} options
+ * @param {string} options.sheet    Worksheet name.
+ * @param {ReportColumn[]} options.columns
+ * @param {any[]}  options.rows
+ * @param {string} options.filename Including the .xlsx extension.
+ * @param {{sheet: string, columns: ReportColumn[], rows: any[]}[]} [options.extraSheets]
+ *   Further tables, each on its own sheet after the main one — a ranking beside
+ *   the period table, say. One with no rows is left out rather than written empty.
+ */
+export async function exportReport({ sheet, columns, rows, filename, extraSheets = [] }) {
+  if (!rows || rows.length === 0) {
+    window.alert('There is nothing to export for the current filters.')
+    return
+  }
+
+  // Loaded on demand so the sheet writer stays out of the main bundle.
+  const { default: writeXlsxFile } = await import('write-excel-file/browser')
+
+  const style = { fontFamily: 'Calibri', fontSize: 11 }
+  const layout = (sheetColumns) => ({
+    columns: sheetColumns.map((column) => ({ width: column.width })),
+    // Keep the header band visible while scrolling long exports.
+    stickyRowsCount: 1,
+  })
+  const extras = extraSheets.filter((extra) => extra.rows?.length > 0)
+
+  if (extras.length === 0) {
+    await writeXlsxFile(buildSheetData(columns, rows), { sheet, ...layout(columns) }, style).toFile(filename)
+    return
+  }
+
   await writeXlsxFile(
-    data,
-    {
-      sheet,
-      columns: columns.map((column) => ({ width: column.width })),
-      // Keep the header band visible while scrolling long exports.
-      stickyRowsCount: 1,
-    },
-    { fontFamily: 'Calibri', fontSize: 11 },
+    [{ sheet, columns, rows }, ...extras].map((entry) => ({
+      sheet: entry.sheet,
+      data: buildSheetData(entry.columns, entry.rows),
+      ...layout(entry.columns),
+    })),
+    style,
   ).toFile(filename)
 }
 

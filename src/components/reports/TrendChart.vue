@@ -2,7 +2,8 @@
 import { computed, useId } from 'vue'
 
 const props = defineProps({
-  // [{ label: 'Jan', value: 96 }, …]
+  // [{ label: 'Jan', value: 96, title?: 'January 2026' }, …]. `label` is the short
+  // axis text; `title`, when given, is the longer heading used in the tooltip.
   points: { type: Array, required: true },
   color: { type: String, default: '#f4c10f' },
   // Appended to each tooltip, e.g. "Jan · 96 orders".
@@ -39,6 +40,10 @@ const plotted = computed(() => {
   }))
 })
 
+// Thirty daily points would print thirty overlapping labels, so a busy axis shows
+// every nth one. The tooltip on every dot still names its point in full.
+const axisStep = computed(() => Math.max(1, Math.ceil(props.points.length / 10)))
+
 const linePath = computed(() =>
   plotted.value.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.nx} ${p.ny}`).join(' '),
 )
@@ -68,20 +73,22 @@ const areaPath = computed(() => `${linePath.value} L 100 100 L 0 100 Z`)
       </svg>
       <div class="trend__dots">
         <span
-          v-for="p in plotted"
-          :key="p.label"
+          v-for="(p, index) in plotted"
+          :key="index"
           class="trend__dot"
           tabindex="0"
           :style="{ left: p.nx + '%', top: p.ny + '%', borderColor: color }"
         >
           <span class="trend__tip" :class="p.edge ? `trend__tip--${p.edge}` : null">
-            {{ p.label }} · {{ p.value.toLocaleString() }}{{ unit ? ` ${unit}` : '' }}
+            {{ p.title ?? p.label }} · {{ p.value.toLocaleString() }}{{ unit ? ` ${unit}` : '' }}
           </span>
         </span>
       </div>
     </div>
     <div class="trend__axis">
-      <span v-for="p in plotted" :key="p.label" :style="{ left: p.nx + '%' }">{{ p.label }}</span>
+      <template v-for="(p, index) in plotted" :key="index">
+        <span v-if="index % axisStep === 0" :style="{ left: p.nx + '%' }">{{ p.label }}</span>
+      </template>
     </div>
   </div>
 </template>

@@ -12,7 +12,7 @@ const auth = useAuthStore()
 const notificationStore = useNotificationsStore()
 
 // Reusable top bar. Any page renders <AppHeader title="..." /> to get the
-// search field, notifications and the profile chip that links to /profile.
+// theme toggle, notifications and the profile chip that links to /profile.
 //
 // userName/userRole default to empty, not to a placeholder admin: no page
 // passes them, so a baked-in default would show every signed-in user the same
@@ -51,16 +51,6 @@ const initials = computed(() => initialsFrom(displayName.value) || '?')
     </div>
 
     <div class="header__actions">
-      <label class="search">
-        <span class="search__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.2-3.2" stroke-linecap="round" />
-          </svg>
-        </span>
-        <input type="search" placeholder="Search everything..." />
-      </label>
-
       <ThemeToggle />
 
       <RouterLink to="/notifications" class="bell" :aria-label="`Notifications${notificationStore.unreadCount ? `, ${notificationStore.unreadCount} unread` : ''}`">
@@ -145,66 +135,13 @@ const initials = computed(() => initialsFrom(displayName.value) || '?')
   &__actions {
     display: flex;
     align-items: center;
-    // Tightened from 1rem to keep the row compact now that the theme toggle
-    // sits alongside the search field, bell and profile chip.
     gap: 0.75rem;
   }
 }
 
 @media (max-width: 640px) {
-  .search {
-    display: none;
-  }
   .profile__meta {
     display: none !important;
-  }
-}
-
-.search {
-  display: flex;
-  align-items: center;
-  width: 280px;
-  max-width: 32vw;
-  background: var(--bg);
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 0 0.85rem;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-
-  &:focus-within {
-    background: var(--surface);
-    border-color: var(--border);
-  }
-
-  &__icon {
-    display: inline-flex;
-    color: var(--text-subtle);
-
-    svg {
-      width: 16px;
-      height: 16px;
-      stroke: currentColor;
-      stroke-width: 1.8;
-    }
-  }
-
-  input {
-    flex: 1;
-    min-width: 0;
-    border: none;
-    background: transparent;
-    padding: 0.5rem 0.6rem;
-    font-size: 0.85rem;
-    font-family: inherit;
-    color: var(--text-strong);
-
-    &::placeholder {
-      color: var(--text-subtle);
-    }
-
-    &:focus {
-      outline: none;
-    }
   }
 }
 

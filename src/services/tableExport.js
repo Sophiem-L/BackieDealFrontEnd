@@ -43,7 +43,7 @@ export function toCsv(rows, columns) {
 
 // Hands the blob to the browser as a download, then releases the object URL —
 // without the revoke the blob is held for the lifetime of the document.
-function downloadBlob(blob, filename) {
+export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url

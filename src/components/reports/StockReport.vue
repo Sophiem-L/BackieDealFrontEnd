@@ -28,6 +28,16 @@ const allRows = ref([])
 const query = ref('')
 const status = ref('all')
 const category = ref('All Categories')
+const sort = ref('restock')
+
+// How the table is ranked. The default puts what needs restocking first; the
+// others rank by money tied up, by quantity, or alphabetically.
+const SORT_OPTIONS = [
+  { value: 'restock', label: 'Restock priority' },
+  { value: 'value', label: 'Stock value: high to low' },
+  { value: 'units', label: 'Units on hand: high to low' },
+  { value: 'name', label: 'Name: A to Z' },
+]
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All Stock' },
@@ -63,8 +73,17 @@ const categories = computed(() => [
   ...new Set(allRows.value.map((row) => row.category)),
 ])
 
+const COMPARATORS = {
+  restock: (a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status],
+  // A product with no cost price has no known value, so it ranks below one worth $0.
+  value: (a, b) => (b.stockValue ?? -1) - (a.stockValue ?? -1),
+  units: (a, b) => b.onHand - a.onHand,
+  name: () => 0,
+}
+
 const rows = computed(() => {
   const needle = query.value.trim().toLowerCase()
+  const rank = COMPARATORS[sort.value]
 
   return allRows.value
     .filter((row) => status.value === 'all' || row.status === status.value)
@@ -75,10 +94,7 @@ const rows = computed(() => {
         row.name.toLowerCase().includes(needle) ||
         row.sku.toLowerCase().includes(needle),
     )
-    .sort(
-      (a, b) =>
-        STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.name.localeCompare(b.name),
-    )
+    .sort((a, b) => rank(a, b) || a.name.localeCompare(b.name))
 })
 
 const summary = computed(() => ({
@@ -94,6 +110,38 @@ const summary = computed(() => ({
 const hasFilters = computed(() =>
   Boolean(query.value.trim() || status.value !== 'all' || category.value !== 'All Categories'),
 )
+
+// The filters in force, printed under the PDF heading so a filtered export says so.
+const pdfSubtitle = computed(() => {
+  const parts = [
+    `Status: ${STATUS_OPTIONS.find((option) => option.value === status.value).label}`,
+    `Category: ${category.value}`,
+    `Sorted by: ${SORT_OPTIONS.find((option) => option.value === sort.value).label}`,
+  ]
+  if (query.value.trim()) parts.push(`Search: "${query.value.trim()}"`)
+  return parts.join(' · ')
+})
+
+const pdfSummary = computed(() => [
+  { label: 'Products', value: summary.value.products.toLocaleString() },
+  { label: 'Units on hand', value: summary.value.units.toLocaleString() },
+  { label: 'Stock value (at cost)', value: currency.format(summary.value.value) },
+  { label: 'Low stock', value: summary.value.low.toLocaleString() },
+  { label: 'Out of stock', value: summary.value.out.toLocaleString() },
+])
+
+const jsonDocument = computed(() => ({
+  report: 'Stock',
+  filters: { status: status.value, category: category.value, search: query.value.trim(), sort: sort.value },
+  summary: {
+    products: summary.value.products,
+    units_on_hand: summary.value.units,
+    stock_value_at_cost: summary.value.value,
+    products_without_cost_price: summary.value.uncosted,
+    low_stock: summary.value.low,
+    out_of_stock: summary.value.out,
+  },
+}))
 
 // Same meter the Inventory page draws: full at twice the alert level, so a
 // product sitting on its threshold reads half full. No alert level set means
@@ -188,12 +236,35 @@ const EXPORT_COLUMNS = [
         </SelectContent>
       </Select>
 
+      <Select v-model="sort">
+        <SelectTrigger :class="TOOLBAR_SELECT.trigger" aria-label="Rank products by">
+          <svg :class="TOOLBAR_SELECT.icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent :class="TOOLBAR_SELECT.content">
+          <SelectItem
+            v-for="option in SORT_OPTIONS"
+            :key="option.value"
+            :value="option.value"
+            :class="TOOLBAR_SELECT.item"
+          >
+            {{ option.label }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+
       <ReportExportMenu
         sheet="Stock"
         tab="stock"
         :suffix="status === 'all' ? '' : status"
         :rows="rows"
         :columns="EXPORT_COLUMNS"
+        pdf-title="Stock Report"
+        :pdf-subtitle="pdfSubtitle"
+        :summary="pdfSummary"
+        :json-document="jsonDocument"
       />
     </template>
 

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  fetchCustomerOrdersReport,
   fetchSalesReport,
   fetchSoldProductsReport,
   fetchStockReport,
+  normalizeCustomerOrdersPayload,
   normalizeSalesReportPayload,
   normalizeSoldProductsPayload,
   normalizeStockReportRow,
@@ -33,6 +35,88 @@ describe('normalizeSalesReportPayload', () => {
     expect(payload.chart[0].profit).toBe(500.5)
     expect(payload.topProducts[0].units).toBe(3)
     expect(payload.table[0].dateRange).toBe('2026-08-01 - 2026-08-07')
+  })
+
+  it('keeps a missing comparison as null instead of turning it into 0%', () => {
+    const payload = normalizeSalesReportPayload({
+      summary: { revenue: 10, revenue_change: null, margin_change: null },
+      table: [{ period: 'W35', revenue: 10, revenue_change: null }],
+    })
+
+    expect(payload.summary.revenueChange).toBeNull()
+    expect(payload.summary.profitChange).toBeNull()
+    expect(payload.summary.marginChange).toBeNull()
+    expect(payload.table[0].revenueChange).toBeNull()
+  })
+
+  it('carries the order counts, ranking and chart titles the dashboard shows', () => {
+    const payload = normalizeSalesReportPayload({
+      summary: { revenue: 600, orders: '4', average_order_value: '150', orders_change: '25' },
+      chart: [{ label: 'W35', title: 'Aug 25 – Aug 31', revenue: 600, profit: 200, orders: '4' }],
+      daily_breakdown: [{ label: 'Mon', revenue: 100, profit: 40, orders: '1' }],
+      top_products: [{ rank: '1', name: 'Laptop', units: 1, revenue: 300, share: '50' }],
+      table: [{ period: 'Aug 25 – Aug 31', date_range: 'a - b', orders: 4, revenue: 600, revenue_change: '12.5' }],
+      meta: { unit: 'week', timezone: 'Asia/Phnom_Penh', date_from: '2026-08-25', date_to: '2026-08-31' },
+    })
+
+    expect(payload.summary.orders).toBe(4)
+    expect(payload.summary.averageOrderValue).toBe(150)
+    expect(payload.summary.ordersChange).toBe(25)
+    expect(payload.chart[0]).toEqual({ label: 'W35', title: 'Aug 25 – Aug 31', revenue: 600, profit: 200, orders: 4 })
+    expect(payload.dailyBreakdown[0].orders).toBe(1)
+    expect(payload.topProducts[0]).toEqual({ rank: 1, name: 'Laptop', units: 1, revenue: 300, share: 50 })
+    expect(payload.table[0].revenueChange).toBe(12.5)
+    expect(payload.meta.unit).toBe('week')
+  })
+})
+
+describe('normalizeCustomerOrdersPayload', () => {
+  it('maps the period rows, revenue and the whole-range totals', () => {
+    const payload = normalizeCustomerOrdersPayload({
+      table: [
+        {
+          period: 'Oct 2026',
+          label: "Oct '26",
+          date_range: '2026-10-01 - 2026-10-31',
+          orders: '2',
+          uniqueCustomers: 2,
+          newCustomers: '2',
+          returningCustomers: 0,
+          avgItems: '1.5',
+          revenue: '160.5',
+        },
+      ],
+      totals: { orders: 3, unique_customers: 2, new_customers: 2, returning_customers: 0, revenue: '220' },
+      meta: { unit: 'month' },
+    })
+
+    expect(payload.rows[0]).toEqual({
+      period: 'Oct 2026',
+      label: "Oct '26",
+      dateRange: '2026-10-01 - 2026-10-31',
+      orders: 2,
+      uniqueCustomers: 2,
+      newCustomers: 2,
+      returningCustomers: 0,
+      avgItems: 1.5,
+      revenue: 160.5,
+    })
+    expect(payload.totals).toEqual({
+      orders: 3,
+      uniqueCustomers: 2,
+      newCustomers: 2,
+      returningCustomers: 0,
+      revenue: 220,
+    })
+    expect(payload.meta.unit).toBe('month')
+  })
+
+  it('falls back to empty rows and zero totals when the payload is missing', () => {
+    const payload = normalizeCustomerOrdersPayload(undefined)
+
+    expect(payload.rows).toEqual([])
+    expect(payload.totals.orders).toBe(0)
+    expect(payload.totals.uniqueCustomers).toBe(0)
   })
 })
 
@@ -177,7 +261,56 @@ describe('fetchSalesReport', () => {
     )
     expect(result.summary.revenue).toBe(10)
   })
+
+  it('sends the chosen date range with the preset', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: {} }),
+    })
+
+    await fetchSalesReport(
+      { granularity: 'monthly', date_from: '2026-10-01', date_to: '2026-10-15' },
+      'token-123',
+    )
+
+    const url = globalThis.fetch.mock.calls[0][0]
+    expect(url).toContain('preset=monthly')
+    expect(url).toContain('date_from=2026-10-01')
+    expect(url).toContain('date_to=2026-10-15')
+  })
 })
+
+describe('fetchCustomerOrdersReport', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('sends the chosen date range with the preset and the token', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: { table: [{ period: 'Oct 2026', orders: 2 }] } }),
+    })
+
+    const result = await fetchCustomerOrdersReport(
+      { granularity: 'weekly', date_from: '2026-10-01', date_to: '2026-10-15' },
+      'token-123',
+    )
+
+    const url = globalThis.fetch.mock.calls[0][0]
+    expect(url).toContain('/admin/reports/customer-orders?preset=weekly')
+    expect(url).toContain('date_from=2026-10-01')
+    expect(url).toContain('date_to=2026-10-15')
+    expect(globalThis.fetch.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer token-123' }),
+      }),
+    )
+    expect(result.rows[0].orders).toBe(2)
+  })
+})
+
 describe('normalizeStockReportRow', () => {
   it('maps an /admin/stock item and derives value and status', () => {
     const row = normalizeStockReportRow({

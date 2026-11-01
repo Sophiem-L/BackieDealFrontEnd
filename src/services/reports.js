@@ -1,10 +1,14 @@
 import { apiFetch } from '@/services/api'
 import { deriveStockStatus } from '@/services/stock'
 
-// Report API: Sales, Stock, Sold Products and Customer Orders are all live. The
-// Stock report reads the existing /admin/stock listing rather than a dedicated
-// report endpoint. The remaining report tabs have no production endpoint today
-// and keep reading mock data (see src/data/reports.js).
+// Report API: Sales, Stock and Customer Orders are all live. The Stock report
+// reads the existing /admin/stock listing rather than a dedicated report endpoint.
+// Money and percentages arrive as numbers or numeric strings; a comparison with
+// nothing to compare against arrives as null and stays null, so the page can show
+// a dash instead of a made-up "0%".
+
+const toNumber = (value) => Number(value ?? 0)
+const toNullableNumber = (value) => (value === null || value === undefined ? null : Number(value))
 
 const PRESET_BY_GRANULARITY = {
   daily: 'daily',
@@ -39,20 +43,32 @@ export function normalizeSoldProductsPayload(data) {
 
 /**
  * Normalise the customer-orders payload into the shape CustomerOrdersReport.vue
- * renders.
+ * renders. `totals` counts each customer once across the whole range, which
+ * summing the per-period rows cannot do.
  */
 export function normalizeCustomerOrdersPayload(data) {
   const table = Array.isArray(data?.table) ? data.table : []
+  const totals = data?.totals ?? {}
 
   return {
     rows: table.map((row) => ({
       period: row.period ?? 'Unknown',
-      orders: Number(row.orders ?? 0),
-      uniqueCustomers: Number(row.uniqueCustomers ?? 0),
-      newCustomers: Number(row.newCustomers ?? 0),
-      returningCustomers: Number(row.returningCustomers ?? 0),
-      avgItems: Number(row.avgItems ?? 0),
+      label: row.label ?? row.period ?? 'Unknown',
+      dateRange: row.date_range ?? '',
+      orders: toNumber(row.orders),
+      uniqueCustomers: toNumber(row.uniqueCustomers),
+      newCustomers: toNumber(row.newCustomers),
+      returningCustomers: toNumber(row.returningCustomers),
+      avgItems: toNumber(row.avgItems),
+      revenue: toNumber(row.revenue),
     })),
+    totals: {
+      orders: toNumber(totals.orders),
+      uniqueCustomers: toNumber(totals.unique_customers),
+      newCustomers: toNumber(totals.new_customers),
+      returningCustomers: toNumber(totals.returning_customers),
+      revenue: toNumber(totals.revenue),
+    },
     meta: data?.meta ?? {},
   }
 }
@@ -89,7 +105,7 @@ export async function fetchCustomerOrdersReport(
 
 export function normalizeSalesReportPayload(data) {
   const summary = data?.summary ?? {}
-  const number = (value) => Number(value ?? 0)
+  const number = toNumber
 
   return {
     summary: {
@@ -98,16 +114,20 @@ export function normalizeSalesReportPayload(data) {
       profit: number(summary.profit),
       margin: number(summary.margin),
       orders: number(summary.orders),
-      revenueChange: number(summary.revenue_change),
-      cogsChange: number(summary.cogs_change),
-      profitChange: number(summary.profit_change),
-      marginChange: number(summary.margin_change),
+      averageOrderValue: number(summary.average_order_value),
+      revenueChange: toNullableNumber(summary.revenue_change),
+      cogsChange: toNullableNumber(summary.cogs_change),
+      profitChange: toNullableNumber(summary.profit_change),
+      ordersChange: toNullableNumber(summary.orders_change),
+      marginChange: toNullableNumber(summary.margin_change),
     },
     chart: Array.isArray(data?.chart)
       ? data.chart.map((point) => ({
           label: point.label ?? '',
+          title: point.title ?? point.label ?? '',
           revenue: number(point.revenue),
           profit: number(point.profit),
+          orders: number(point.orders),
         }))
       : [],
     dailyBreakdown: Array.isArray(data?.daily_breakdown)
@@ -115,13 +135,16 @@ export function normalizeSalesReportPayload(data) {
           label: point.label ?? '',
           revenue: number(point.revenue),
           profit: number(point.profit),
+          orders: number(point.orders),
         }))
       : [],
     topProducts: Array.isArray(data?.top_products)
-      ? data.top_products.map((product) => ({
+      ? data.top_products.map((product, index) => ({
+          rank: Number(product.rank ?? index + 1),
           name: product.name ?? 'Unknown product',
           units: number(product.units),
           revenue: number(product.revenue),
+          share: number(product.share),
         }))
       : [],
     table: Array.isArray(data?.table)
@@ -133,6 +156,7 @@ export function normalizeSalesReportPayload(data) {
           cogs: number(row.cogs),
           profit: number(row.profit),
           margin: number(row.margin),
+          revenueChange: toNullableNumber(row.revenue_change),
         }))
       : [],
     meta: data?.meta ?? {},

@@ -1,30 +1,44 @@
 <script setup>
-// Three-format export for a report tab, matching the menu OrdersView gained.
+// Four-format export for a report tab: Excel, PDF, CSV and JSON.
 //
-// One component rather than six copies: the menu, the outside-click close, the
+// One component rather than one per tab: the menu, the outside-click close, the
 // empty guard and the failure alert are identical for every tab — only the rows
 // and the column config differ, and those are props.
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { exportReport, reportFileName } from '@/services/reportExport'
+import { exportReportPdf } from '@/services/reportPdf'
 import { downloadCsv, downloadJson } from '@/services/tableExport'
 
 const props = defineProps({
-  // Worksheet name, e.g. 'Sold Products'.
+  // Worksheet name, e.g. 'Sales'.
   sheet: { type: String, required: true },
-  // Filename slug, e.g. 'sold-products'.
+  // Filename slug, e.g. 'customer-orders'.
   tab: { type: String, required: true },
-  // Active granularity or filter, appended to the filename. Omitted by the tabs
-  // that have no period control.
+  // Active granularity, filter or date range, appended to the filename so exports
+  // taken under different settings don't overwrite each other.
   suffix: { type: String, default: '' },
   rows: { type: Array, required: true },
   // The reportExport column config — label, width, optional align/format/total,
   // and a `value` accessor — plus a `key` for the plain-text writers.
   columns: { type: Array, required: true },
+  // Heading and the filters in force, printed at the top of the PDF.
+  pdfTitle: { type: String, default: '' },
+  pdfSubtitle: { type: String, default: '' },
+  // Key figures printed above the PDF table: [{ label, value }] as display text.
+  summary: { type: Array, default: () => [] },
+  // Extra fields for the JSON file — totals, ranking, the filters — which then
+  // holds an object with the table under `rows` instead of a bare array.
+  jsonDocument: { type: Object, default: null },
+  // Further tables that belong with the report, e.g. a product ranking:
+  // [{ title, columns, rows }]. Each becomes a titled section of the PDF and its
+  // own sheet of the workbook; CSV and JSON stay a single table.
+  extraTables: { type: Array, default: () => [] },
 })
 
 const FORMATS = [
   { value: 'xlsx', label: 'Excel (.xlsx)' },
+  { value: 'pdf', label: 'PDF (.pdf)' },
   { value: 'csv', label: 'CSV (.csv)' },
   { value: 'json', label: 'JSON (.json)' },
 ]
@@ -71,15 +85,31 @@ async function run(format) {
         columns: props.columns,
         rows: props.rows,
         filename: reportFileName(props.tab, props.suffix),
+        extraSheets: props.extraTables.map((table) => ({
+          sheet: table.title,
+          columns: table.columns,
+          rows: table.rows,
+        })),
       })
     } else {
-      // Strip the .xlsx the shared namer appends so all three formats agree.
+      // Strip the .xlsx the shared namer appends so every format agrees.
       const base = reportFileName(props.tab, props.suffix).replace(/\.xlsx$/, '')
 
-      if (format === 'csv') {
+      if (format === 'pdf') {
+        await exportReportPdf({
+          title: props.pdfTitle || props.sheet,
+          subtitle: props.pdfSubtitle,
+          summary: props.summary,
+          columns: props.columns,
+          rows: props.rows,
+          sections: props.extraTables,
+          filename: `${base}.pdf`,
+        })
+      } else if (format === 'csv') {
         downloadCsv(toPlainRows(), props.columns, `${base}.csv`)
       } else {
-        downloadJson(toPlainRows(), `${base}.json`)
+        const plain = toPlainRows()
+        downloadJson(props.jsonDocument ? { ...props.jsonDocument, rows: plain } : plain, `${base}.json`)
       }
     }
   } catch (err) {

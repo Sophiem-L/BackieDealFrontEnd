@@ -5,14 +5,18 @@ import ReportTable from './ReportTable.vue'
 import GranularityTabs from './GranularityTabs.vue'
 import TrendChart from './TrendChart.vue'
 import ReportExportMenu from './ReportExportMenu.vue'
-import { fetchCustomerOrdersReport } from '@/services/reports'
+import ReportRangeFilter from './ReportRangeFilter.vue'
+import { fetchCustomerOrdersReport, normalizeCustomerOrdersPayload } from '@/services/reports'
+import { useReportRange } from '@/composables/useReportRange'
+import { currency } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+const range = useReportRange()
 const granularity = ref('monthly')
 const loading = ref(true)
 const error = ref('')
-const reportTable = ref([])
+const report = ref(normalizeCustomerOrdersPayload({}))
 
 const COLUMNS = [
   { key: 'period', label: 'Period' },
@@ -22,57 +26,101 @@ const COLUMNS = [
   { key: 'returningCustomers', label: 'Returning', align: 'right' },
   { key: 'split', label: 'New vs Returning' },
   { key: 'avgItems', label: 'Avg. Items / Order', align: 'right' },
+  { key: 'revenue', label: 'Revenue', align: 'right' },
 ]
 
-const rows = computed(() => reportTable.value)
+const rows = computed(() => report.value.rows)
 
-const points = computed(() => rows.value.map((row) => ({ label: row.period, value: row.orders })))
+// `label` is the short axis text; the longer period name shows in the tooltip.
+const points = computed(() =>
+  rows.value.map((row) => ({ label: row.label, title: row.period, value: row.orders })),
+)
 
-const totals = computed(() => {
-  const orders = rows.value.reduce((sum, row) => sum + row.orders, 0)
-  const newCustomers = rows.value.reduce((sum, row) => sum + row.newCustomers, 0)
-  const returning = rows.value.reduce((sum, row) => sum + row.returningCustomers, 0)
-  return { orders, newCustomers, returning }
-})
+// From the backend, not summed from the rows: a customer who ordered in three
+// periods is one customer, however many rows they appear in.
+const totals = computed(() => report.value.totals)
+
+function plural(count, noun) {
+  return `${count.toLocaleString()} ${noun}${count === 1 ? '' : 's'}`
+}
 
 function newPct(row) {
   const unique = row.uniqueCustomers
   return unique ? (row.newCustomers / unique) * 100 : 0
 }
 
+// Only the newest request may fill the page, so a slow earlier response for a
+// different period or range can't overwrite the one just chosen.
+let latestRequest = 0
+
 async function loadReport() {
+  const request = ++latestRequest
   loading.value = true
   error.value = ''
   try {
     const result = await fetchCustomerOrdersReport(
-      { granularity: granularity.value },
+      { granularity: granularity.value, ...(range.applied.value ?? {}) },
       auth.accessToken,
     )
-    reportTable.value = result.rows
+    if (request === latestRequest) report.value = result
   } catch (err) {
-    reportTable.value = []
-    error.value = err.message || 'Unable to load the report. Please try again.'
+    if (request === latestRequest) {
+      report.value = normalizeCustomerOrdersPayload({})
+      error.value = err.message || 'Unable to load the report. Please try again.'
+    }
   } finally {
-    loading.value = false
+    if (request === latestRequest) loading.value = false
   }
 }
 
-onMounted(() => {
-  loadReport()
-})
-
-watch(granularity, () => {
-  loadReport()
-})
+onMounted(loadReport)
+watch([granularity, range.key], loadReport)
 
 const EXPORT_COLUMNS = [
-  { key: 'period', label: 'Period', width: 20, value: (r) => r.period },
+  { key: 'period', label: 'Period', width: 22, value: (r) => r.period },
+  { key: 'dateRange', label: 'Date Range', width: 26, value: (r) => r.dateRange },
   { key: 'orders', label: 'Orders', width: 12, align: 'right', format: '#,##0', total: true, value: (r) => r.orders },
   { key: 'uniqueCustomers', label: 'Unique Customers', width: 20, align: 'right', format: '#,##0', total: true, value: (r) => r.uniqueCustomers },
   { key: 'newCustomers', label: 'New Customers', width: 18, align: 'right', format: '#,##0', total: true, value: (r) => r.newCustomers },
   { key: 'returningCustomers', label: 'Returning', width: 14, align: 'right', format: '#,##0', total: true, value: (r) => r.returningCustomers },
   { key: 'avgItems', label: 'Avg. Items / Order', width: 18, align: 'right', format: '0.0', value: (r) => r.avgItems },
+  { key: 'revenue', label: 'Revenue', width: 16, align: 'right', format: '$#,##0.00', total: true, value: (r) => r.revenue },
 ]
+
+const exportSuffix = computed(() =>
+  [granularity.value, range.suffix.value].filter(Boolean).join('-'),
+)
+
+const pdfSubtitle = computed(() => {
+  const { date_from: from, date_to: to } = report.value.meta
+  const label = granularity.value.charAt(0).toUpperCase() + granularity.value.slice(1)
+  return from && to ? `${label} · ${from} — ${to}` : label
+})
+
+// Customers are counted once across the whole range here, which is why these
+// come from the backend and are not the PDF table's own totals row.
+const pdfSummary = computed(() => [
+  { label: 'Orders', value: totals.value.orders.toLocaleString() },
+  { label: 'Unique customers', value: totals.value.uniqueCustomers.toLocaleString() },
+  { label: 'New customers', value: totals.value.newCustomers.toLocaleString() },
+  { label: 'Returning customers', value: totals.value.returningCustomers.toLocaleString() },
+  { label: 'Revenue', value: currency.format(totals.value.revenue) },
+])
+
+const jsonDocument = computed(() => ({
+  report: 'Customer Orders',
+  period: granularity.value,
+  date_from: report.value.meta.date_from ?? null,
+  date_to: report.value.meta.date_to ?? null,
+  timezone: report.value.meta.timezone ?? null,
+  totals: {
+    orders: totals.value.orders,
+    unique_customers: totals.value.uniqueCustomers,
+    new_customers: totals.value.newCustomers,
+    returning_customers: totals.value.returningCustomers,
+    revenue: totals.value.revenue,
+  },
+}))
 </script>
 
 <template>
@@ -80,6 +128,12 @@ const EXPORT_COLUMNS = [
     <ReportPanel title="Customer orders" subtitle="Order volume across the selected period.">
       <template #actions>
         <GranularityTabs v-model="granularity" />
+        <ReportRangeFilter
+          v-model:from="range.from.value"
+          v-model:to="range.to.value"
+          :error="range.error.value"
+          @clear="range.clear"
+        />
         <span class="legend"><i></i> Orders</span>
       </template>
 
@@ -89,7 +143,8 @@ const EXPORT_COLUMNS = [
 
       <template v-else>
         <p class="metric">
-          {{ totals.orders.toLocaleString() }}<span> orders across {{ rows.length }} periods</span>
+          {{ totals.orders.toLocaleString() }}<span> orders from {{ plural(totals.uniqueCustomers, 'customer') }}
+            across {{ plural(rows.length, 'period') }}</span>
         </p>
 
         <TrendChart :points="points" unit="orders" />
@@ -101,9 +156,13 @@ const EXPORT_COLUMNS = [
         <ReportExportMenu
           sheet="Customer Orders"
           tab="customer-orders"
-          :suffix="granularity"
+          :suffix="exportSuffix"
           :rows="rows"
           :columns="EXPORT_COLUMNS"
+          pdf-title="Customer Order Report"
+          :pdf-subtitle="pdfSubtitle"
+          :summary="pdfSummary"
+          :json-document="jsonDocument"
         />
       </template>
 
@@ -128,14 +187,14 @@ const EXPORT_COLUMNS = [
               </div>
             </td>
             <td class="table__right num">{{ row.avgItems.toFixed(1) }}</td>
+            <td class="table__right num">{{ currency.format(row.revenue) }}</td>
           </tr>
         </ReportTable>
 
         <p class="footnote">
           <i class="dot dot--new"></i> New
           <i class="dot dot--ret"></i> Returning
-          <span>· {{ totals.newCustomers.toLocaleString() }} new and
-            {{ totals.returning.toLocaleString() }} returning in this period</span>
+          <span>· a customer is new in the period of their first order, and returning in every later one</span>
         </p>
       </template>
     </ReportPanel>

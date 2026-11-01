@@ -25,6 +25,8 @@
     "@tiptap/vue-3": "^3.32.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.9",
     "laravel-echo": "^2.4.0",
     "pinia": "^3.0.4",
     "pusher-js": "^8.6.0",
